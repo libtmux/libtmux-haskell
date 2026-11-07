@@ -16,9 +16,10 @@ import Foreign.C.Types (CSize (..), CUInt (..), CInt (..))
 import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IntSet qualified as Set
-import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (isJust)
 import Fixture qualified
+import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.SocketPin
 import LibTmux.Internal.Process.Native qualified as N
 import ProcessGate qualified as G
@@ -77,6 +78,141 @@ tests getChild = testGroup "private process owner"
         try @IOException (O.preservingFinally journal (pure ()) (throwIO (userError "cleanup failed"))) >>= \case
           Left _ -> pure ()
           Right _ -> assertFailure "cleanup failure unexpectedly became success"
+
+    , testCase "two pools share sixteen pending launches even after waiter cancellation" $ do
+        budget <- B.newBudget
+        forks <- newIORef (0 :: Int)
+        let tracked :: O.Fork
+            tracked action = do
+              atomicModifyIORef' forks (\n -> (n + 1, ()))
+              O.normalFork action
+            gates 0 action = action []
+            gates n action = G.withGate $ \gate -> gates (n - 1) (action . (gate :))
+        (_, (executable, _)) <- getChild
+        Fixture.withFixture $ \fixture ->
+          withPoolIn budget fixture 16 tracked $ \first firstPin ->
+            withPoolIn budget fixture 16 tracked $ \second _ ->
+              gates (16 :: Int) $ \held -> G.withGate $ \extra -> do
+                let start pool gate = O.submit (O.defaultHooks {O.launchNative = G.launch G.BeforeLaunch gate})
+                      pool (N.spec executable [executable, "--wait"]) ""
+                    release = mapM_ G.releaseGate (extra : held)
+                (do
+                  tickets <- sequence [start pool gate | (pool, gate) <- zip (replicate 8 first <> replicate 8 second) held]
+                  mapM_ G.awaitGate held
+                  case tickets of
+                    initial : _ -> withAsync (O.await initial) $ \waiter -> do
+                      cancel waiter
+                      waitCatch waiter >>= assertCancelled
+                    [] -> assertFailure "no pending launch was created"
+                  O.requestClose first >>= assertIncomplete
+                  Files.fileExist (pinPath firstPin) >>= assertBool "pending context keeps socket pin"
+                  try @B.LimitError (start second extra) >>= \case
+                    Left (B.Exhausted B.Children 1 16 16) -> pure ()
+                    _ -> assertFailure "seventeenth child reached native dispatch"
+                  readIORef forks >>= (@?= 16)
+                  state <- atomically (B.usage budget)
+                  state.clients @?= 2
+                  state.children @?= 16
+                  state.pendingBytes @?= 16 * O.childBytes
+                  O.abortAll first
+                  O.abortAll second
+                  release
+                  mapM_ (\ticket -> try @O.OwnerError (O.await ticket) >>= \case
+                    Left O.Aborted -> pure ()
+                    Right completed -> do
+                      -- EOF or SIGKILL may win the race with the abort watcher.
+                      completed.launchFailure @?= Nothing
+                      assertBool "completion retained a valid owned exit"
+                        (completed.exit `elem` [Just (N.Exited 24), Just (N.Signaled 9 False)])
+                      atomically (readTVar ticket.exitCache) >>= (@?= completed.exit)
+                    Left other -> assertFailure ("unexpected owner failure: " <> show other)) tickets
+                  O.awaitCleanup first
+                  _ <- O.requestClose second
+                  O.awaitCleanup second
+                  atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)) `finally` release
+
+    , testCase "shared bytes reject dispatch before allocating a worker" $ do
+        budget <- B.newBudget
+        forks <- newIORef (0 :: Int)
+        let tracked :: O.Fork
+            tracked action = do
+              atomicModifyIORef' forks (\n -> (n + 1, ()))
+              O.normalFork action
+        (_, (executable, _)) <- getChild
+        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 1 tracked $ \pool _ -> do
+          let bytes = 128 * 1024 * 1024
+              command = N.spec executable [executable, "--exit"]
+          bracket (atomically (B.acquireBytes budget bytes)) (atomically . B.releaseBytes) $ \_ -> do
+            try @B.LimitError (O.submit O.defaultHooks pool command "") >>= \case
+              Left (B.Exhausted B.PendingBytes requested used limit) ->
+                (requested, used, limit) @?= (O.childBytes, bytes, bytes)
+              _ -> assertFailure "byte exhaustion reached dispatch"
+            readIORef forks >>= (@?= 0)
+            atomically (B.usage budget) >>= (@?= B.Usage True 1 0 bytes)
+          O.submit O.defaultHooks pool command "" >>= O.await >>= \result ->
+            result.exit @?= Just (N.Exited 23)
+          atomically (B.usage budget) >>= (@?= B.Usage True 1 0 0)
+
+    , testCase "failed pin cleanup retains a client lease until successful retry" $ do
+        budget <- B.newBudget
+        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 1 O.normalFork $ \pool pin -> do
+          let path = pinPath pin
+              sentinel = Bytes.take (Bytes.length path - 1) path <> "hold"
+          bracket_ (Posix.createFile sentinel 0o600 >>= Posix.closeFd) (Files.removeLink sentinel) $ do
+            _ <- O.requestClose pool
+            try @PinError (O.awaitCleanup pool) >>= \case
+              Left (SocketPinCleanupFailed _) -> pure ()
+              _ -> assertFailure "pin cleanup unexpectedly succeeded"
+            atomically (B.usage budget) >>= (@?= B.Usage True 1 0 0)
+          _ <- O.requestClose pool
+          O.awaitCleanup pool
+          atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)
+          _ <- O.requestClose pool
+          atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)
+
+    , testCase "pending cancellation after pool construction waits for caller registration" $ do
+        budget <- B.newBudget
+        registered <- newIORef False
+        Fixture.withFixture $ \fixture -> G.withGate $ \gate ->
+          bracket newPinOwner closePin $ \owner -> do
+            pin <- acquirePin owner (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+            let construct = mask $ \restore -> do
+                  pool <- O.newPool budget O.normalFork owner 1
+                  G.pauseConstructor gate
+                  writeIORef registered True
+                  restore (atomically retry) `finally` do
+                    O.abortAll pool
+                    _ <- O.requestClose pool
+                    O.awaitCleanup pool
+            withAsync construct $ \worker -> do
+              G.awaitGate gate
+              atomically (B.usage budget) >>= (@?= B.Usage True 1 0 0)
+              withAsync (throwTo (asyncThreadId worker) AsyncCancelled) $ \sender -> do
+                awaitPending (asyncThreadId sender) `finally` G.releaseGate gate
+                wait sender
+              waitCatch worker >>= assertCancelled
+            readIORef registered >>= (@?= True)
+            atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)
+            Files.fileExist (pinPath pin) >>= (@?= False)
+
+    , testCase "unawaited detached results leave only their consumer envelope charged" $ do
+        budget <- B.newBudget
+        (_, (executable, _)) <- getChild
+        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 1 O.normalFork $ \pool _ -> do
+          let envelope = 2 * 1024 * 1024
+              payload = Bytes.pack (take 65536 (cycle [0..255]))
+          bracket (atomically (B.acquireBytes budget envelope)) (atomically . B.releaseBytes) $ \_ -> do
+            ticket <- O.submit O.defaultHooks pool (N.spec executable [executable, "--echo"]) payload
+            atomically (O.activeCount pool >>= check . (== 0))
+            atomically (B.usage budget) >>= (@?= B.Usage True 1 0 envelope)
+            _ <- O.requestClose pool
+            O.awaitCleanup pool
+            atomically (B.usage budget) >>= (@?= B.Usage True 0 0 envelope)
+            result <- O.await ticket
+            result.exit @?= Just (N.Exited 0)
+            result.output @?= payload
+            result.errors @?= payload
+          atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)
 
     , testCase "invalid input fails before worker allocation or native dispatch" $ do
         forks <- newIORef (0 :: Int)
@@ -406,6 +542,7 @@ tests getChild = testGroup "private process owner"
             Left _ -> pure ()
             Right _ -> assertFailure "worker creation unexpectedly succeeded"
           atomically (O.activeCount pool) >>= (@?= 0)
+          atomically (B.usage pool.budget) >>= (@?= B.Usage True 1 0 0)
           ticket <- O.submit O.defaultHooks pool (child ["--exit"]) ""
           O.await ticket >>= \result -> result.exit @?= Just (N.Exited 23)
 
@@ -427,6 +564,7 @@ tests getChild = testGroup "private process owner"
           second <- O.submit hooks pool (child ["--wait"]) ""
           try @SomeException (O.await first) >>= assertCancelled
           try @SomeException (O.await second) >>= assertCancelled
+          atomically (B.usage pool.budget) >>= (@?= B.Usage True 1 2 (2 * O.childBytes))
           let rescue = do
                 -- Only the negative version leaves ticket two claimed without a fork.
                 attempts <- readIORef forks
@@ -444,7 +582,8 @@ tests getChild = testGroup "private process owner"
               Nothing -> assertFailure "cleanup failure was discarded"
             completed <- timeout 250000 (O.requestClose pool >> O.awaitCleanup pool)
             assertBool "both owned debts must be recoverable after the failed fork" (isJust completed)
-            atomically (O.activeCount pool) >>= (@?= 0)) `finally` rescue
+            atomically (O.activeCount pool) >>= (@?= 0)
+            atomically (B.usage pool.budget) >>= (@?= B.Usage True 0 0 0)) `finally` rescue
 
     , testCase "partial stream startup retires the started reader before releasing ownership" $
         withPool getChild O.normalFork $ \pool _ fixture child -> do
@@ -523,16 +662,21 @@ withPoolAt :: IO (FilePath, (Bytes.ByteString, FilePath)) -> Int -> O.Fork
   -> (O.Pool -> SocketPin -> Fixture.Fixture -> ([Bytes.ByteString] -> N.Spec) -> IO a) -> IO a
 withPoolAt resource capacity forker action = do
   (_, (executable, _)) <- resource
-  Fixture.withFixture $ \fixture -> mask $ \restore -> do
-    owner <- newPinOwner
-    (pin, pool) <- (do
-      pin <- acquirePin owner (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
-      pool <- O.newPool forker owner capacity
-      pure (pin, pool)) `onException` closePin owner
-    restore (action pool pin fixture (\args -> N.spec executable (executable : args))) `finally` do
-      O.abortAll pool
-      _ <- O.requestClose pool
-      O.awaitCleanup pool
+  budget <- B.newBudget
+  Fixture.withFixture $ \fixture -> withPoolIn budget fixture capacity forker $ \pool pin ->
+    action pool pin fixture (\args -> N.spec executable (executable : args))
+
+withPoolIn :: B.Budget -> Fixture.Fixture -> Int -> O.Fork -> (O.Pool -> SocketPin -> IO a) -> IO a
+withPoolIn budget fixture capacity forker action = mask $ \restore -> do
+  owner <- newPinOwner
+  (pin, pool) <- (do
+    pin <- acquirePin owner (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+    pool <- O.newPool budget forker owner capacity
+    pure (pin, pool)) `onException` closePin owner
+  restore (action pool pin) `finally` do
+    O.abortAll pool
+    _ <- O.requestClose pool
+    O.awaitCleanup pool
 
 assertCancelled :: Either SomeException a -> IO ()
 assertCancelled (Left problem) = case fromException problem of

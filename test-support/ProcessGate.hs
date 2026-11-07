@@ -16,6 +16,7 @@ import System.Posix.Types (Fd (..))
 foreign import ccall unsafe "libtmux_test_watch_writer" cWatchWriter :: CInt -> CInt -> IO CInt
 foreign import ccall unsafe "libtmux_test_control_pipe" cPipe :: Foreign.Ptr.Ptr CInt -> IO CInt
 foreign import ccall safe "libtmux_test_spawn_gate" cSpawnGate :: CInt -> CInt -> CInt -> N.LaunchCall
+foreign import ccall safe "libtmux_test_constructor_gate" cConstructorGate :: CInt -> CInt -> IO ()
 foreign import ccall safe "libtmux_test_wait_gate" cWaitGate :: CInt -> CInt -> N.WaitCall
 
 data GatePoint = BeforeLaunch | AfterLaunch deriving stock (Eq, Show)
@@ -28,6 +29,9 @@ launch point gate spec = usingGate (Just gate) $ \fd notice ->
 
 consume :: Gate -> N.Child -> IO (Maybe N.Exit)
 consume gate child = usingGate (Just gate) $ \fd notice -> N.waitWith (cWaitGate fd notice) child
+
+pauseConstructor :: Gate -> IO ()
+pauseConstructor gate = usingGate (Just gate) cConstructorGate
 
 watchWriter :: Gate -> N.Child -> IO ()
 watchWriter (Gate _ _ _ notice _ _ _) child = do

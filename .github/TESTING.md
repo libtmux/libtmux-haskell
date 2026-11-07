@@ -122,6 +122,14 @@ processes. They never change the Haskell test runner's host policy. Binary
 load-buffer/save-buffer cases use the owned private tmux pin; empty stdin
 checks EOF independently.
 
+Shared-context cases hold sixteen native launches across two pools and reject
+the seventeenth before dispatch. They also check byte exhaustion, constructor
+handoff under actual pending cancellation, retryable pin cleanup and a consumer
+envelope retained after unawaited result publication. Pure budget tests cover
+exact limits, overflow refusal, atomic reservation and repeated release. These
+are [private ownership contracts](../docs/contracts/process.md#streams-and-bounds),
+not evidence for a complete public Runtime or total-process memory cap.
+
 A deliberately held signal has a 250 ms watchdog to detect premature pidfd
 retirement. Native gate observations also have bounded watchdogs. These
 checks synchronize through STM, descriptors and RTS status; they do not

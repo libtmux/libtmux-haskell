@@ -56,6 +56,10 @@ data Start = Refused !Failure | Owned !Child
 data Exit = Exited !CInt | Signaled !CInt !Bool | StatusLost !CInt
   deriving stock (Eq, Show)
 
+vectorLimitBytes, chunkBytes :: Int
+vectorLimitBytes = 65536
+chunkBytes = 16384
+
 spec :: ByteString -> [ByteString] -> Spec
 spec file args = Spec file args ["LANG=C.UTF-8"] "/"
 
@@ -77,7 +81,7 @@ validate value = do
   let strings = value.file : value.cwd : value.args <> value.env
       encoded = sum (map ((+ 1) . toInteger . Bytes.length) strings)
         + toInteger (sizeOf (nullPtr :: Ptr ())) * toInteger (length value.args + length value.env + 2)
-  when (encoded > 65536) (invalid "native vector byte limit")
+  when (encoded > toInteger vectorLimitBytes) (invalid "native vector byte limit")
   when (any (Bytes.elem 0) strings) (invalid "NUL in native launch")
   unless ("/" `Bytes.isPrefixOf` value.file && "/" `Bytes.isPrefixOf` value.cwd)
     (invalid "absolute native paths required")
@@ -136,8 +140,8 @@ close :: CInt -> IO ()
 close fd = when (fd >= 0) (closeFdWith Posix.closeFd (Fd fd))
 
 readChunk :: CInt -> IO (Maybe ByteString)
-readChunk fd = allocaBytes 16384 $ \buffer -> do
-  let loop = cRead fd buffer 16384 >>= \count ->
+readChunk fd = allocaBytes chunkBytes $ \buffer -> do
+  let loop = cRead fd buffer (fromIntegral chunkBytes) >>= \count ->
         if count > 0 then Just <$> Bytes.packCStringLen (castPtr buffer, fromIntegral count) else
         if count == 0 then pure (Just Bytes.empty) else
         if count == negate (errno eAGAIN) then pure Nothing else
@@ -148,7 +152,7 @@ writeBytes :: Fd -> ByteString -> IO ()
 -- The native send only reads; the pointer cannot escape this scoped action.
 writeBytes (Fd fd) bytes = UnsafeBytes.unsafeUseAsCStringLen bytes $ \(buffer, size) ->
   let loop _ 0 = pure ()
-      loop pointer remaining = cWrite fd pointer (fromIntegral (min remaining 16384)) >>= \count ->
+      loop pointer remaining = cWrite fd pointer (fromIntegral (min remaining chunkBytes)) >>= \count ->
         if count > 0 then loop (pointer `plusPtr` fromIntegral count) (remaining - fromIntegral count) else
         if count == negate (errno eAGAIN) then threadWaitWrite (Fd fd) >> loop pointer remaining else
         if count == negate (errno eINTR) then loop pointer remaining else

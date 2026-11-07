@@ -24,6 +24,8 @@ static void hold(int fd, int notice) {
     while (read(fd, &byte, 1) < 0 && errno == EINTR) {}
 }
 
+void libtmux_test_constructor_gate(int fd, int notice) { hold(fd, notice); }
+
 int libtmux_test_spawn_gate(int point, int fd, int notice, const char *file,
     char *const argv[], char *const env[], const char *cwd, int *result) {
     if (point == 1) hold(fd, notice);

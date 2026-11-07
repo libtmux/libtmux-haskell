@@ -90,7 +90,7 @@ library
   import: modern
   hs-source-dirs: src internal
   exposed-modules: LibTmux.Id LibTmux.Value LibTmux.Version
-  other-modules: LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -127,13 +127,14 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: FrameTest GraphTest GraphProperties LibTmux.Internal.Frame LibTmux.Internal.Graph
+  other-modules: BudgetTest FrameTest GraphTest GraphProperties LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
     bytestring >=0.12.2 && <0.13,
     containers >=0.8 && <0.9,
     deepseq >=1.5.1 && <1.6,
+    stm >=2.5.3 && <2.6,
     tasty >=1.5.5 && <1.6,
     tasty-hunit >=0.10.2 && <0.11,
     tasty-quickcheck >=0.11.1 && <0.12,
@@ -145,7 +146,7 @@ test-suite integration
   type: exitcode-stdio-1.0
   hs-source-dirs: test/integration test-support internal
   main-is: Main.hs
-  other-modules: Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: test-support/fixture-watch.c test-support/process-gate.c cbits/process.c
   include-dirs: cbits
   extra-libraries: dl

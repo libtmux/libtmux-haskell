@@ -1,9 +1,10 @@
 {-# LANGUAGE RankNTypes #-}
 -- | Bounded child ownership independent of callers awaiting a result.
 --
--- A pool retains its socket pin, pending launches, descriptors and reap
--- obligations until cleanup finishes. Closing admission does not cancel a
--- native call or imply that an external tmux command was reversed.
+-- A 'Pool' retains its socket pin, pending launches, descriptors, reap
+-- obligations and shared "LibTmux.Internal.Budget" leases until cleanup finishes.
+-- Closing admission does not cancel a native call or imply that an external
+-- tmux command was reversed.
 module LibTmux.Internal.Process where
 
 import Control.Concurrent (ThreadId, forkIOWithUnmask)
@@ -21,6 +22,7 @@ import Control.DeepSeq (force)
 import Data.IORef
 import Foreign.C.Types (CInt)
 import GHC.Conc (threadWaitRead)
+import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.SocketPin (PinOwner, closePin)
 import LibTmux.Internal.Process.Native qualified as N
 import System.Posix.Types (Fd (..))
@@ -40,6 +42,7 @@ data Hooks = Hooks
 data Pool = Pool
   { jobs :: !(TVar (Map.IntMap Ticket)), closing :: !(TVar Bool)
   , nextKey :: !(TVar Int), capacity :: !Int, forker :: Fork
+  , budget :: !B.Budget, clientLease :: !B.ClientLease
   , pinOwner :: !PinOwner, pinBusy :: !(TVar Bool)
   , pinResult :: !(TMVar (Either SomeException ()))
   }
@@ -55,7 +58,7 @@ data Ticket = Ticket
   , signalLock :: !(MVar ())
   , busy :: !(TVar Bool), failure :: !(TVar (Maybe SomeException))
   , cleanupFailure :: !(TVar (Maybe SomeException))
-  , hooks :: !Hooks
+  , hooks :: !Hooks, lease :: !B.ChildLease
   }
 
 data Completion = Completion
@@ -77,21 +80,37 @@ forkIn Pool {forker} = forker
 defaultHooks :: Hooks
 defaultHooks = Hooks (pure ()) (pure ()) (pure ()) (\child -> N.signalChild child 9) N.launch N.waitChild
 
-newPool :: Fork -> PinOwner -> Int -> IO Pool
-newPool forker pinOwner capacity = do
+newPool :: B.Budget -> Fork -> PinOwner -> Int -> IO Pool
+-- The caller masks through cleanup registration; PinOwner transfers on success.
+newPool budget forker pinOwner capacity = mask_ $ do
   unless (capacity > 0 && capacity <= 16) (throwIO ResourceLimit)
-  jobs <- newTVarIO Map.empty
-  closing <- newTVarIO False
-  nextKey <- newTVarIO 0
-  pinBusy <- newTVarIO False
-  pinResult <- newEmptyTMVarIO
-  pure Pool {jobs, closing, nextKey, capacity, forker, pinOwner, pinBusy, pinResult}
+  clientLease <- atomically (B.acquireClient budget)
+  (do
+    jobs <- newTVarIO Map.empty
+    closing <- newTVarIO False
+    nextKey <- newTVarIO 0
+    pinBusy <- newTVarIO False
+    pinResult <- newEmptyTMVarIO
+    pure Pool {jobs, closing, nextKey, capacity, forker, budget, clientLease, pinOwner, pinBusy, pinResult})
+    `onException` atomically (B.releaseClient clientLease)
 
--- | Reserve before forking. A failed fork creates no child and rolls back its slot.
+inputLimitBytes, streamLimitBytes :: Int
+inputLimitBytes = 65536
+streamLimitBytes = 1048576
+
+-- Both stream chunk lists and concatenations coexist until forced publication.
+childBytes :: Word64
+childBytes = fromIntegral (4 * streamLimitBytes + inputLimitBytes
+  + 2 * N.vectorLimitBytes + 4 * N.chunkBytes)
+
+-- | Return a detached caller-owned 'Ticket'. Reserve shared child/byte credits
+-- before copying or forking; allocation failure rolls back both credits.
+-- Internal consumers precharge a separate parent envelope in
+-- "LibTmux.Internal.Budget" for output retained after result publication.
 submit :: Hooks -> Pool -> N.Spec -> ByteString -> IO Ticket
 submit hooks pool spec input = mask_ $ do
   N.validate spec
-  when (Bytes.length input > 65536) (throwIO ResourceLimit)
+  when (Bytes.length input > inputLimitBytes) (throwIO ResourceLimit)
   ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
     <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO (Progress 0 0) <*> newIORef Set.empty
     <*> newIORef Nothing <*> newMVar () <*> newTVarIO True
@@ -103,7 +122,8 @@ submit hooks pool spec input = mask_ $ do
     when (Map.size jobs >= pool.capacity) (throwSTM ResourceLimit)
     key <- readTVar pool.nextKey
     when (key == maxBound) (throwSTM ResourceLimit)
-    let owned = ticket {key}
+    lease <- B.acquireChild pool.budget childBytes
+    let owned = (ticket lease) {key}
     writeTVar pool.nextKey (key + 1)
     writeTVar pool.jobs (Map.insert key owned jobs)
     pure owned
@@ -112,13 +132,15 @@ submit hooks pool spec input = mask_ $ do
     ownedInput <- evaluate (force (Bytes.copy input))
     void (forkIn pool (\unmask -> worker unmask pool registered ownedSpec ownedInput)))
     `onException` do
-      atomically (modifyTVar' pool.jobs (Map.delete registered.key))
+      atomically $ do
+        modifyTVar' pool.jobs (Map.delete registered.key)
+        B.releaseChild registered.lease
       finishPin pool
   pure registered
 
 worker :: (forall a. IO a -> IO a) -> Pool -> Ticket -> N.Spec -> ByteString -> IO ()
 worker unmask pool ticket spec input = do
-  outcome <- try @SomeException (unmask (runJob ticket spec input))
+  outcome <- try @SomeException (unmask (runJob ticket spec input >>= evaluate))
   case outcome of
     Right completed -> finish pool ticket (Right completed)
     Left problem -> do
@@ -185,7 +207,7 @@ readStream ticket stdout fd = preservingFinally ticket.cleanupFailure (loop [] 0
       Just bytes | Bytes.null bytes -> pure (Bytes.concat (reverse chunks))
       Just bytes -> do
         let total = size + Bytes.length bytes
-        when (total > 1048576) (throwIO ResourceLimit)
+        when (total > streamLimitBytes) (throwIO ResourceLimit)
         atomically $ modifyTVar' ticket.counts $ \old ->
           if stdout then old {outputBytes = total} else old {errorBytes = total}
         loop (bytes : chunks) total
@@ -278,6 +300,7 @@ finish pool ticket outcome = do
   atomically $ do
     void (tryPutTMVar ticket.result outcome)
     modifyTVar' pool.jobs (Map.delete ticket.key)
+    B.releaseChild ticket.lease
   finishPin pool
 
 finishPin :: Pool -> IO ()
@@ -287,12 +310,19 @@ finishPin pool = mask_ $ do
     busy <- readTVar pool.pinBusy
     previous <- tryReadTMVar pool.pinResult
     let finished = case previous of Just (Right ()) -> True; _ -> False
-    if ready && not busy && not finished then writeTVar pool.pinBusy True >> pure True else pure False
+    if ready && not busy && not finished then do
+      writeTVar pool.pinBusy True
+      void (tryTakeTMVar pool.pinResult)
+      pure True
+    else pure False
   when claimed $ do
     let publish outcome = atomically $ do
           void (tryTakeTMVar pool.pinResult)
           putTMVar pool.pinResult outcome
           writeTVar pool.pinBusy False
+          case outcome of
+            Right () -> B.releaseClient pool.clientLease
+            Left _ -> pure ()
     try @SomeException (forkIn pool (\_ -> try @SomeException (closePin pool.pinOwner) >>= publish)) >>= \case
       Left problem -> publish (Left problem)
       Right _ -> pure ()

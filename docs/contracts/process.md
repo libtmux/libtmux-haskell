@@ -36,8 +36,32 @@ Each pool admits at most 16 jobs. Each job accepts at most 64 KiB of stdin
 and retains at most 1 MiB each of stdout and stderr. Accepted byte slices
 are copied before worker ownership. Failed signals retain eight recent
 errors and a saturating total count; the retained list is forced when
-updated. These local bounds do not implement the planned runtime's shared
-byte budget, lane admission or shutdown deadline.
+updated.
+
+A shared context limits all its pools to eight clients, sixteen pending
+children and 128 MiB of reserved payload capacity. Reservation and ticket
+registration are one STM transaction before copying or forking. Each captured
+child reserves 4,456,448 bytes: both streams' chunks and final concatenations,
+stdin, owned/marshaled vectors and read scratch. This conservative allowance
+can reject earlier than accounting only actual payload sizes. It is not an
+RSS limit; Haskell object headers, GC and detached caller values are separate.
+
+Constructors require caller masking through cleanup/registry installation.
+A pool's client lease survives pin-cleanup failure and is released only after
+successful retry. Child and byte leases survive cancelled waiters and failed
+cleanup. [Cancellation and retirement](#cancellation-and-retirement) describe
+the physical obligations that must finish before their release.
+
+Completion forces both strict output buffers before publication. Publishing
+and removing the pool's entry transfers the detached result into the caller's
+ticket and releases its child allowance atomically; awaiting is optional.
+Pools must not retain an uncharged terminal-result cache. An internal consumer
+must reserve a separate parent envelope before dispatch for data retained
+through decoding, then transfer that charge or release it on external delivery.
+
+This context is a private prerequisite. Full Runtime supervision, lane
+admission, deadlines and shared accounting in future capture/subscription
+consumers remain unimplemented.
 
 ## Cancellation and retirement
 
