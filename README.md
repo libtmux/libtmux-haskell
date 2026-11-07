@@ -1,9 +1,24 @@
+<!-- libtmux-logo -->
+<div align="center">
+  <picture>
+    <source srcset="docs/assets/logo.svg" type="image/svg+xml">
+    <img src="docs/assets/logo-128.png" width="128" height="128" alt="libtmux for Haskell">
+  </picture>
+</div>
+<!-- /libtmux-logo -->
+
+<div align="center">
+
 # libtmux for Haskell
 
 libtmux for Haskell provides distinct tmux entity IDs, checked dimensions
 and indices, and stable-release parsing. These values are pure; constructing
 or reading them starts no tmux process. The client and observation APIs are
 under development.
+
+[![CI](https://github.com/libtmux/libtmux-haskell/actions/workflows/ci.yml/badge.svg)](https://github.com/libtmux/libtmux-haskell/actions/workflows/ci.yml)
+
+</div>
 
 Use GHC 9.14.1 with GHC2024 and Cabal 3.18.2.0 on Linux x86_64.
 [Add the pinned source dependency](docs/installation.md) to a Cabal application,
@@ -55,4 +70,4 @@ The public package cannot yet observe or mutate a server. Complete captures,
 typed queries, event streams, workspace tooling and MCP remain implementation
 work; the [manual](docs/README.md) separates that work from available exports.
 
-[Contributing](.github/CONTRIBUTING.md) · [License](LICENSE)
+[Contributing](.github/CONTRIBUTING.md) · [License](LICENSE) · [Branding assets](docs/branding.md)

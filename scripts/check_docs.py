@@ -91,7 +91,13 @@ def check():
             if match["language"] != language or match["body"] != (ROOT / examples[name][field]).read_text():
                 raise ValueError(f"{path.name}: {name} {field} differs from its source")
             seen.add((name, kind))
-        for target in re.findall(r"\]\(([^)]+)\)", text):
+        targets = re.findall(r"\]\(([^)]+)\)", text)
+        for attribute, value in re.findall(r'''\b(src|srcset|href)\s*=\s*["']([^"']+)["']''', text, re.IGNORECASE):
+            if attribute.lower() == "srcset":
+                targets.extend(part.split()[0] for part in value.split(",") if part.strip())
+            else:
+                targets.append(value)
+        for target in targets:
             if "://" in target or target.startswith("#"):
                 continue
             if not (path.parent / target.split("#")[0]).is_file():
