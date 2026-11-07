@@ -71,7 +71,7 @@ recorded hash and version; invalid cache content is rebuilt. The owned
 integration suite must pass before a fresh tmux build is saved.
 
 These checks qualify the existing implementation subset. The complete
-capture/runtime/workspace/MCP and release gates remain separate work.
+capture/runtime/workspace and release gates remain separate work.
 
 ## Executable documentation
 

@@ -55,5 +55,5 @@ The [typed-value guide](values.md) explains the output and what each check
 establishes. This example requires no running tmux server.
 
 The source revision above contains the current public scalar API. Native
-client operations, workspace tooling and MCP require further implementation;
+client operations and workspace tooling require further implementation;
 check [status](status.md) before choosing the package for automation.

@@ -11,11 +11,19 @@ yet observe or mutate a tmux server.
 | Client, complete captures and generation-bound references | In progress |
 | Typed query evaluation and commands | Not implemented |
 | Control events, streams and cancellation API | Not implemented |
-| Workspace library/CLI and MCP executable | Not implemented |
+| Workspace library/CLI | Planned as a separate Cabal package using the core |
+| MCP integration | Excluded from this port |
 
 The internal graph, socket pin and child-ownership experiments have separate
 tests. Their passing results do not establish a public automation interface.
 The [behavior inventory](contracts/README.md) records the intended scope.
+
+## Package policy
+
+The core favors GHC boot libraries and ordinary `IO`. Additional dependencies
+need a concrete requirement; JSON/YAML loading and command-line concerns
+belong in the workspace package. MCP is outside this port's scope. See the
+[package and dependency policy](../.github/CONTRIBUTING.md#package-and-dependency-policy).
 
 ## Compatibility evidence
 

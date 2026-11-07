@@ -67,7 +67,7 @@ and output are checked in an isolated consumer built from the source archive.
 | Evaluate the implemented scope and compatibility evidence | [Status](docs/status.md) |
 
 The public package cannot yet observe or mutate a server. Complete captures,
-typed queries, event streams, workspace tooling and MCP remain implementation
+typed queries, event streams and workspace tooling remain implementation
 work; the [manual](docs/README.md) separates that work from available exports.
 
 [Contributing](.github/CONTRIBUTING.md) · [License](LICENSE) · [Branding assets](docs/branding.md)
