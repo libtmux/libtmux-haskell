@@ -90,7 +90,7 @@ library
   import: modern
   hs-source-dirs: src internal
   exposed-modules: LibTmux.Id LibTmux.Value LibTmux.Version
-  other-modules: LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -127,10 +127,11 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: BudgetTest FrameTest GraphTest GraphProperties LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.Graph
+  other-modules: SchedulerTest BudgetTest FrameTest GraphTest GraphProperties LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
+    async >=2.2.6 && <2.3,
     bytestring >=0.12.2 && <0.13,
     containers >=0.8 && <0.9,
     deepseq >=1.5.1 && <1.6,

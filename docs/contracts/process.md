@@ -59,9 +59,41 @@ Pools must not retain an uncharged terminal-result cache. An internal consumer
 must reserve a separate parent envelope before dispatch for data retained
 through decoding, then transfer that charge or release it on external delivery.
 
-This context is a private prerequisite. Full Runtime supervision, lane
-admission, deadlines and shared accounting in future capture/subscription
+This context is a private prerequisite. Full Runtime supervision, dispatch
+integration, deadlines and shared accounting in future capture/subscription
 consumers remain unimplemented.
+
+## Logical admission
+
+The separate [STM scheduler](../../internal/LibTmux/Internal/Scheduler.hs)
+retains at most 64 logical operations, including uncertain work. Ordinary
+operations can occupy 63 slots; inspection can use the remaining capacity.
+Dispatch permits cover one mutation, four waiting jobs and four reads.
+Ordinary scalar reads can use three read permits, preserving one for
+inspection. The oldest eligible operation dispatches; a saturated class
+does not obstruct another eligible class. Open dispatchers retry in STM;
+closed admission wakes them with a closed result.
+
+Observed progress, the first caller outcome and retained responsibility
+are separate. A closed response does not prove operation completion.
+Unknown outcomes and connection retirement retain their lane permits:
+closing a connection can leave a daemon job alive. Later completion or
+proven non-dispatch retires responsibility without rewriting an earlier
+outcome. Cancelling a waiter changes none of these states.
+
+Explicit detach releases uncertain logical responsibility and preserves
+the last observation. It closes no native resource. Detaching a mutation
+permits its successor despite possible continuing external effects.
+Closing admission settles queued work as not dispatched and returns active
+handles for supervision. Retired handles retain metadata without retaining
+the scheduler's live-operation registry.
+
+This reserve is logical. Runtime integration must also protect usable
+physical-child and byte capacity for inspection; the shared budget above
+has no lane reserve. The scheduler performs no tmux IO, supplies no external
+completion evidence and does not implement the Runtime's shutdown phases.
+The [scheduler tests](../../test/SchedulerTest.hs) qualify these state
+transitions separately from the native process tests below.
 
 ## Cancellation and retirement
 

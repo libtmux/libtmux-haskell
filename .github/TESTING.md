@@ -109,6 +109,24 @@ a compile-only test or a private test helper does not qualify the shared
 
 ## Private process tests
 
+The [logical scheduler tests](../test/SchedulerTest.hs) run in the unit tier.
+They cover inspection reserves, lane saturation, first-outcome publication,
+retained uncertainty, foreign handles, queued refusal and closure. Scoped
+workers exercise outcome-waiter cancellation and dispatcher shutdown. STM
+retry assertions avoid waiting when work should already be eligible; a
+500 ms per-case watchdog bounds unexpected deadlocks. No sleep schedules
+a race. These cases do not establish external tmux completion or a physical
+resource reserve for inspection.
+
+Select the focused unit group:
+
+```console
+$ cabal test unit \
+    --offline \
+    --test-show-details=direct \
+    --test-options=--pattern=logical
+```
+
 The integration tier compiles two owned C helpers once per run, using `cc`.
 The build cleans its temporary directory on compilation failure or
 cancellation. Helpers test the same production C source; symbol injection,
