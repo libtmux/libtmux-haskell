@@ -4,6 +4,10 @@
 -- or liveness evidence. Render an ID for external text; use its numeric
 -- accessor when an application needs the mathematical value.
 --
+-- Start with 'parseSessionId', 'parseWindowId' or 'parsePaneId'. Each type's
+-- documentation links its parser and renderer. Contextual numeric indices
+-- belong to "LibTmux.Value".
+--
 -- >>> :set -XOverloadedStrings
 -- >>> fmap renderWindowId (parseWindowId "@17")
 -- Right "@17"
@@ -37,16 +41,19 @@ import Data.Text qualified as Text
 import Data.Word (Word32)
 
 -- | A session's unsigned 32-bit tmux identifier, written with a @$@ prefix.
+-- Parse with 'parseSessionId'; render with 'renderSessionId'.
 newtype SessionId = SessionId Word32
   deriving stock (Eq, Ord, Show)
   deriving newtype (NFData)
 
 -- | A physical window's identifier, independent of its session links.
+-- Parse with 'parseWindowId'; render with 'renderWindowId'.
 newtype WindowId = WindowId Word32
   deriving stock (Eq, Ord, Show)
   deriving newtype (NFData)
 
 -- | A physical pane's identifier, written with a @%@ prefix.
+-- Parse with 'parsePaneId'; render with 'renderPaneId'.
 newtype PaneId = PaneId Word32
   deriving stock (Eq, Ord, Show)
   deriving newtype (NFData)

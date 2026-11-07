@@ -4,6 +4,9 @@
 -- nor contact a server. Admission establishes the minimum release only;
 -- individual features still need capability and conformance checks.
 --
+-- Use 'parseVersion' for input, 'requireSupported' for minimum-version
+-- admission and 'renderVersion' for canonical output.
+--
 -- >>> :set -XOverloadedStrings
 -- >>> fmap renderVersion (parseVersion "tmux 3.3\n" >>= requireSupported)
 -- Right "3.3"
@@ -23,7 +26,8 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Text.Read (readMaybe)
 
--- | A stable release. Ordering compares numeric components before the patch letter.
+-- | A stable release, constructed by 'parseVersion' and rendered by
+-- 'renderVersion'. Ordering compares numeric components before the patch letter.
 data TmuxVersion = TmuxVersion !Integer !Integer !(Maybe Char)
   deriving stock (Eq, Ord, Show)
 

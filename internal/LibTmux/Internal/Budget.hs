@@ -1,6 +1,6 @@
 -- | Credits shared by private process pools in one explicit context.
 --
--- Create a 'Budget' in 'IO', then reserve and release typed leases in STM.
+-- Create a t'Budget' in 'IO', then reserve and release typed leases in STM.
 -- Reservations survive cancelled waiters. A lease releases its credits at
 -- most once, including after 'closeAdmission'. This is payload accounting,
 -- not an RSS limit or a complete Runtime supervisor.

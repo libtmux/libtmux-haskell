@@ -3,7 +3,9 @@
 -- Construction and access are pure. Window-link indices and pane indices
 -- have distinct types; neither substitutes for an entity ID. A constructor
 -- checks the mathematical domain, while command-specific limits belong at
--- the operation boundary.
+-- the operation boundary. Use 'mkDimension', 'mkWindowIndex' and 'mkPaneIndex'
+-- to validate input; their accessors return mathematical integers. Entity
+-- identifiers belong to "LibTmux.Id".
 --
 -- >>> fmap dimensionValue (mkDimension 120)
 -- Right 120
@@ -27,18 +29,21 @@ module LibTmux.Value
 
 import Control.DeepSeq (NFData)
 
--- | Positive cells. Command and field limits are checked separately.
--- Compare dimensions directly or use 'dimensionValue' with an integer literal.
+-- | Positive cells, constructed with 'mkDimension'. Command and field limits
+-- are checked separately. Compare dimensions directly or use 'dimensionValue'
+-- with an integer literal.
 newtype Dimension = Dimension Integer
   deriving stock (Eq, Ord, Show)
   deriving newtype (NFData)
 
 -- | Nonnegative index of a window link within a session, not a physical window ID.
+-- Construct with 'mkWindowIndex'; read with 'windowIndexValue'.
 newtype WindowIndex = WindowIndex Integer
   deriving stock (Eq, Ord, Show)
   deriving newtype (NFData)
 
 -- | Nonnegative pane index within a window, not a pane ID.
+-- Construct with 'mkPaneIndex'; read with 'paneIndexValue'.
 newtype PaneIndex = PaneIndex Integer
   deriving stock (Eq, Ord, Show)
   deriving newtype (NFData)

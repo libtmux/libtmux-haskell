@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 -- | Bounded child ownership independent of callers awaiting a result.
 --
--- A 'Pool' retains its socket pin, pending launches, descriptors, reap
+-- A t'Pool' retains its socket pin, pending launches, descriptors, reap
 -- obligations and shared "LibTmux.Internal.Budget" leases until cleanup finishes.
 -- Closing admission does not cancel a native call or imply that an external
 -- tmux command was reversed.
@@ -103,7 +103,7 @@ childBytes :: Word64
 childBytes = fromIntegral (4 * streamLimitBytes + inputLimitBytes
   + 2 * N.vectorLimitBytes + 4 * N.chunkBytes)
 
--- | Return a detached caller-owned 'Ticket'. Reserve shared child/byte credits
+-- | Return a detached caller-owned t'Ticket'. Reserve shared child/byte credits
 -- before copying or forking; allocation failure rolls back both credits.
 -- Internal consumers precharge a separate parent envelope in
 -- "LibTmux.Internal.Budget" for output retained after result publication.

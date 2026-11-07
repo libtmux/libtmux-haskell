@@ -71,9 +71,15 @@ Explain inputs, defaults, errors, effects, ownership, ordering, cancellation,
 and cleanup when relevant. Distinguish pure values from operations in `IO`.
 Verify generated API links when documentation tooling is added.
 
-Use Haddock's native identifier links, module overviews, export groups and
-declaration examples. Keep large APIs discoverable through task-oriented
-groups instead of a flat member list. Execute every `>>>` example through
+Use [Haddock's native links](https://haskell-haddock.readthedocs.io/latest/markup.html#hyperlinked-identifiers),
+module overviews, export groups and declaration examples. Quote identifiers
+and module names in Haddock syntax rather than hard-coding generated HTML
+paths. Link opaque types to their constructors/parsers and accessors; link
+related modules where callers move between concepts. Use a namespace-qualified
+identifier when a type and constructor share a name. Check the generated
+target and anchor: module-name markup alone does not validate its destination.
+Keep large APIs discoverable through task-oriented groups instead of a flat
+member list. Execute every `>>>` example through
 the archive consumer check. Inspect generated search, declaration anchors,
 source navigation and dependency links before publishing API artifacts.
 
