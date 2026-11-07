@@ -52,6 +52,16 @@ class DocumentationChecks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differs from its source"):
             check_docs.check()
 
+    def test_missing_html_logo_is_rejected(self):
+        path = self.root / "README.md"
+        original = path.read_text()
+        for markup in ['<img src="docs/assets/missing.png" alt="Missing logo">',
+                       '<source srcset="docs/assets/missing.svg" type="image/svg+xml">']:
+            with self.subTest(markup=markup):
+                path.write_text(original + "\n" + markup + "\n")
+                with self.assertRaisesRegex(ValueError, "Broken local link"):
+                    check_docs.check()
+
     def test_empty_catalogue_is_rejected(self):
         path = self.root / "examples/catalogue.json"
         document = json.loads(path.read_text())
