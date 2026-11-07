@@ -1,9 +1,20 @@
--- | tmux release identity and the minimum supported release.
+-- | Parse stable tmux releases and apply the minimum-version admission check.
+--
+-- These functions consume supplied text. They neither execute @tmux -V@
+-- nor contact a server. Admission establishes the minimum release only;
+-- individual features still need capability and conformance checks.
+--
+-- >>> :set -XOverloadedStrings
+-- >>> fmap renderVersion (parseVersion "tmux 3.3\n" >>= requireSupported)
+-- Right "3.3"
 module LibTmux.Version
-  ( TmuxVersion
+  ( -- * Release identity and errors
+    TmuxVersion
   , VersionError (..)
+    -- * Parse and render
   , parseVersion
   , renderVersion
+    -- * Admit a release
   , requireSupported
   ) where
 
@@ -18,8 +29,8 @@ data TmuxVersion = TmuxVersion !Integer !Integer !(Maybe Char)
 
 -- | Invalid release syntax or a release below the supported floor.
 data VersionError
-  = MalformedVersion !Text
-  | UnsupportedVersion !TmuxVersion
+  = MalformedVersion !Text -- ^ Bounded copy of input that is not a stable release.
+  | UnsupportedVersion !TmuxVersion -- ^ A stable release older than plain tmux 3.3.
   deriving stock (Eq, Show)
 
 -- | Parse a stable release or the output of @tmux -V@, allowing one final LF.

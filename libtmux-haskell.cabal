@@ -1,11 +1,11 @@
 cabal-version: 3.18
 name: libtmux-haskell
 version: 0.1.0.0
-synopsis: Native Haskell observations and operations for tmux
+synopsis: Typed tmux IDs, checked values and release admission
 description:
-  Explicit IO for tmux acquisition and commands, with detached observations
-  and typed queries. This package is under development and has not completed
-  its compatibility or distribution qualification.
+  Distinct entity IDs, checked dimensions and indices, and stable-release
+  parsing. These pure values do not contact tmux. Native client, observation
+  and command APIs remain under development.
 license: MIT
 license-file: LICENSE
 author: libtmux contributors
@@ -20,7 +20,12 @@ extra-doc-files:
   AGENTS.md
   .github/CONTRIBUTING.md
   .github/WRITING.md
-  docs/testing.md
+  .github/TESTING.md
+  docs/README.md
+  docs/installation.md
+  docs/values.md
+  docs/api.md
+  docs/status.md
   docs/contracts/README.md
   docs/contracts/environment.md
   docs/contracts/observations.md
@@ -38,6 +43,14 @@ extra-source-files:
   docs/contracts/traceability.json
   scripts/check-types
   scripts/check_sdist.py
+  scripts/check_docs.py
+  scripts/test_check_docs.py
+  examples/catalogue.json
+  examples/typed-values/Main.hs
+  examples/typed-values/expected.stdout
+  examples/typed-values/libtmux-typed-values.cabal
+  examples/typed-values/cabal.project
+  examples/typed-values/cabal.project.vcs
   scripts/ci_tmux.py
   scripts/test_ci_tmux.py
   .github/tmux-releases.json

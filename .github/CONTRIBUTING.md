@@ -1,9 +1,9 @@
 # Contributing
 
 The native Haskell implementation is in progress. Version admission, typed
-IDs, checked scalar values and the owned tmux fixture have tests; the
-complete public API, consumers and
-compatibility matrix remain unqualified.
+IDs, checked scalar values and the owned tmux fixture have tests. The
+complete public API, installed consumers and compatibility matrix remain
+unqualified.
 
 Read [AGENTS.md](../AGENTS.md) for change discipline and
 [WRITING.md](WRITING.md) for prose and commit conventions.
@@ -73,8 +73,28 @@ Run the Tasty unit tree, including direct QuickCheck graph properties:
 $ cabal test unit --offline --test-show-details=direct
 ```
 
-The two runners have separate executables. Read [testing](../docs/testing.md)
+The two runners have separate executables. Read [testing](TESTING.md)
 for specification authoring, generation/shrinking, and suite assembly.
+
+Check the example catalogue, displayed source/output and local guide links
+without compiling or contacting a server:
+
+```console
+$ python3 scripts/check_docs.py
+```
+
+Verify that deliberate documentation defects are rejected:
+
+```console
+$ python3 scripts/test_check_docs.py
+```
+
+Run the exact documented checkout commands after provisioning. The outer
+check compares exit status, stdout and stderr:
+
+```console
+$ python3 scripts/check_docs.py --run
+```
 
 Run the outer integration tier against an explicitly selected tmux binary.
 These tests start real daemons and check teardown:
@@ -115,7 +135,8 @@ Create the source archive for isolated consumer verification:
 $ cabal sdist all
 ```
 
-Build and execute a consumer from the archive outside the checkout:
+Build and execute every declared consumer and the public Haddock examples
+from the archive outside the checkout:
 
 ```console
 $ python3 scripts/check_sdist.py

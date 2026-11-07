@@ -1,7 +1,12 @@
-packages: .
+packages: . examples/typed-values
 
 index-state: 2026-11-06T00:00:00Z
 tests: True
 
 package libtmux-haskell
   ghc-options: -Werror
+  haddock-html: True
+  haddock-hyperlink-source: True
+  haddock-quickjump: True
+  haddock-hoogle: True
+  haddock-html-location: https://hackage.haskell.org/package/$pkg-$version/docs

@@ -1,12 +1,25 @@
--- | Checked scalar values. Construction is pure and never performs tmux IO.
+-- | Positive dimensions and nonnegative contextual indices.
+--
+-- Construction and access are pure. Window-link indices and pane indices
+-- have distinct types; neither substitutes for an entity ID. A constructor
+-- checks the mathematical domain, while command-specific limits belong at
+-- the operation boundary.
+--
+-- >>> fmap dimensionValue (mkDimension 120)
+-- Right 120
+-- >>> mkDimension 0
+-- Left (NonPositiveDimension 0)
 module LibTmux.Value
-  ( Dimension
+  ( -- * Checked types
+    Dimension
   , WindowIndex
   , PaneIndex
+    -- * Validate input
   , ValueError (..)
   , mkDimension
   , mkWindowIndex
   , mkPaneIndex
+    -- * Read numeric values
   , dimensionValue
   , windowIndexValue
   , paneIndexValue
@@ -32,8 +45,8 @@ newtype PaneIndex = PaneIndex Integer
 
 -- | A scalar outside its mathematical domain.
 data ValueError
-  = NonPositiveDimension !Integer
-  | NegativeIndex !Integer
+  = NonPositiveDimension !Integer -- ^ The supplied dimension was zero or negative.
+  | NegativeIndex !Integer -- ^ The supplied contextual index was negative.
   deriving stock (Eq, Show)
 
 -- | Construct a positive dimension without applying a command-specific maximum.

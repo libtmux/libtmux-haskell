@@ -73,4 +73,23 @@ integration suite must pass before a fresh tmux build is saved.
 These checks qualify the existing implementation subset. The complete
 capture/runtime/workspace/MCP and release gates remain separate work.
 
+## Executable documentation
+
+The [catalogue](../examples/catalogue.json) is the source of runnable program
+paths, displayed assets and execution provenance. The documentation check
+rejects unregistered programs and Haskell fences, including nested guides.
+Its regression cases introduce missing examples, stale snippets and invalid
+catalogue entries in disposable copies.
+
+CI runs the literal checkout command and then builds the same public program
+from the source archive in an independent application. Both check exit
+status, exact stdout and empty stderr. The archive consumer also executes
+the `>>>` examples from the public module documentation. Keep all these
+routes passing when changing an example, manifest or public signature.
+
+A real-tmux capability program must include its own setup and cleanup,
+explicit target, feature floor and observable result. Run it end to end;
+a compile-only test or a private test helper does not qualify the shared
+[showcase](https://github.com/libtmux/docs/issues/243).
+
 [adapter]: https://hackage-content.haskell.org/package/tasty-hspec-1.2.0.4/revision/8.cabal

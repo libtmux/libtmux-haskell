@@ -15,6 +15,20 @@ of calling it fast. Distinguish planned, implemented, tested, and published
 behavior. A README must not offer installation or API examples before they
 work.
 
+## Reader paths
+
+Keep the README ordered around the caller's task: purpose, installation,
+the smallest complete example with error handling and output, support and
+limits, then links to the manual and API. Link a function or type on its
+first use in each section. Use Haskell names such as `parseWindowId` and
+`LibTmux.Id`; do not append call parentheses.
+
+Describe CI's actual triggers, versions and exercised behavior. A configured
+matrix is not a completed run, and a tested fixture is not a qualified
+public client. Performance claims need measurements and a reproduction
+command. Changelog and release-note bullets name an observable change,
+its affected API, and any migration; omit effort and internal diff narration.
+
 ## Markdown and examples
 
 Use CommonMark with blank lines around headings and lists. Wrap repository
@@ -32,8 +46,23 @@ Code blocks are paste-and-run units:
 - Use the native language tag for source examples and run examples as shown.
 
 Examples that touch tmux own their socket and cleanup. Keep documentation
-snippets derived from checked source or add a drift check once examples
-exist. Compilation alone does not establish runtime behavior.
+snippets derived from checked source. Compilation alone does not establish
+runtime behavior.
+
+Every runnable Markdown example belongs in `examples/catalogue.json`, with
+one complete `Main.hs` per example directory. Register source, expected
+output, package/project files, command and the CI job/step that checks exit
+status and output. Mark displayed assets with the existing `example`,
+`example-output`, `example-project` and `example-package` directives. The
+documentation check rejects drift, orphaned programs and unregistered
+Haskell fences throughout the README, manual and maintainer guides.
+
+The shared [capability showcase](https://github.com/libtmux/docs/issues/243)
+requires whole programs using public imports, explicit owned setup and
+cleanup, and an asserted or printed result. Record each feature's actual
+tmux floor. Offer only implemented and executed capabilities; a pure scalar
+example does not demonstrate graph navigation or commands. Contract design
+notes must identify proposed APIs rather than presenting runnable examples.
 
 ## Haskell documentation and comments
 
@@ -41,6 +70,12 @@ Use Haddock beside public definitions. Start with the caller-visible result.
 Explain inputs, defaults, errors, effects, ownership, ordering, cancellation,
 and cleanup when relevant. Distinguish pure values from operations in `IO`.
 Verify generated API links when documentation tooling is added.
+
+Use Haddock's native identifier links, module overviews, export groups and
+declaration examples. Keep large APIs discoverable through task-oriented
+groups instead of a flat member list. Execute every `>>>` example through
+the archive consumer check. Inspect generated search, declaration anchors,
+source navigation and dependency links before publishing API artifacts.
 
 Comments explain non-obvious invariants, protocol constraints, or platform
 workarounds. Prefer one or two lines. Remove narration of the next expression

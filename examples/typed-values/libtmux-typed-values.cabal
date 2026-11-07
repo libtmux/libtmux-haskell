@@ -1,0 +1,13 @@
+cabal-version: 3.18
+name: libtmux-typed-values
+version: 0.0.0
+build-type: Simple
+license: MIT
+
+executable typed-values
+  main-is: Main.hs
+  default-language: GHC2024
+  ghc-options: -Wall -Werror
+  build-depends:
+    base >=4.22 && <4.23,
+    libtmux-haskell ^>=0.1.0.0

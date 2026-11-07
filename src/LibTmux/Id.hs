@@ -1,16 +1,29 @@
--- | Typed tmux IDs. An ID alone does not establish an endpoint or server lifetime;
--- operations will require a reference captured through a client generation.
+-- | Distinct session, physical-window and physical-pane IDs.
+--
+-- Parsing and rendering are pure. An ID carries no endpoint, server lifetime
+-- or liveness evidence. Render an ID for external text; use its numeric
+-- accessor when an application needs the mathematical value.
+--
+-- >>> :set -XOverloadedStrings
+-- >>> fmap renderWindowId (parseWindowId "@17")
+-- Right "@17"
+-- >>> either (const "rejected") renderPaneId (parsePaneId "@17")
+-- "rejected"
 module LibTmux.Id
-  ( SessionId
+  ( -- * Entity identities
+    SessionId
   , WindowId
   , PaneId
+    -- * Parse external values
   , IdError (..)
   , parseSessionId
   , parseWindowId
   , parsePaneId
+    -- * Render target text
   , renderSessionId
   , renderWindowId
   , renderPaneId
+    -- * Read numeric values
   , sessionIdValue
   , windowIdValue
   , paneIdValue

@@ -1,0 +1,36 @@
+{
+  "schema": "libtmux.examples/1",
+  "examples": [
+    {
+      "id": "typed-values",
+      "source": "examples/typed-values/Main.hs",
+      "package": "examples/typed-values/libtmux-typed-values.cabal",
+      "project": "examples/typed-values/cabal.project",
+      "vcs_project": "examples/typed-values/cabal.project.vcs",
+      "stdout": "examples/typed-values/expected.stdout",
+      "executable": "typed-values",
+      "capability": null,
+      "command": [
+        "cabal",
+        "run",
+        "--verbose=0",
+        "typed-values"
+      ],
+      "verification": {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "checks",
+        "step": "Isolated source-archive consumer",
+        "command": [
+          "python3",
+          "scripts/check_sdist.py"
+        ],
+        "checks": [
+          "exit-status",
+          "stdout",
+          "stderr-empty",
+          "archive-consumer"
+        ]
+      }
+    }
+  ]
+}

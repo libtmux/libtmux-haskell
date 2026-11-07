@@ -36,7 +36,7 @@ jobs:
           path: |
             ${{ steps.haskell.outputs.cabal-store }}
             ~/.cabal/packages
-          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'cabal.project') }}
+          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
           restore-keys: haskell-ubuntu26-x64-9.14.1-3.18.2.0-
       - name: Provision dependencies
         run: |
@@ -54,6 +54,10 @@ jobs:
         run: |
           cabal test specs --offline --test-show-details=direct --test-options='--strict --fail-on=empty'
           cabal test unit --offline --test-show-details=direct
+      - name: Documented example command
+        run: |
+          python3 scripts/test_check_docs.py
+          python3 scripts/check_docs.py --run
       - name: Public type contracts
         run: scripts/check-types
       - name: Build-cache regressions
@@ -85,6 +89,7 @@ jobs:
           path: |
             dist-newstyle/cache/plan.json
             dist-newstyle/**/test/*.log
+            dist-newstyle/**/doc/html/libtmux-haskell/**
           if-no-files-found: ignore
           retention-days: 7
 
@@ -112,7 +117,7 @@ jobs:
           path: |
             ${{ steps.haskell.outputs.cabal-store }}
             ~/.cabal/packages
-          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'cabal.project') }}
+          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
       - name: Provision tmux build and runtime libraries
         run: |
           sudo apt-get -o Acquire::Retries=3 update
