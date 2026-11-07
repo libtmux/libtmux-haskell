@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd -- "$(dirname -- "$0")/.."
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/libtmux-haskell-types.XXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
+
+cabal build lib:libtmux-haskell --offline -v0
+
+compile() {
+    cabal exec --offline -v0 -- ghc -v0 -fno-code -fforce-recomp \
+        -XGHC2024 -Wall -Werror -fdiagnostics-as-json \
+        -outputdir "$scratch" -package libtmux-haskell "$1"
+}
+
+compile test/compile-pass/ValueApi.hs
+
+reject() {
+    local source=$1 code=$2 expected=$3
+    if compile "$source" >"$scratch/diagnostics" 2>&1; then
+        printf 'Unexpected compilation success: %s\n' "$source" >&2
+        return 1
+    fi
+    if ! jq -Rse --argjson code "$code" --arg expected "$expected" '
+        split("\n") | map(fromjson?) |
+        any(.[]; .severity == "Error" and .code == $code and
+            (.message | join(" ") | contains($expected)))
+    ' "$scratch/diagnostics" >/dev/null; then
+        cat "$scratch/diagnostics" >&2
+        printf 'Missing intended type error: %s\n' "$source" >&2
+        return 1
+    fi
+}
+
+reject test/compile-fail/DimensionLiteral.hs 39999 'Num Dimension'
+reject test/compile-fail/MixedIndices.hs 83865 'Expected: PaneIndex -> WindowIndex'
+reject test/compile-fail/MixedIds.hs 83865 'Expected: PaneId -> WindowId'
+printf 'PASS: value API (1 positive and 3 intended negative compilation cases)\n'

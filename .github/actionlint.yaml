@@ -1,0 +1,5 @@
+# Hosted Ubuntu 26.04 is newer than actionlint 1.7.12's label catalogue.
+# https://github.com/actions/runner-images#available-images
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

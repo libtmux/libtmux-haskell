@@ -1,0 +1,1445 @@
+{
+  "schema": "libtmux.contract-cases/1",
+  "status": "PLANNED; case specifications exist, example/test code is not yet implemented",
+  "scope": "One canonical contract may have many Python declarations. These shared scenarios cover the 177 canonical keys without requiring duplicate wrappers or tests for ordinary Prelude operations. Detailed modes remain in each inventory contract document.",
+  "execution_rules": [
+    "Every live case owns its socket, daemon, clients, PTYs, processes and temporary files; clear ambient TMUX/TMUX_PANE and verify teardown on success, failure and cancellation.",
+    "Live names P, C1, alpha and similar labels refer to identities actually returned by the owned fixture. Fixed numeric IDs occur only in the pure graph fixture.",
+    "PLANNED locators are destinations for later work, not missing files to fake with placeholders. Stable case IDs identify expected assertions without depending on line numbers.",
+    "Ordinary pinned IO cases inherit generation, no-start, bounded-output, capability rejection, asynchronous-cancellation and unknown-outcome rules. Explicit daemon-start and absent-endpoint first-session bootstrap are startup exceptions; their subsequent pinned steps keep -N. Run the exact required release cells for enabled capabilities.",
+    "Additional detailed contract modes and adversarial cases remain required; one scenario is not a claim of full conformance or a one-test-per-method mandate."
+  ],
+  "fixtures": {
+    "graph": "Detached generation G: sessions $1 dev attached=2 and $2 ops attached=0. Links: $1 indices 0 and 4 -> @7 (0 active); $2 index 1 -> @7 and 2 -> @8 (2 active). Window @7 editor width=241 height=40: %3 index=0 left=0 top=0 width=120 height=40 active, title=editor, command=nvim; %4 index=1 left=121 top=0 width=120 height=40 inactive, title=logs, command=cat. Window @8 shell width=80 height=24: %5 index=0 active. Clients client-a/client-b both attach through ($1,0,@7) to %3. Foreign generation G2 has distinct lifetime token. Unattached-client projection uses a separate detached client value; it does not expand the live attached-client inventory scope.",
+    "live": "Owned pinned daemon with sessions alpha/beta, linked and unlinked windows, controlled panes, returned IDs and separate observation records. Signal gates establish readiness without sleeps. Rebuild the fixture for destructive scenarios.",
+    "clients": "The live fixture plus owned PTYs C1/C2 attached to alpha and C3 to beta. The harness controls prompt answers, overlay lifetime, lock-program signals and terminal restoration. No fixed host tty is used.",
+    "absent-endpoint": "An owned private directory with no server socket, plus tracked startup child and cleanup ownership. No default server is addressed.",
+    "environment-hints": "A supplied finite environment mapping only; IO is instrumented to reject hidden acquisition during parsing.",
+    "access": "A dedicated isolated Linux user fixture with explicitly provisioned non-owner test identity and privilege; no host-user access policy is modified.",
+    "capture": "Owned controlled pane producing lines, trailing blank rows, invalid UTF-8, pending-parser bytes and guard-looking text. Owned hooks can emit, wait, fail or mutate; all signal-gated and bounded.",
+    "capture-clients": "Compose the capture and clients fixtures on the same owned daemon: use the controlled capture pane as explicit format context and owned PTY client C1 as the separate display destination.",
+    "input": "Owned process that records received bytes and emits explicit test acknowledgments; those acknowledgments are fixture evidence, never implicit API completion guarantees.",
+    "buffers": "Owned daemon with named alpha, unrelated top buffer KEEP, caller bytes represented as hex 00410aff0a, and an exact receiving pane P whose owned process records input bytes. Buffer ownership and any uncertain cleanup are recorded."
+  },
+  "cases": {
+    "record-projections": {
+      "canonical_keys": [
+        "pane.at-bottom",
+        "pane.at-left",
+        "pane.at-right",
+        "pane.at-top",
+        "pane.height",
+        "pane.id",
+        "pane.index",
+        "pane.record-field",
+        "pane.title",
+        "pane.width",
+        "session.id",
+        "session.name",
+        "session.record-field",
+        "window.height",
+        "window.id",
+        "window.index",
+        "window.name",
+        "window.record-field",
+        "window.width"
+      ],
+      "status": "PLANNED",
+      "owner_task": "observation-catalogue",
+      "fixture": "graph",
+      "action": "Project every listed field from pane %3, session $1, window @7 and its link at index 4, after closing acquisition.",
+      "expected": "Pane: id %3, index 0, width 120, height 40, title editor, left/top/bottom true and right false. Session: id $1, name dev. Window: id @7, name editor, width 241, height 40. Link index is 4. Record-field aliases use these ordinary typed projections; no string-key lookup or IO occurs.",
+      "counterexample": "Wrong entity/operand types fail compilation for the intended diagnostic; missing capability never becomes Nothing. Change only the captured title: record equality changes while ref equality does not.",
+      "example": {
+        "path": "examples/Observe.hs",
+        "case_id": "record-projections",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/ObservationContractTest.hs",
+        "case_id": "record-projections",
+        "status": "PLANNED"
+      }
+    },
+    "graph-sources": {
+      "canonical_keys": [
+        "server.sessions",
+        "server.windows",
+        "server.panes",
+        "session.windows",
+        "session.panes",
+        "window.panes",
+        "window.linked-sessions",
+        "pane.window",
+        "pane.session",
+        "window.session",
+        "session.active-pane",
+        "session.active-window",
+        "window.active-pane"
+      ],
+      "status": "PLANNED",
+      "owner_task": "observation-catalogue",
+      "fixture": "graph",
+      "action": "Read global sources, both sessions, window @7, pane %3 and each of its occurrences.",
+      "expected": "Sessions [$1,$2]; physical windows [@7,@8]; physical panes [%3,%4,%5]. Session $1 links [(0,@7),(4,@7)] and occurrences [%3,%4,%3,%4]. Window @7 panes [%3,%4] and unique linked sessions [$1,$2]. Pane %3 has physical parent @7; occurrence/link session projections retain $1 or $2. Session $1 active link is (0,@7), active occurrence %3 through that link; window @7 active pane is %3.",
+      "counterexample": "Foreign-generation or missing references fail explicitly. A physical pane/window does not acquire a unique session. Repeated links must not disappear during normalization.",
+      "example": {
+        "path": "examples/Observe.hs",
+        "case_id": "graph-sources",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/ObservationContractTest.hs",
+        "case_id": "graph-sources",
+        "status": "PLANNED"
+      }
+    },
+    "attached-observations": {
+      "canonical_keys": [
+        "server.clients",
+        "server.attached-sessions",
+        "client.attached-pane",
+        "client.attached-session",
+        "client.attached-window"
+      ],
+      "status": "PLANNED",
+      "owner_task": "observation-catalogue",
+      "fixture": "graph",
+      "action": "Read captured clients sorted by name bytes and select sessions whose attached count is positive; project each stored client attachment.",
+      "expected": "Clients [client-a,client-b] retain session $1, link (0,@7), pane occurrence %3. Attached sessions are [$1] even though its count is 2. A separately constructed unattached ObservedClient has Nothing for all three projections.",
+      "counterexample": "Counts 0,1,2 select only 1 and 2. Reusing client-a in a later capture cannot change an older observation. Pure projection never resolves its name again.",
+      "example": {
+        "path": "examples/Observe.hs",
+        "case_id": "attached-observations",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/ObservationContractTest.hs",
+        "case_id": "attached-observations",
+        "status": "PLANNED"
+      }
+    },
+    "native-filtering": {
+      "canonical_keys": [
+        "_internal/query_list.filter",
+        "query.filter-panes",
+        "query.filter-sessions",
+        "query.filter-windows",
+        "server.search-panes",
+        "server.search-sessions",
+        "server.search-windows",
+        "session.search-panes",
+        "session.search-windows",
+        "window.search-panes"
+      ],
+      "status": "PLANNED",
+      "owner_task": "native-query",
+      "fixture": "graph",
+      "action": "Compare native predicates and typed queries: pane currentCommand == nvim; session name == dev; window ref == @7. Use global physical sources and the declared contextual sources separately.",
+      "expected": "Global results are [%3],[$1],[@7]. Session $1 pane occurrences retain [%3,%3] and links retain [(0,@7),(4,@7)]; window @7 panes return [%3]. Order and multiplicity survive. Sorting follows membership and limit follows sorting.",
+      "counterexample": "An unavailable field in a short-circuited branch still returns QueryError. Arbitrary tmux format text uses the IO/raw boundary. Same-child and different-child quantifiers differ on active %3 versus a predicate true only for %4; known empty relations give False/True/True for some/every/none.",
+      "example": {
+        "path": "examples/Query.hs",
+        "case_id": "native-filtering",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/QueryContractTest.hs",
+        "case_id": "native-filtering",
+        "status": "PLANNED"
+      }
+    },
+    "cardinality": {
+      "canonical_keys": [
+        "_internal/query_list.get",
+        "query.at-most-one-panes",
+        "query.at-most-one-sessions",
+        "query.at-most-one-windows",
+        "query.lookup-panes",
+        "query.lookup-sessions",
+        "query.lookup-windows"
+      ],
+      "status": "PLANNED",
+      "owner_task": "native-query",
+      "fixture": "graph",
+      "action": "Run exactlyOne and atMostOne on zero, one and two matching rows; look up each typed ID in its explicit source.",
+      "expected": "exactlyOne rejects zero and two; atMostOne returns Nothing for zero, Just row for one and ambiguity for two. Global @7 is unique, but looking up @7 in session $1 links is ambiguous. Repeated %3 occurrences are likewise ambiguous. Mutation is never dispatched after a cardinality error.",
+      "counterexample": "A first-match implementation fails the two-row case. A late second match after many nonmatches still produces ambiguity; report at least two unless the full count was computed.",
+      "example": {
+        "path": "examples/Query.hs",
+        "case_id": "cardinality",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/QueryContractTest.hs",
+        "case_id": "cardinality",
+        "status": "PLANNED"
+      }
+    },
+    "keyed-pairs": {
+      "canonical_keys": [
+        "_internal/query_list.items"
+      ],
+      "status": "PLANNED",
+      "owner_task": "native-query",
+      "fixture": "graph",
+      "action": "Map each session $1 link to (window ID, link).",
+      "expected": "The result contains two @7 keys in link-index order, with distinct indices 0 and 4.",
+      "counterexample": "A Map conversion would collapse a key and is not the replacement for items.",
+      "example": {
+        "path": "examples/Query.hs",
+        "case_id": "keyed-pairs",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/QueryContractTest.hs",
+        "case_id": "keyed-pairs",
+        "status": "PLANNED"
+      }
+    },
+    "environment-hints": {
+      "canonical_keys": [
+        "server.from-env",
+        "session.from-env",
+        "window.from-env",
+        "pane.from-env"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "environment-hints",
+      "action": "Purely parse supplied TMUX=/owned/path,with,commas/socket,123,1 and TMUX_PANE=%3; then separately resolve the hints through an explicitly connected client.",
+      "expected": "Right splitting retains the complete socket path, PID hint 123, session hint 1 and pane hint %3. No parsing step connects, reads ambient environment or creates live references. Window/session occurrence alternatives remain explicit when the pane is multiply linked.",
+      "counterexample": "Missing TMUX, a nonnumeric suffix or TMUX_PANE=%bad is a parse error. Missing or mismatched acquisition evidence fails explicitly. Reused socket/PID/entity identifiers can resolve successfully but never prove continuity with an earlier daemon/entity; new references belong only to the newly established generation.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "environment-hints",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "environment-hints",
+        "status": "PLANNED"
+      }
+    },
+    "entity-acquisition": {
+      "canonical_keys": [
+        "session.from-session-id",
+        "session.refresh",
+        "window.from-window-id",
+        "window.refresh",
+        "pane.from-pane-id",
+        "pane.refresh"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "live",
+      "action": "Acquire each created entity by its exact ID; change its name/title or geometry using the fixture, then refresh the prior observation.",
+      "expected": "Each operation returns a detached current observation in the pinned generation. Refresh leaves the prior record unchanged. Physical windows/panes normalize repeated links while occurrence queries retain them.",
+      "counterexample": "Missing IDs return TargetMissing; a replaced public socket cannot redirect lookup; a conflicting capture fails. A bare physical ID cannot select an arbitrary session link.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "entity-acquisition",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "entity-acquisition",
+        "status": "PLANNED"
+      }
+    },
+    "client-acquisition": {
+      "canonical_keys": [
+        "client.from-client-name",
+        "client.refresh"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "clients",
+      "action": "Observe C1 by its exact name, close C1, and create another owned client at the same selector where the fixture can reproduce reuse.",
+      "expected": "Fresh lookup/refresh describes the current occupant with observation time; the older record stays detached and does not assert lifetime continuity.",
+      "counterexample": "Zero matches is missing and duplicate matches are ambiguous; a matching name does not prove that C1 survived.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "client-acquisition",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "client-acquisition",
+        "status": "PLANNED"
+      }
+    },
+    "raw-command": {
+      "canonical_keys": [
+        "server.cmd",
+        "session.cmd",
+        "window.cmd",
+        "pane.cmd"
+      ],
+      "status": "PLANNED",
+      "owner_task": "runtime-completion",
+      "fixture": "live",
+      "action": "Execute a bounded explicit command producing stdout and stderr, a nonzero command, and a waiting command through each raw convenience entry point.",
+      "expected": "Retain raw bytes, exit status and dispatch evidence. Entity entry points disclose constructed target argv. Unknown commands use waiting admission; later commands in a sequence have no invented per-step success.",
+      "counterexample": "Cancel after possible dispatch: retain unknown outcome/debt. A receiver named Pane does not reserve its target or make arbitrary commands read-only.",
+      "example": {
+        "path": "examples/Waiting.hs",
+        "case_id": "raw-command",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/WaitingContractTest.hs",
+        "case_id": "raw-command",
+        "status": "PLANNED"
+      }
+    },
+    "session-existence": {
+      "canonical_keys": [
+        "server.has-session"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "live",
+      "action": "Query ExactName alpha, an absent exact name and the actual SessionId; then retire the pinned daemon.",
+      "expected": "Present targets yield True and qualified absence yields False; dead endpoint produces ServerUnavailable.",
+      "counterexample": "Permission, ambiguous-selector and decode failures remain errors instead of False.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "session-existence",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "session-existence",
+        "status": "PLANNED"
+      }
+    },
+    "command-catalogue": {
+      "canonical_keys": [
+        "server.list-commands"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "live",
+      "action": "Acquire all definitions and locally select the exact registered name capture-pane; also request an unknown exact name.",
+      "expected": "The exact selector returns only capture-pane; unknown exact name returns no match on every required release. Native prefix lookup is separately named and capability-qualified.",
+      "counterexample": "Calling the native 3.8 prefix parser for the common exact API would change ambiguity/unknown behavior; a dead pin cannot start a daemon.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "command-catalogue",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "command-catalogue",
+        "status": "PLANNED"
+      }
+    },
+    "client-diagnostics": {
+      "canonical_keys": [
+        "server.list-clients"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "clients",
+      "action": "List client diagnostics while C1/C2 attach to alpha, C3 attaches to beta, and a transient command client runs.",
+      "expected": "Return bounded rendered bytes for attached clients, without an implicit session filter or claim to enumerate all transient clients.",
+      "counterexample": "Hook output or malformed framing cannot become a typed ObservedClient row.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "client-diagnostics",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "client-diagnostics",
+        "status": "PLANNED"
+      }
+    },
+    "access-control": {
+      "canonical_keys": [
+        "server.server-access"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "access",
+      "action": "List access, add the fixture user read-only, change it to writable, then deny it.",
+      "expected": "Preserve each processing outcome and diagnostic listing. Add-existing errors; SetUserPermission can add an absent user. Denial may disconnect that user and requires separate exit observation.",
+      "counterexample": "Owner/root, unknown user and incompatible modes fail concretely. Use a prepared isolated user fixture; unavailable privilege leaves the case unverified, never passed.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "access-control",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "access-control",
+        "status": "PLANNED"
+      }
+    },
+    "server-messages": {
+      "canonical_keys": [
+        "server.show-messages"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "clients",
+      "action": "Request server log, jobs and terminal diagnostics with C1, then with its missing selector.",
+      "expected": "Logs/jobs remain server diagnostics. Native fallback is reported explicitly; a strict terminal-selector variant refuses an unproved no-fallback guarantee.",
+      "counterexample": "The 3.8 missing-selector fallback to all terminals must not be mislabeled as C1-only data; no AllExcept mode is invented.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "server-messages",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "server-messages",
+        "status": "PLANNED"
+      }
+    },
+    "prompt-history": {
+      "canonical_keys": [
+        "server.show-prompt-history",
+        "server.clear-prompt-history"
+      ],
+      "status": "PLANNED",
+      "owner_task": "snapshot-capture",
+      "fixture": "clients",
+      "action": "Populate two prompt types, show one and all, then clear only the selected type.",
+      "expected": "Rendered headers/newlines are preserved; the other prompt type remains. Clear reports command processing and does not clear shell history.",
+      "counterexample": "Invalid prompt type is rejected; history output contaminated by hooks is not silently accepted.",
+      "example": {
+        "path": "examples/Discover.hs",
+        "case_id": "prompt-history",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/AcquisitionContractTest.hs",
+        "case_id": "prompt-history",
+        "status": "PLANNED"
+      }
+    },
+    "environment-state": {
+      "canonical_keys": [
+        "common.getenv",
+        "common.remove-environment",
+        "common.set-environment",
+        "common.show-environment",
+        "common.unset-environment"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Set global LIBTMUX_CASE=parent, a session entry child, hidden and removal-marked entries, and an empty value. Read one and list; use unsetEnvironment to delete the session entry and removeEnvironment to store a removal marker in a separate run.",
+      "expected": "Preserve visible/hidden state, empty value, removal marker and absence. unsetEnvironment verifies absence in both visibility modes; later created session processes can inherit the global value. removeEnvironment retains a Removed entry and its observed visibility. Global and session targets do not drift.",
+      "counterexample": "Use embedded LF, equals, semicolon and invalid UTF-8 bytes; ambiguous baseline listing must fail explicitly. A missing name is distinct from transport failure; expansion uses a qualified context receipt.",
+      "example": {
+        "path": "examples/Environment.hs",
+        "case_id": "environment-state",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/EnvironmentContractTest.hs",
+        "case_id": "environment-state",
+        "status": "PLANNED"
+      }
+    },
+    "option-inheritance": {
+      "canonical_keys": [
+        "options.set-option",
+        "options.show-option",
+        "options.show-options",
+        "options.unset-option"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Set global/window/pane user values 001 and on, inspect LocalOnly versus Effective, remove overrides, then exercise sparse numeric array entries and supported named keys.",
+      "expected": "User values remain strings; local absence differs from empty. Local arrays shadow the whole parent; holes do not inherit individual entries. Unset restores the specified parent/default, and list preserves origin and keys or refuses unrepresentable framing.",
+      "counterexample": "Quiet exit is not Applied. Failed whole-array replacement retains partial effects; named keys are refused before dispatch on unsupported releases; after-show-options bytes cannot enter a value.",
+      "example": {
+        "path": "examples/Options.hs",
+        "case_id": "option-inheritance",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/OptionContractTest.hs",
+        "case_id": "option-inheritance",
+        "status": "PLANNED"
+      }
+    },
+    "hook-entries": {
+      "canonical_keys": [
+        "hooks.set-hook",
+        "hooks.set-hooks",
+        "hooks.show-hook",
+        "hooks.show-hooks",
+        "hooks.unset-hook",
+        "hooks.run-hook"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Install parent hook entries at indices 0 and 3, replace with an empty local hook, patch one local entry, read/list, remove override, then run with explicit context and fixture signals.",
+      "expected": "Empty local replacement suppresses inheritance; removing override restores parent entries. Patch preserves ordered outcomes and undispatched remainder. Read/list retains keys and command source. Run reports only proved effective-context completion.",
+      "counterexample": "Reject ServerOptions. A deleted target cannot fall back under a strict target promise. Partial updates remain partial; a missing/custom parse-failed hook must not fabricate action completion.",
+      "example": {
+        "path": "examples/Hooks.hs",
+        "case_id": "hook-entries",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/HookContractTest.hs",
+        "case_id": "hook-entries",
+        "status": "PLANNED"
+      }
+    },
+    "daemon-start": {
+      "canonical_keys": [
+        "server.start-server"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "absent-endpoint",
+      "action": "Call startDaemonAt for an owned absent endpoint without changing lifetime options or adding a session.",
+      "expected": "Return StartAccepted only after command processing. No -D policy change, implicit session or pinned Client is fabricated; the empty daemon may exit immediately.",
+      "counterexample": "Do not implement liveness by starting a daemon; startup failure is explicit and cancellation after dispatch is uncertain.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "daemon-start",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "daemon-start",
+        "status": "PLANNED"
+      }
+    },
+    "daemon-liveness": {
+      "canonical_keys": [
+        "server.is-alive",
+        "server.raise-if-dead"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Check an owned live daemon with no sessions, then retire it; inject a separate permission/transport failure.",
+      "expected": "Live-empty remains alive. Confirmed retirement yields false/unavailable as the API specifies. requireAlive preserves unrelated transport errors.",
+      "counterexample": "A failed list-sessions call alone cannot prove death; cancellation is not converted to ordinary absence.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "daemon-liveness",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "daemon-liveness",
+        "status": "PLANNED"
+      }
+    },
+    "daemon-kill": {
+      "canonical_keys": [
+        "server.kill"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Kill the owned pinned server while a second owned daemon occupies a different endpoint.",
+      "expected": "Retire the killed generation and observe its process exit; the second daemon survives. Closing a Client alone issues no kill-server.",
+      "counterexample": "Lost completion evidence stays unknown; no replay against a replacement public path.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "daemon-kill",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "daemon-kill",
+        "status": "PLANNED"
+      }
+    },
+    "session-create": {
+      "canonical_keys": [
+        "server.new-session"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "absent-endpoint",
+      "action": "Bootstrap the first alpha session with a controlled direct process, then create beta through the pinned client and exercise explicit replacement.",
+      "expected": "Retain actual created session/window/pane IDs and live bootstrap challenge/pin evidence. Detached creation stays distinct from terminal attachment. Replacement records destruction and creation independently.",
+      "counterexample": "Hooks can rename/destroy the creation; retain its historical receipt. Lost receipt or retirement stops dependent mutations without retry. Ignored Python varargs do not introduce implicit reuse.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "session-create",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "session-create",
+        "status": "PLANNED"
+      }
+    },
+    "window-create-reuse": {
+      "canonical_keys": [
+        "session.new-window"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Create build at an exact free slot, then request reuse with and without selection; repeat against two links sharing the same name.",
+      "expected": "Creation returns actual IDs and slot; reuse returns ReuseAccepted without an invented reference. Detached reuse does not select. Duplicate-name links are ambiguous; occupied-slot semantics are capability-qualified.",
+      "counterexample": "Relative insertion may shift indices before spawn failure. New-window names expand as formats; literal-name reuse requires a proved encoding. After-hooks may destroy the created object.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "window-create-reuse",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "window-create-reuse",
+        "status": "PLANNED"
+      }
+    },
+    "session-destruction": {
+      "canonical_keys": [
+        "session.kill"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Independently exercise kill-one, kill-others with alpha as survivor, supported group kill, and clear-alerts.",
+      "expected": "Each sum-type intent has its own postcondition. Clear-alerts leaves the session; kill-others preserves the specified survivor. Linked objects can remain in other sessions.",
+      "counterexample": "Unsupported group flags fail before dispatch. Last-session retirement and cancellation preserve uncertainty; no broad postcondition assumes every targeted object vanished.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "session-destruction",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "session-destruction",
+        "status": "PLANNED"
+      }
+    },
+    "entity-destruction": {
+      "canonical_keys": [
+        "window.kill",
+        "pane.kill"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Kill a physical window shared by two links; separately kill one pane and kill-other-panes with an explicit survivor.",
+      "expected": "Window removal affects all links; pane survivor modes preserve their target. Native bulk-window mode keeps its documented repeated-link behavior.",
+      "counterexample": "A repeated target window may itself be killed by bulk mode; pane removal does not prove descendant process exit.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "entity-destruction",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "entity-destruction",
+        "status": "PLANNED"
+      }
+    },
+    "window-slot-operations": {
+      "canonical_keys": [
+        "window.link",
+        "window.move-window",
+        "window.select",
+        "window.swap",
+        "window.unlink"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Link a source slot at another index, move it before an anchor, select a slot, swap two slots, renumber a session and unlink one contextual link.",
+      "expected": "Each result retains source/destination slot intent and command-specific selection. Shared physical identity does not erase links. Renumber is separate from move; protected last-link removal is explicit.",
+      "counterexample": "Reuse a slot between observation and execution: the slot API addresses its current occupant. An expected-window API refuses without atomic proof. Relative insertion, replacement and session groups can cause partial effects before failure.",
+      "example": {
+        "path": "examples/CreateAndLink.hs",
+        "case_id": "window-slot-operations",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/CreationContractTest.hs",
+        "case_id": "window-slot-operations",
+        "status": "PLANNED"
+      }
+    },
+    "window-navigation": {
+      "canonical_keys": [
+        "session.last-window",
+        "session.next-window",
+        "session.previous-window"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Select alpha slots A then B; invoke last, next and previous as separate actions on that session.",
+      "expected": "Report command completion and separately observed selected link. Each action uses the exact session; no old snapshot is returned as a fresh result.",
+      "counterexample": "A missing navigation candidate is an error; replacement of observed slot context does not become a reserved target.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "window-navigation",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "window-navigation",
+        "status": "PLANNED"
+      }
+    },
+    "rename-and-title": {
+      "canonical_keys": [
+        "session.rename-session",
+        "window.rename-window",
+        "pane.set-title"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Rename alpha, rename its physical window and set a pane title using literal text containing #{} and semicolons; separately request explicit format expansion.",
+      "expected": "Qualified literal encoding preserves the requested text without executing another command; expanded mode uses explicit context. Window rename disables automatic renaming; title change does not select the pane.",
+      "counterexample": "Duplicate/invalid session name fails. If literal encoding is unproved, refuse before dispatch; a later failed readback does not erase command completion.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "rename-and-title",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "rename-and-title",
+        "status": "PLANNED"
+      }
+    },
+    "pane-selection": {
+      "canonical_keys": [
+        "pane.select",
+        "window.last-pane"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Select exact pane P, select a direction from P, toggle/clear a mark, change input enabled state, then exercise lastPane selection and its input mode.",
+      "expected": "Selection, mark and input state are distinct observations. ToggleMark twice clears it. lastPane exposes only its supported selection/input intents, with no mark or direction flags.",
+      "counterexample": "Direction may succeed unchanged; a missing last pane errors. Floating marking and keepZoom require operation-specific capabilities.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-selection",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-selection",
+        "status": "PLANNED"
+      }
+    },
+    "pane-creation": {
+      "canonical_keys": [
+        "pane.split",
+        "pane.new-pane"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Split an exact anchor with checked percentage and direct process; on supported releases create a floating pane with width/height, signed x/y, styles, border styles, message and keep options.",
+      "expected": "Each operation is create-only and returns its actual historical pane ID. Floating geometry distinguishes defaults from checked requests; final layout is separately observed.",
+      "counterexample": "No reuse/replace mode is invented. Unsupported styles/geometry fail before dispatch. Single-element argv, missing cwd, failed exec and after-hook destruction retain their actual outcomes.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-creation",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-creation",
+        "status": "PLANNED"
+      }
+    },
+    "pane-resize": {
+      "canonical_keys": [
+        "pane.resize"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Resize P by explicit horizontal/vertical absolute size and directional adjustment in separate calls; exercise ToggleZoom, TrimBelow and event-backed mouse intents separately.",
+      "expected": "Checked sizes and each mode have command-specific completion; later geometry is observed under layout constraints. TrimBelow has its own screen/history effect instead of ordinary sizing.",
+      "counterexample": "Conflicting dimensions/modes fail before dispatch. An ordinary command cannot fabricate a mouse event; negative or overflowing sizes fail validation.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-resize",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-resize",
+        "status": "PLANNED"
+      }
+    },
+    "window-resize": {
+      "canonical_keys": [
+        "window.resize"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Set the physical window width/height, then use directional adjustment, fit-largest-client and fit-smallest-client with explicit required session context.",
+      "expected": "Both links observe the same physical dimensions; requested values and subsequent constrained size remain distinguishable. Resize sets window-size to manual.",
+      "counterexample": "Invalid dimension or unsupported mode is rejected; no contextual link is treated as an independent physical window.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "window-resize",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "window-resize",
+        "status": "PLANNED"
+      }
+    },
+    "window-layout": {
+      "canonical_keys": [
+        "window.select-layout",
+        "window.next-layout",
+        "window.previous-layout"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Select a valid named layout, then next and previous; separately use a versioned serialized layout, reapply-last and spread around an explicit pane anchor.",
+      "expected": "Each navigation function offers only its action; selectLayout has explicit format/serialization semantics. Readback captures layout after command processing.",
+      "counterexample": "Invalid layout can unzoom before failing. Serialized layouts need producer/version metadata; spread requires a pane anchor, not only a window ID.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "window-layout",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "window-layout",
+        "status": "PLANNED"
+      }
+    },
+    "window-rotate": {
+      "canonical_keys": [
+        "window.rotate"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Rotate a three-pane window in each direction with an explicit zoom policy.",
+      "expected": "Observe pane positions and active pane according to the operation contract, preserving each physical PaneRef.",
+      "counterexample": "Do not report rotation as process replacement or promise generic selection preservation.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "window-rotate",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "window-rotate",
+        "status": "PLANNED"
+      }
+    },
+    "respawn": {
+      "canonical_keys": [
+        "pane.respawn",
+        "window.respawn"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Respawn one dead pane, then force-respawn an owned multi-pane window with a failing launch in a separate fixture.",
+      "expected": "Pane ID survives process replacement, so output/process continuity is invalidated. Window respawn retains its first pane and can remove siblings before fork failure.",
+      "counterexample": "Without force, a live process errors. Failure after sibling destruction remains partial and cannot be rolled back or retried automatically.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "respawn",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "respawn",
+        "status": "PLANNED"
+      }
+    },
+    "pane-movement": {
+      "canonical_keys": [
+        "pane.join",
+        "pane.move"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Move or join a source pane into an exact destination anchor/context with checked direction/size; repeat with the sole source pane.",
+      "expected": "Preserve the pane identity and report the new physical parent when observed; sole-pane movement can destroy the source window and its links.",
+      "counterexample": "Preflight does not reserve layout/slots. Partial changes and linked-session effects survive errors; selection modes remain operation-specific.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-movement",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-movement",
+        "status": "PLANNED"
+      }
+    },
+    "pane-break": {
+      "canonical_keys": [
+        "pane.break-pane"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Break a pane from a multi-pane window, then break the sole pane through an explicitly selected source link on 3.3 and 3.8.",
+      "expected": "Preserve actual receipt versus accepted-only outcomes. The 3.3 sole-pane path transfers a link and may return no -P receipt; no fabricated Created result or arbitrary source link.",
+      "counterexample": "Two source links to one physical window require explicit context; missing receipt cannot be repaired with an unproved later-name lookup.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-break",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-break",
+        "status": "PLANNED"
+      }
+    },
+    "pane-swap": {
+      "canonical_keys": [
+        "pane.swap"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Swap two exact panes within and across owned windows with explicit detach/zoom policy; separately request previous/next by pane order.",
+      "expected": "Physical pane references remain the same while placement changes; completion and subsequent selection are separately reported.",
+      "counterexample": "Relative swap wraps through pane order rather than spatial adjacency. Floating relative anchors require release-specific rejection; no process restart or rollback promise is inferred.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-swap",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-swap",
+        "status": "PLANNED"
+      }
+    },
+    "pane-capture": {
+      "canonical_keys": [
+        "pane.capture-pane"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "capture",
+      "action": "Capture rendered rows ending in blank lines with hostile guard-looking content and an after-capture hook; exercise pending, alternate/mode-screen and hyperlink intents separately.",
+      "expected": "Only a qualified protocol may return pane-only data. Preserve declared flags, trailing blank rows and invalid bytes; ordinary rendering, pending data and hyperlink results stay distinct.",
+      "counterexample": "NUL/pending data, terminal-LF normalization, control leaks, forged guards plus tail loss, hook output and collector limits must fail or follow explicitly qualified semantics. A mutating buffer fallback cannot inherit read-only effects.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-capture",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-capture",
+        "status": "PLANNED"
+      }
+    },
+    "pane-input": {
+      "canonical_keys": [
+        "pane.send-keys",
+        "pane.enter",
+        "pane.send-prefix"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "input",
+      "action": "Send literal text, named keys and Enter-only to the observed pane; send primary/secondary prefix with explicit session context; separately exercise supported copy-mode/client-key intents.",
+      "expected": "The fixture can verify received bytes, but the API result proves tmux acceptance only. Enter and prefix retain individual inputs; send-keys -F is not generic literal format expansion.",
+      "counterexample": "Disabled/synchronized input, stale target and cancellation after dispatch retain correct errors or uncertainty. No blind replay; repeated sends are non-idempotent.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-input",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-input",
+        "status": "PLANNED"
+      }
+    },
+    "pane-paste": {
+      "canonical_keys": [
+        "pane.paste-buffer"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "buffers",
+      "action": "Paste named binary bytes under explicit raw/native transformation, newline and bracket policies; repeat with input disabled and delete-after-request enabled.",
+      "expected": "Version-specific unsafe-byte transformation is explicit. Disabled input may receive nothing while the buffer is deleted; processing does not prove consumption.",
+      "counterexample": "Missing named buffer errors; empty top can succeed without input. Brackets require pane support; the 3.8 default must not be mislabeled as 3.3 raw bytes.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-paste",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-paste",
+        "status": "PLANNED"
+      }
+    },
+    "pane-pipe": {
+      "canonical_keys": [
+        "pane.pipe"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Install an owned daemon-side pipe, use native toggle, and attempt replacement with a failing payload; close explicitly.",
+      "expected": "Setup/close processing is distinct from child exit. Toggle closes an existing pipe; failed replacement may already close the old pipe.",
+      "counterexample": "Client close does not prove pipe termination; library subscriptions cannot silently take over this per-pane resource. Preserve outstanding daemon-side responsibility.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-pipe",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-pipe",
+        "status": "PLANNED"
+      }
+    },
+    "pane-modes": {
+      "canonical_keys": [
+        "pane.copy-mode",
+        "pane.clock-mode"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Enter copy mode, page under supported directions, cancel it, and enter clock mode as distinct intents.",
+      "expected": "Return processing evidence, not a selection or interaction result. Cancel resets modes; an accepted mode request can be a no-op.",
+      "counterexample": "Unsupported page-down or missing mouse-event context fails before dispatch; clock entry does not inherit copy-mode options.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-modes",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-modes",
+        "status": "PLANNED"
+      }
+    },
+    "pane-choosers": {
+      "canonical_keys": [
+        "pane.choose-buffer",
+        "pane.choose-client",
+        "pane.choose-tree",
+        "pane.customize-mode",
+        "pane.find-window"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Open each chooser on an explicit display pane with bounded entries; run findWindow with its explicit native pattern/dialect.",
+      "expected": "Results report mode-request processing only. Empty buffer/client lists can produce no overlay; findWindow opens tree mode rather than returning query rows.",
+      "counterexample": "No chosen entity or completed customization is invented. Regex construction differences and unsupported format/sort flags require capability checks.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-choosers",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-choosers",
+        "status": "PLANNED"
+      }
+    },
+    "pane-clear-reset": {
+      "canonical_keys": [
+        "pane.clear-history",
+        "pane.clear",
+        "pane.reset"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "input",
+      "action": "Independently clear tmux history, send literal reset plus Enter, and execute terminal-reset followed by clear-history.",
+      "expected": "ClearHistory exits modes and clears its declared history; clear merely sends input; reset retains ordered step outcomes without rollback.",
+      "counterexample": "A process that treats reset as data does not become reset. Shell history and hyperlink state are not implicitly cleared; failure after the first reset step remains partial.",
+      "example": {
+        "path": "examples/PaneOperations.hs",
+        "case_id": "pane-clear-reset",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/PaneContractTest.hs",
+        "case_id": "pane-clear-reset",
+        "status": "PLANNED"
+      }
+    },
+    "client-refresh-suspend": {
+      "canonical_keys": [
+        "server.refresh-client",
+        "server.suspend-client"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Refresh C1, request its clipboard with the common parameterless mode, then suspend that exact selector.",
+      "expected": "Report RequestProcessed or suspend-message request. Clipboard response is asynchronous; no OS stopped/resumed or terminal-redraw claim.",
+      "counterexample": "Missing or ineligible clients remain explicit outcomes. No AllClients/AllExcept mode or recently-active-client fallback is accepted.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "client-refresh-suspend",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "client-refresh-suspend",
+        "status": "PLANNED"
+      }
+    },
+    "client-lock": {
+      "canonical_keys": [
+        "server.lock-client",
+        "session.lock-session",
+        "server.lock-server"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Use a controlled lock program and request one selector, alpha session, then explicit WholeServer in separate fixtures.",
+      "expected": "Scopes are C1, clients of alpha, and server-wide eligible clients respectively. Completion proves configured lock requests, not that all terminals became secure or the programs exited.",
+      "counterexample": "Ineligible clients can be skipped; detached/reused selectors do not become durable identities; lock-client has no invented cohort selector.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "client-lock",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "client-lock",
+        "status": "PLANNED"
+      }
+    },
+    "client-detach": {
+      "canonical_keys": [
+        "server.detach-client",
+        "server.detach-all-clients",
+        "session.detach-client"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Detach C1 or replace it with an explicit shell payload; exercise AllExcept C1 and a captured alpha cohort separately.",
+      "expected": "Single-client mode targets one current occupant. AllExcept preserves the explicitly selected client; captured cohorts retain observation time and ordered non-atomic per-client outcomes.",
+      "counterexample": "If the except selector disappears, report the actual error instead of detaching everyone. Shell replacement completion is outside this request. Session detachment does not choose a recently active client.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "client-detach",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "client-detach",
+        "status": "PLANNED"
+      }
+    },
+    "client-switch": {
+      "canonical_keys": [
+        "server.switch-client",
+        "session.switch-client"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Switch C1 from alpha to exact session beta with an explicit environment-update policy.",
+      "expected": "Request processing and later attachment readback remain distinct. Other clients retain their current sessions.",
+      "counterexample": "Missing destination or reused C1 selector fails or follows current-occupant semantics; there is no all-except switch mode.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "client-switch",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "client-switch",
+        "status": "PLANNED"
+      }
+    },
+    "client-prompts": {
+      "canonical_keys": [
+        "server.confirm-before",
+        "server.command-prompt"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Confirm a signal-producing action with accept and decline in separate runs; submit a command prompt with explicit substitution template and input mode.",
+      "expected": "Submit versus await boundaries remain distinct. Neither exit code identifies the answer/action result by itself. Prompt substitutes text into actions rather than returning a text value.",
+      "counterexample": "Occupied prompt can be accepted without replacement; incremental prompts can invoke actions repeatedly. Cancelled wait retains possible action debt, never clears a later replacement prompt.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "client-prompts",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "client-prompts",
+        "status": "PLANNED"
+      }
+    },
+    "client-menu-popup": {
+      "canonical_keys": [
+        "server.display-menu",
+        "pane.display-popup"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Open a typed menu and a popup on C1 using explicit pane format context; test geometry, cwd, process and close policies, then explicit clear-overlay.",
+      "expected": "Menu termination does not prove selected-action completion. Each fixture-induced popup closure, signal or process termination preserves the available tmux termination evidence without inferring an unproved cause or process exit status; clear targets C1 current overlay explicitly.",
+      "counterexample": "Small geometry or occupied overlay may be a no-op. A timeout must not clear a replacement overlay. Unsupported argv/literal/cwd guarantees are refused before dispatch.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "client-menu-popup",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "client-menu-popup",
+        "status": "PLANNED"
+      }
+    },
+    "display-and-format": {
+      "canonical_keys": [
+        "server.display-message",
+        "window.display-message",
+        "pane.display-message"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "capture-clients",
+      "action": "Evaluate one scalar with explicit server/session/link/pane context; separately show literal/formatted text on C1 and request diagnostic format listings/traces.",
+      "expected": "Evaluation uses the scalar envelope and bounded bytes. Display includes a separate current-occupant destination. Listings/traces stay diagnostic bytes, not a lossless key=value map.",
+      "counterexample": "Destination C1 does not automatically become the format client. Reject unproved context receipts and after-hook contamination; no invented AllClients/AllExcept variant.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "display-and-format",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "display-and-format",
+        "status": "PLANNED"
+      }
+    },
+    "pane-number-targets": {
+      "canonical_keys": [
+        "pane.display-panes"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "On baseline releases request ShowPaneNumbersOnClient C1; on supported modern releases request EnterPaneNumbersMode P.",
+      "expected": "The first operation targets a client overlay with selection/expiry waiting; the second targets a pane mode and returns after installation. Record exact release intervals before enabling either.",
+      "counterexample": "A shared -t spelling cannot justify the same typed target. Wrong kind or unsupported interval is rejected before dispatch.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "pane-number-targets",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "pane-number-targets",
+        "status": "PLANNED"
+      }
+    },
+    "terminal-attachment": {
+      "canonical_keys": [
+        "session.attach"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "clients",
+      "action": "Attach an owned PTY to exact session alpha with explicit environment and detach-others policy, then end the attachment.",
+      "expected": "The library owns its interactive child, restores terminal state and returns an attachment exit report or a separately qualified ready handle.",
+      "counterexample": "A pipe-only runner cannot qualify terminal ownership. Failure/cancellation must restore terminal state and never signal unrelated client parents.",
+      "example": {
+        "path": "examples/ClientInteraction.hs",
+        "case_id": "terminal-attachment",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ClientContractTest.hs",
+        "case_id": "terminal-attachment",
+        "status": "PLANNED"
+      }
+    },
+    "shell-and-condition": {
+      "canonical_keys": [
+        "server.run-shell",
+        "server.if-shell"
+      ],
+      "status": "PLANNED",
+      "owner_task": "runtime-completion",
+      "fixture": "live",
+      "action": "Run a fixture signal-gated shell with Await versus Submit and an explicit pane output sink; exercise true, false and signaled conditions with then/else actions.",
+      "expected": "Await uses operation-specific completion; Submit proves acceptance. Inspection remains available while four waits are admitted. False/signaled conditions select else without inventing branch/action completion from exit alone.",
+      "counterexample": "Baseline output-to-pane is a visible mode change. Cancellation does not erase server jobs; modern format bindings are not process argv; raw output mode requires separate framing qualification.",
+      "example": {
+        "path": "examples/Waiting.hs",
+        "case_id": "shell-and-condition",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/WaitingContractTest.hs",
+        "case_id": "shell-and-condition",
+        "status": "PLANNED"
+      }
+    },
+    "wait-channels": {
+      "canonical_keys": [
+        "server.wait-for"
+      ],
+      "status": "PLANNED",
+      "owner_task": "runtime-completion",
+      "fixture": "live",
+      "action": "Signal an owned channel before waiting, then acquire/release a separate owned lock; cancel one acquisition during dispatch.",
+      "expected": "Signal-before-wait is handled by native semantics. Waiting admission is separate from inspection/signaling, and acquired locks remain server state rather than process-owned leases.",
+      "counterexample": "Cancelled acquisition retains uncertainty; never unconditionally unlock or reclaim admission while work remains. Client exit and a wakeup are not proof of exclusive lock ownership.",
+      "example": {
+        "path": "examples/Waiting.hs",
+        "case_id": "wait-channels",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/WaitingContractTest.hs",
+        "case_id": "wait-channels",
+        "status": "PLANNED"
+      }
+    },
+    "buffer-transfer": {
+      "canonical_keys": [
+        "server.set-buffer",
+        "server.load-buffer",
+        "server.show-buffer",
+        "server.save-buffer",
+        "server.list-buffers"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "buffers",
+      "action": "Set a named NUL-free value, load 00 41 0a ff 0a through bounded stdin, read/save exact bytes, list metadata and repeat with empty input and append modes.",
+      "expected": "Load/read preserves all bytes and final LF. Set rejects NUL; empty set/load makes no change. Named append can create; unnamed append is not top-buffer append. Listing previews are not contents; save reports partial-write uncertainty.",
+      "counterexample": "No generated automatic-buffer name is invented. Hook output, short writes, changed file paths, invalid UTF-8 and byte limits require qualified handling; binary read/modify/write is not atomic append.",
+      "example": {
+        "path": "examples/Buffers.hs",
+        "case_id": "buffer-transfer",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/BufferContractTest.hs",
+        "case_id": "buffer-transfer",
+        "status": "PLANNED"
+      }
+    },
+    "buffer-deletion": {
+      "canonical_keys": [
+        "server.delete-buffer"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "buffers",
+      "action": "Delete named alpha, then attempt strict deletion of missing alpha while unrelated top buffer KEEP exists.",
+      "expected": "A qualified named deletion cannot delete KEEP. Unsupported 3.3 lowering refuses; a proven release-specific lowering must survive disappearance and name reuse according to current-occupant semantics.",
+      "counterexample": "Preflight existence plus the old native delete is insufficient. Lost cleanup receipt stays unknown and does not authorize a blind retry.",
+      "example": {
+        "path": "examples/Buffers.hs",
+        "case_id": "buffer-deletion",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/BufferContractTest.hs",
+        "case_id": "buffer-deletion",
+        "status": "PLANNED"
+      }
+    },
+    "key-bindings": {
+      "canonical_keys": [
+        "server.bind-key",
+        "server.list-keys",
+        "server.unbind-key"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Bind a fixture signal action to a checked key in a named table, list it, unbind that key, then clear only that explicit table.",
+      "expected": "Binding registration and eventual key action are separate. Other tables remain intact. Raw listing, notes view and any qualified structured projection declare their distinct completeness.",
+      "counterexample": "Missing quiet table error with empty stderr must not become AlreadyAbsent. Odd table names, notes and hook output cannot be parsed with a lossy padded-column codec.",
+      "example": {
+        "path": "examples/Configuration.hs",
+        "case_id": "key-bindings",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ConfigContractTest.hs",
+        "case_id": "key-bindings",
+        "status": "PLANNED"
+      }
+    },
+    "configuration-execution": {
+      "canonical_keys": [
+        "server.source-file"
+      ],
+      "status": "PLANNED",
+      "owner_task": "typed-commands",
+      "fixture": "live",
+      "action": "Parse-only a bounded literal config containing assignments and a signal action; then execute a config whose first command succeeds and later command fails.",
+      "expected": "Qualified literal/stdin parse-only performs no command or parser-assignment effects. Execute retains known earlier effects and later failure; no per-line transaction or rollback is claimed.",
+      "counterexample": "Unrestricted path-format expansion can start jobs before parse-only. Glob paths, quiet read errors, waiting jobs, cancellation and baseline lack of -t retain explicit contracts.",
+      "example": {
+        "path": "examples/Configuration.hs",
+        "case_id": "configuration-execution",
+        "status": "PLANNED"
+      },
+      "verification": {
+        "path": "test/integration/ConfigContractTest.hs",
+        "case_id": "configuration-execution",
+        "status": "PLANNED"
+      }
+    }
+  },
+  "existing_partial_evidence": [
+    {
+      "path": "test/GraphTest.hs",
+      "cases": [
+        "preserves repeated links and occurrence order while normalizing physical rows",
+        "rejects foreign generations at acquisition and lookup",
+        "accepts an empty server graph and keeps identity separate from contents"
+      ],
+      "covers_part_of": [
+        "graph-sources",
+        "record-projections"
+      ],
+      "limit": "Existing private structural tests; they do not execute the planned public examples or establish complete Snapshot/observed-client behavior."
+    },
+    {
+      "path": "test/integration/FrameIntegrationTest.hs",
+      "covers_part_of": [
+        "display-and-format"
+      ],
+      "limit": "Existing scalar-envelope/hook rejection test only; no complete evaluateFormat transport or format-context receipt is qualified."
+    }
+  ]
+}
