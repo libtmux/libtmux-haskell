@@ -1,0 +1,44 @@
+# Build and coverage output
+/build/
+/dist/
+/dist-newstyle/
+/coverage/
+/docs/_build/
+/tmp/
+*.log
+
+# Haskell tooling and artifacts
+/.stack-work/
+/cabal.project.local
+/cabal.project.local~
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+*.hie
+*.prof
+*.hp
+*.eventlog
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local environment and worktrees
+/.cache/
+/.direnv/
+/.envrc.local
+.env
+.env.*
+!.env.example
+/.worktrees/
+/scratch/
+
+# Local agent configuration
+CLAUDE.local.md
+.claude/settings.local.json
