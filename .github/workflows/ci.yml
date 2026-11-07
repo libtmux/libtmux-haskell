@@ -43,6 +43,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install --yes --no-install-recommends tmux
           cabal update
+          cabal build all --only-dependencies
           cabal build all --enable-documentation --only-dependencies
       - name: Record toolchain and dependency plan
         run: |

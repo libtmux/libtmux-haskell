@@ -97,7 +97,9 @@ Check package metadata:
 $ cabal check
 ```
 
-Build API documentation after provisioning its dependency variants:
+Build API documentation after provisioning its dependency variants. Cabal
+gives documentation-enabled dependencies separate store identities; this
+step supplements the ordinary dependency build above:
 
 ```console
 $ cabal build all --enable-documentation --only-dependencies
