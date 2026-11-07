@@ -17,6 +17,7 @@ build-type: Simple
 tested-with: GHC ==9.14.1
 extra-doc-files:
   README.md
+  CHANGELOG.md
   docs/assets/*.svg
   docs/assets/*.png
   docs/assets/*.jpg
