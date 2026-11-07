@@ -42,7 +42,7 @@ live resource tests; generated cases must not repeatedly start daemons.
 
 The [unit runner](../test/Main.hs) combines HUnit examples and a QuickCheck
 provider in one Tasty tree. The [integration runner](../test/integration/Main.hs)
-combines fixture, scalar-framing and private-pin cases. Tasty owns their
+combines fixture, scalar-framing, private-pin and process-owner cases. Tasty owns their
 selection, scheduling and reporting. Select a focused inner loop with its
 name filter; leave real process tests in the outer tier.
 
@@ -61,7 +61,8 @@ $ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration --offline --test
 The [workflow](../.github/workflows/ci.yml) checks only the selected modern
 compiler. It runs specifications, properties, public type contracts, package
 metadata, Haddock and an isolated archive consumer. Each required tmux release
-then runs the existing integration subset on its own runner. The final
+then runs the integration subset with one and two RTS capabilities on its
+own runner. The final
 `required` job fails if any planned job fails, cancels or skips.
 
 Cabal caches contain the dependency store and package index. tmux cache keys
@@ -93,3 +94,28 @@ a compile-only test or a private test helper does not qualify the shared
 [showcase](https://github.com/libtmux/docs/issues/243).
 
 [adapter]: https://hackage-content.haskell.org/package/tasty-hspec-1.2.0.4/revision/8.cabal
+
+
+## Private process tests
+
+The integration tier compiles two owned C helpers once per run, using `cc`.
+The build cleans its temporary directory on compilation failure or
+cancellation. Helpers test the same production C source; symbol injection,
+native-call gates and writer observations remain in test support.
+
+The process group exercises real pending Haskell interruption at launch and
+status consumption, failed-signal bounds, byte-slice detachment, descriptor
+retirement, raw vectors, inherited descriptor closure, output overflow and
+observed socket backpressure. Signal policies run in isolated helper
+processes. They never change the Haskell test runner's host policy. Binary
+load-buffer/save-buffer cases use the owned private tmux pin; empty stdin
+checks EOF independently.
+
+A deliberately held signal has a 250 ms watchdog to detect premature pidfd
+retirement. Native gate observations also have bounded watchdogs. These
+checks synchronize through STM, descriptors and RTS status; they do not
+schedule races with sleeps. They belong in the outer tier because they
+launch helpers and real tmux daemons. Run the full suite with both one and
+two RTS capabilities before promoting ownership changes. The
+[process contract](../docs/contracts/process.md) records the required host
+operations and remaining runtime limits.

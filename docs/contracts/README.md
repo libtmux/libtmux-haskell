@@ -44,8 +44,10 @@ named deletion, key tables and partial configuration effects.
 The [framing refinement](framing.md) records a reproduced scalar-decoding
 hazard: successful commands can append after-hook output to their values.
 The [private socket pin](socket-pin.md) specifies byte paths, ancestor trust,
-link-time adoption and retained cleanup ownership. Runtime leases, child
-argument encoding and bootstrap remain separate qualification work.
+link-time adoption and retained cleanup ownership. The
+[private process owner](process.md) specifies byte arguments, stream bounds,
+atomic child ownership, host requirements and retained cleanup. Public
+runtime leases and bootstrap remain separate qualification work.
 
 The [acquisition contract](acquisition.md) separates environment hints,
 fresh observations, native diagnostics and raw commands. The

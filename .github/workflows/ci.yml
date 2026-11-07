@@ -138,10 +138,12 @@ jobs:
           TMUX_VERSION: ${{ matrix.tmux }}
           CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
         run: python3 scripts/ci_tmux.py prepare "$TMUX_VERSION"
-      - name: Owned fixture, scalar and private-pin integration tests
+      - name: Owned fixture, scalar, pin and process integration tests
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
-        run: cabal test integration --offline --test-show-details=direct
+        run: |
+          cabal test integration --offline --test-show-details=direct --test-options='+RTS -N1 -RTS'
+          cabal test integration --offline --test-show-details=direct --test-options='+RTS -N2 -RTS'
       - name: Save tested tmux build
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -14,8 +14,7 @@ yet observe or mutate a tmux server.
 | Workspace library/CLI | Planned as a separate Cabal package using the core |
 | MCP integration | Excluded from this port |
 
-The internal graph, socket pin and child-ownership experiments have separate
-tests. Their passing results do not establish a public automation interface.
+The internal graph, socket pin and process owner have separate tests. Their passing results do not establish a public automation interface.
 The [behavior inventory](contracts/README.md) records the intended scope.
 
 ## Package policy
@@ -28,9 +27,10 @@ belong in the workspace package. MCP is outside this port's scope. See the
 ## Compatibility evidence
 
 CI uses GHC 9.14.1, GHC2024 and Cabal 3.18.2.0 on Linux x86_64. Its current
-integration subset exercises owned fixtures, scalar framing and private
-socket pins on exact tmux releases 3.3, 3.3a, 3.4, 3.5, 3.5a, 3.6, 3.6a,
-3.6b, 3.7, 3.7a, 3.7b, 3.7c and 3.8.
+integration subset exercises owned fixtures, scalar framing, private socket
+pins and process ownership with one and two RTS capabilities on exact tmux
+releases 3.3, 3.3a, 3.4, 3.5, 3.5a, 3.6, 3.6a, 3.6b, 3.7, 3.7a, 3.7b,
+3.7c and 3.8.
 
 The [workflow](../.github/workflows/ci.yml) and
 [test guide](../.github/TESTING.md) describe those checks. This is evidence
