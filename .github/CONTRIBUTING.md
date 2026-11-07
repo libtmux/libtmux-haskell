@@ -226,10 +226,16 @@ The fixture owns a foreground `tmux -D` process and waits for socket
 readiness through filesystem events. This test setup disables tmux's
 ordinary empty-server exit policy; it is not a public startup API contract.
 It starts `/bin/cat -` directly and observes that initial pane process's exit
-through a Linux pidfd after daemon teardown. The test host needs pidfd support
-(Linux 5.3 or newer). Callback success, failure and cancellation are covered;
-startup cancellation before pane registration and additional descendants
-remain separate qualification work. No numeric PID is used to signal a pane.
+through a Linux pidfd after daemon teardown. The fixture exit watch needs
+`pidfd_open` support (Linux 5.3 or newer). The private process suite additionally requires the
+[atomic-launch host operations](../docs/contracts/process.md#launch-and-host-requirements).
+
+Callback success, failure and cancellation are covered. Startup checkpoints
+also cover cancellation before session dispatch and after its response but
+before pane tracking. The latter uses a separate test-owned pidfd to observe
+the original pane's exit. Cancellation during daemon acquisition or during
+`new-session` before its response, and additional descendants, remain separate
+qualification work. No numeric PID is used to signal a pane.
 
 Private socket-pin cases also require writable `/dev/shm` on a different
 filesystem from `/tmp` for the cross-device refusal check. They create and

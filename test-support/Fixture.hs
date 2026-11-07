@@ -1,4 +1,4 @@
-module Fixture (Fixture (..), withFixture, command) where
+module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, command, registerPane) where
 
 import Control.Concurrent.Async (race)
 import Control.Exception (bracket, finally, mask_, throwIO)
@@ -42,8 +42,14 @@ data Fixture = Fixture
   , paneExitObserved :: !(IORef Bool)
   }
 
+data StartupStage = SocketReady | PaneCreated !ByteString
+
 withFixture :: (Fixture -> IO a) -> IO a
-withFixture action = do
+withFixture = withFixtureAt (\_ _ -> pure ())
+
+-- Checkpoints run after daemon ownership but before the pane tracking journal.
+withFixtureAt :: (StartupStage -> Fixture -> IO ()) -> (Fixture -> IO a) -> IO a
+withFixtureAt checkpoint action = do
   paneExitObserved <- newIORef False
   executable <- fromMaybe "tmux" <$> lookupEnv "LIBTMUX_TEST_TMUX"
   environment <- filter (\(key, _) -> key /= "TMUX" && key /= "TMUX_PANE") <$> getEnvironment
@@ -60,10 +66,12 @@ withFixture action = do
             Just (Left code) -> throwIO (userError ("fixture daemon exited at startup: " <> show code))
             Nothing -> throwIO (userError "fixture socket did not become ready within one second")
           let fixture = Fixture {directory, socket, executable, environment, daemon, paneExitObserved}
+          checkpoint SocketReady fixture
           (code, output, errors) <- command fixture
             ["new-session", "-d", "-s", "fixture", "-P", "-F", "#{pane_pid}", "/bin/cat", "-"]
           unless (code == ExitSuccess) $
             throwIO (userError ("fixture session creation failed: " <> show errors))
+          checkpoint (PaneCreated output) fixture
           registerPane pane output
           action fixture
 

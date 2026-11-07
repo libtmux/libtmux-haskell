@@ -2,9 +2,13 @@ module FixtureTest (tests) where
 
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, withAsync)
-import Control.Exception (IOException, fromException, throwIO, try)
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Control.Exception (bracket, IOException, fromException, throwIO, try)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Fixture
+import GHC.Conc (closeFdWith, threadWaitRead)
+import System.Posix.IO (closeFd)
+import System.Posix.Types (Fd)
+import System.Timeout (timeout)
 import System.Directory (doesDirectoryExist)
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString)
@@ -45,13 +49,51 @@ tests = testGroup "owned tmux fixture"
                 Nothing -> assertFailure ("unexpected worker failure: " <> show problem)
               Right () -> assertFailure "worker returned without cancellation"
             assertReleased fixture
+  , testCase "cancellation before dispatch stops the owned daemon" (cancelDuringStartup False)
+  , testCase "cancellation before pane tracking observes the original pane exit" (cancelDuringStartup True)
   ]
+
+cancelDuringStartup :: Bool -> IO ()
+cancelDuringStartup afterCreation = bracket (newIORef Nothing) closeProbe $ \probe -> do
+  ready <- newEmptyMVar
+  never <- newEmptyMVar @()
+  callbackStarted <- newIORef False
+  let pause fixture = putMVar ready fixture >> takeMVar never
+      checkpoint stage fixture = case stage of
+        SocketReady | not afterCreation -> pause fixture
+        PaneCreated response | afterCreation -> registerPane probe response >> pause fixture
+        _ -> pure ()
+  withAsync (withFixtureAt checkpoint (\_ -> writeIORef callbackStarted True)) $ \worker -> do
+    race (wait worker) (takeMVar ready) >>= \case
+      Left () -> assertFailure "fixture reached the user callback before its startup checkpoint"
+      Right fixture -> do
+        cancel worker
+        waitCatch worker >>= \case
+          Left problem -> case fromException problem of
+            Just AsyncCancelled -> pure ()
+            Nothing -> assertFailure ("unexpected startup failure: " <> show problem)
+          Right () -> assertFailure "startup returned without cancellation"
+        assertStopped fixture
+        readIORef callbackStarted >>= (@?= False)
+        readIORef fixture.paneExitObserved >>= (@?= False)
+        readIORef probe >>= \case
+          Nothing -> assertBool "pane was created without an observation handle" (not afterCreation)
+          Just fd -> do
+            assertBool "pane was observed before dispatch" afterCreation
+            timeout 1000000 (threadWaitRead fd) >>= (@?= Just ())
+
+closeProbe :: IORef (Maybe Fd) -> IO ()
+closeProbe probe = readIORef probe >>= maybe (pure ()) (closeFdWith closeFd)
 
 assertReleased :: Fixture -> IO ()
 assertReleased fixture = do
+  assertStopped fixture
+  readIORef fixture.paneExitObserved >>= assertBool "initial pane exit was not observed"
+
+assertStopped :: Fixture -> IO ()
+assertStopped fixture = do
   getExitCode fixture.daemon >>= \case
     Nothing -> assertFailure "owned daemon remains alive"
     Just _ -> pure ()
   present <- doesDirectoryExist fixture.directory
   assertBool "owned directory remains" (not present)
-  readIORef fixture.paneExitObserved >>= assertBool "initial pane exit was not observed"

@@ -56,6 +56,13 @@ Integration selects an explicit tmux binary and owns every daemon and socket:
 $ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration --offline --test-show-details=direct
 ```
 
+Startup cancellation cases stop before session dispatch or after its response
+but before the fixture tracks its pane. A separate test-owned pidfd observes
+pane exit directly after daemon cleanup. Cancellation during earlier daemon
+acquisition, during `new-session` before its response, and arbitrary
+descendants remain unqualified. Checkpoint coverage does not establish the
+public client's bootstrap or cancellation contract.
+
 ## CI and caches
 
 The [workflow](../.github/workflows/ci.yml) checks only the selected modern
