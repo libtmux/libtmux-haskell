@@ -1,9 +1,11 @@
 module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, command, registerPane) where
 
-import Control.Concurrent.Async (race)
+import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Exception (bracket, finally, mask_, throwIO)
 import Control.Monad (unless)
+import Data.ByteString qualified as Strict
 import Data.ByteString.Lazy (ByteString)
+import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as Bytes
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
@@ -19,7 +21,7 @@ import System.Posix.IO (closeFd)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
 import System.Process.Typed
-  ( Process, nullStream, proc, readProcess, setEnv, setStdin, setStdout
+  ( Process, createPipe, getStderr, getStdout, nullStream, proc, setEnv, setStderr, setStdin, setStdout
   , waitExitCode, withProcessTerm
   )
 import System.Timeout (timeout)
@@ -76,8 +78,16 @@ withFixtureAt checkpoint action = do
           action fixture
 
 command :: Fixture -> [String] -> IO (ExitCode, ByteString, ByteString)
-command fixture args = readProcess . setEnv fixture.environment . setStdin nullStream $
-  proc fixture.executable (["-N", "-S", fixture.socket] <> args)
+command fixture args = withProcessTerm config $ \client -> do
+  -- Join readers before handle cleanup; a live waiting child cannot supply EOF.
+  withAsync (Strict.hGetContents (getStdout client)) $ \out ->
+    withAsync (Strict.hGetContents (getStderr client)) $ \err -> do
+      (output, errors) <- waitBoth out err
+      code <- waitExitCode client
+      pure (code, Lazy.fromStrict output, Lazy.fromStrict errors)
+  where
+    config = setEnv fixture.environment . setStdin nullStream . setStdout createPipe . setStderr createPipe $
+      proc fixture.executable (["-N", "-S", fixture.socket] <> args)
 
 openWatch :: FilePath -> IO Fd
 openWatch directory = withCString directory $ \path ->

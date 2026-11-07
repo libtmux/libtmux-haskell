@@ -58,10 +58,14 @@ $ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration --offline --test
 
 Startup cancellation cases stop before session dispatch or after its response
 but before the fixture tracks its pane. A separate test-owned pidfd observes
-pane exit directly after daemon cleanup. Cancellation during earlier daemon
-acquisition, during `new-session` before its response, and arbitrary
-descendants remain unqualified. Checkpoint coverage does not establish the
-public client's bootstrap or cancellation contract.
+pane exit directly after daemon cleanup. Another case holds after-new-session
+in an owned wait channel, then cancels before the command client completes.
+The creation command may already have emitted receipt bytes. Strict output
+readers have nested scopes so cancellation joins them before handle cleanup;
+a reader waiting for EOF cannot prevent child termination. Earlier daemon
+acquisition, cancellation before creation or its first output, and arbitrary
+descendants remain unqualified. These cases do not establish the public
+client's bootstrap or cancellation contract.
 
 ## CI and caches
 

@@ -232,10 +232,12 @@ through a Linux pidfd after daemon teardown. The fixture exit watch needs
 
 Callback success, failure and cancellation are covered. Startup checkpoints
 also cover cancellation before session dispatch and after its response but
-before pane tracking. The latter uses a separate test-owned pidfd to observe
-the original pane's exit. Cancellation during daemon acquisition or during
-`new-session` before its response, and additional descendants, remain separate
-qualification work. No numeric PID is used to signal a pane.
+before pane tracking. A waiting after-new-session hook also covers cancellation
+after creation/output but before command-client completion. Separate test-owned
+pidfds observe the original pane's exit. Captured command readers are scoped
+and joined before process cleanup closes their handles. Earlier daemon
+acquisition, cancellation before creation or its first output, and additional
+descendants remain separate qualification work. No numeric PID is used to signal a pane.
 
 Private socket-pin cases also require writable `/dev/shm` on a different
 filesystem from `/tmp` for the cross-device refusal check. They create and

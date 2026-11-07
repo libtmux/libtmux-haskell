@@ -1,7 +1,7 @@
 module FixtureTest (tests) where
 
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
-import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, withAsync)
+import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, waitEither, withAsync)
 import Control.Exception (bracket, IOException, fromException, throwIO, try)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Fixture
@@ -51,6 +51,7 @@ tests = testGroup "owned tmux fixture"
             assertReleased fixture
   , testCase "cancellation before dispatch stops the owned daemon" (cancelDuringStartup False)
   , testCase "cancellation before pane tracking observes the original pane exit" (cancelDuringStartup True)
+  , testCase "cancellation while session creation waits in its hook retires the original pane" cancelPendingCreation
   ]
 
 cancelDuringStartup :: Bool -> IO ()
@@ -81,6 +82,46 @@ cancelDuringStartup afterCreation = bracket (newIORef Nothing) closeProbe $ \pro
           Just fd -> do
             assertBool "pane was observed before dispatch" afterCreation
             timeout 1000000 (threadWaitRead fd) >>= (@?= Just ())
+
+cancelPendingCreation :: IO ()
+cancelPendingCreation = bracket (newIORef Nothing) closeProbe $ \probe -> do
+  ready <- newEmptyMVar
+  proceed <- newEmptyMVar
+  responded <- newIORef False
+  callbackStarted <- newIORef False
+  let checkpoint stage fixture = case stage of
+        SocketReady -> do
+          configured <- command fixture ["set-hook", "-g", "after-new-session",
+            "wait-for -S fixture-started ; wait-for fixture-held"]
+          configured @?= (ExitSuccess, "", "")
+          putMVar ready fixture
+          takeMVar proceed
+        PaneCreated _ -> writeIORef responded True
+  withAsync (withFixtureAt checkpoint (\_ -> writeIORef callbackStarted True)) $ \worker ->
+    race (wait worker) (takeMVar ready) >>= \case
+      Left () -> assertFailure "fixture returned before hook setup"
+      Right fixture -> do
+        withAsync (command fixture ["wait-for", "fixture-started"]) $ \receipt -> do
+          putMVar proceed ()
+          timeout 1000000 (waitEither worker receipt) >>= (@?= Just (Right (ExitSuccess, "", "")))
+        (code, pane, errors) <- command fixture ["list-panes", "-a", "-F", "#{pane_pid}"]
+        (code, errors) @?= (ExitSuccess, "")
+        registerPane probe pane
+        readIORef responded >>= (@?= False)
+        readIORef callbackStarted >>= (@?= False)
+        cancel worker
+        waitCatch worker >>= \case
+          Left problem -> case fromException problem of
+            Just AsyncCancelled -> pure ()
+            Nothing -> assertFailure ("unexpected pending-creation failure: " <> show problem)
+          Right () -> assertFailure "creation completed without cancellation"
+        assertStopped fixture
+        readIORef fixture.paneExitObserved >>= (@?= False)
+        readIORef responded >>= (@?= False)
+        readIORef callbackStarted >>= (@?= False)
+        readIORef probe >>= \case
+          Nothing -> assertFailure "pending creation had no observed pane"
+          Just fd -> timeout 1000000 (threadWaitRead fd) >>= (@?= Just ())
 
 closeProbe :: IORef (Maybe Fd) -> IO ()
 closeProbe probe = readIORef probe >>= maybe (pure ()) (closeFdWith closeFd)
