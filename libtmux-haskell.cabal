@@ -17,6 +17,14 @@ build-type: Simple
 tested-with: GHC ==9.14.1
 extra-doc-files:
   README.md
+  docs/assets/*.svg
+  docs/assets/*.png
+  docs/assets/*.jpg
+  docs/assets/*.ico
+  docs/assets/*.json
+  docs/assets/*.webmanifest
+  docs/assets/*.xml
+  docs/branding.md
   AGENTS.md
   .github/CONTRIBUTING.md
   .github/WRITING.md

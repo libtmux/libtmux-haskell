@@ -1,3 +1,5 @@
+![libtmux for Haskell](docs/assets/logo-128.png)
+
 # libtmux for Haskell
 
 libtmux for Haskell provides distinct tmux entity IDs, checked dimensions
@@ -56,3 +58,5 @@ typed queries, event streams, workspace tooling and MCP remain implementation
 work; the [manual](docs/README.md) separates that work from available exports.
 
 [Contributing](.github/CONTRIBUTING.md) · [License](LICENSE)
+
+[Branding assets](docs/branding.md) include the logo, icons, and social cards.
