@@ -5,7 +5,7 @@ IDs, checked scalar values and the owned tmux fixture have tests; the
 complete public API, consumers and
 compatibility matrix remain unqualified.
 
-Read [AGENTS.md](AGENTS.md) for change discipline and
+Read [AGENTS.md](../AGENTS.md) for change discipline and
 [WRITING.md](WRITING.md) for prose and commit conventions.
 
 ## Toolchain
@@ -13,7 +13,7 @@ Read [AGENTS.md](AGENTS.md) for change discipline and
 Target the newest stable GHC series only. As verified on 2026-11-06, that
 is [GHC 9.14.1](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/9.14.1-notes.html),
 paired with [Cabal 3.18.2.0](https://downloads.haskell.org/cabal/cabal-install-3.18.2.0/).
-[.tool-versions](.tool-versions) pins both tools.
+[.tool-versions](../.tool-versions) pins both tools.
 
 Use the [GHC2024 language edition](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/control.html#extension-GHC2024),
 the newest stable edition despite its year suffix. Every component uses
@@ -73,7 +73,7 @@ Run the Tasty unit tree, including direct QuickCheck graph properties:
 $ cabal test unit --offline --test-show-details=direct
 ```
 
-The two runners have separate executables. Read [testing](docs/testing.md)
+The two runners have separate executables. Read [testing](../docs/testing.md)
 for specification authoring, generation/shrinking, and suite assembly.
 
 Run the outer integration tier against an explicitly selected tmux binary.

@@ -22,9 +22,9 @@ requested work.
 ## Project guides
 
 - Setup, validation, and tmux isolation:
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+  [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 - Prose, examples, comments, and commits:
-  [WRITING.md](WRITING.md).
+  [WRITING.md](.github/WRITING.md).
 
 Each guide owns its subject. `CLAUDE.md` is a relative symlink to this file.
 

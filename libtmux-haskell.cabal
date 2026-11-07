@@ -18,8 +18,8 @@ tested-with: GHC ==9.14.1
 extra-doc-files:
   README.md
   AGENTS.md
-  CONTRIBUTING.md
-  WRITING.md
+  .github/CONTRIBUTING.md
+  .github/WRITING.md
   docs/testing.md
   docs/contracts/README.md
   docs/contracts/environment.md
