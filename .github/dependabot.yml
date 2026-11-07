@@ -4,3 +4,5 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Allow security updates without routine version pull requests.
+    open-pull-requests-limit: 0
