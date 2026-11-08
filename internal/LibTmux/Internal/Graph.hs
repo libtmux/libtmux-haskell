@@ -1,3 +1,7 @@
+-- | Detached physical entities, contextual links and validated graph indexes.
+--
+-- Window labels use 'TmuxText'; process names and paths preserve POSIX bytes.
+-- Reading an observation or navigating the graph performs no IO.
 module LibTmux.Internal.Graph
   ( EndpointIdentity (..), Generation (..)
   , SessionRef (..), WindowRef (..), PaneRef (..)
@@ -18,7 +22,10 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import LibTmux.Id (PaneId, SessionId, WindowId)
+import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Value (Dimension, PaneIndex, WindowIndex)
+import System.OsPath.Posix (PosixPath)
+import System.OsString.Posix (PosixString)
 
 data EndpointIdentity = EndpointIdentity !Integer !Integer
   deriving stock (Eq, Ord, Show)
@@ -55,7 +62,7 @@ instance NFData Session
 
 data Window = Window
   { ref :: !WindowRef
-  , name :: !Text
+  , name :: !TmuxText -- ^ Reported bytes, including non-text names on older tmux.
   , width :: !Dimension
   , height :: !Dimension
   }
@@ -71,8 +78,8 @@ data Pane = Pane
   , active :: !Bool
   , dead :: !Bool
   , title :: !Text
-  , currentCommand :: !Text
-  , currentPath :: !ByteString
+  , currentCommand :: !PosixString -- ^ Reported process name; tmux may normalize it.
+  , currentPath :: !PosixPath -- ^ Endpoint data, without local path interpretation.
   }
   deriving stock (Eq, Show, Generic)
 instance NFData Pane

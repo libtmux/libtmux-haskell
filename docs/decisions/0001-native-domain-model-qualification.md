@@ -49,7 +49,7 @@ Sources: [tmux 3.4 output conversion][print], [3.4 dollar escapes][dollar],
 ## Superseded recommendations
 
 Per-field capture remains a comparison implementation with scalar tearing
-and strict Text conversion limits. It cannot serve as an unconditional
+and incomplete observation coverage. It cannot serve as an unconditional
 correctness oracle. The private scalar transport now preserves the observed
 bytes under the qualified profiles below; field-specific public values remain
 unimplemented.
@@ -90,6 +90,29 @@ not capture benchmarks. Cached executable hashes and command logs accompany
 the research evidence. Other locales and libbsd-linked builds remain
 unqualified. This result does not qualify complete record framing, a public
 capture consumer or cancellation during an accepted capture read.
+
+## Private lossless field model
+
+Window names now use an owned byte value with explicit, fallible text
+conversion. Current commands use PosixString and current paths use PosixPath.
+Session names and pane titles keep their declared text contract. None of
+these private field types changes the current exposed scalar modules.
+
+The live regression starts a foreground shell with invalid argv bytes and
+waits for that shell's event receipt after exec. The original capture failed
+with InvalidFieldEncoding PaneCommand. The updated test checks exact reported
+command/path values after resource closure and raw window names on releases
+that accept them. It also checks the later command-name normalization instead
+of inventing the bytes tmux discarded.
+
+The full integration suite passes on all thirteen required releases with one
+and two runtime capabilities under C.UTF-8. The focused lossless-field case
+also passes on each release under C. Specifications, units, type contracts,
+package checks, docs, Haddock and the existing archive consumer pass. The
+complete driver took 137.54 seconds including setup and cleanup under the
+shared resource limiter. Independent source review passes this private
+increment; neither these checks nor the timing qualify complete public capture,
+creation-to-receipt cancellation, accepted-read cancellation or benchmarks.
 
 ## Remaining gates
 

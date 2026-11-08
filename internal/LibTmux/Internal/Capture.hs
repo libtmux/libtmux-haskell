@@ -23,6 +23,8 @@ import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin (pinGeneration)
 import LibTmux.Internal.Topology qualified as T
+import LibTmux.Internal.TmuxText qualified as Label
+import System.OsString.Posix qualified as Os
 import System.Timeout (timeout)
 
 type CapturedGraph = (Word64, Word64, G.EntityGraph)
@@ -95,7 +97,7 @@ captureGraphWith checkpoint runtime client executable duration = do
             either (const (throwIO (InvalidFieldEncoding field))) (evaluate . force) (Utf8.decodeUtf8' bytes)
       before <- topology
       sessions <- mapM (hydrateSession text) (G.graphSessions before)
-      windows <- mapM (hydrateWindow text) (G.graphWindows before)
+      windows <- mapM (hydrateWindow scalar) (G.graphWindows before)
       panes <- mapM (hydratePane text scalar) (G.graphPanes before)
       checkpoint
       after <- topology
@@ -123,16 +125,16 @@ hydrateSession text row = do
   name <- text (R.SessionName ident)
   pure (G.Session row.ref name row.attached)
 
-hydrateWindow :: (R.EntityField -> IO Text) -> G.Window -> IO G.Window
-hydrateWindow text row = do
+hydrateWindow :: (R.EntityField -> IO ByteString) -> G.Window -> IO G.Window
+hydrateWindow scalar row = do
   let G.WindowRef _ ident = row.ref
-  name <- text (R.WindowName ident)
+  name <- Label.fromBytes <$> scalar (R.WindowName ident)
   pure (G.Window row.ref name row.width row.height)
 
 hydratePane :: (R.EntityField -> IO Text) -> (R.EntityField -> IO ByteString) -> G.Pane -> IO G.Pane
 hydratePane text scalar row = do
   let G.PaneRef _ ident = row.ref
   title <- text (R.PaneTitle ident)
-  command <- text (R.PaneCommand ident)
-  path <- scalar (R.PanePath ident)
+  command <- Os.fromBytestring <$> scalar (R.PaneCommand ident)
+  path <- Os.fromBytestring <$> scalar (R.PanePath ident)
   pure row {G.title = title, G.currentCommand = command, G.currentPath = path}

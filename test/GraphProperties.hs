@@ -5,6 +5,7 @@ import Data.Text qualified as Text
 import LibTmux.Id
 import LibTmux.Internal.Graph
 import LibTmux.Value
+import System.OsString.Posix qualified as Os
 import Test.Tasty (TestTree)
 import Test.Tasty.QuickCheck qualified as Q
 
@@ -39,7 +40,8 @@ makeGraph linkCount paneCount = do
   panes <- traverse (\index -> do
     ref <- PaneRef generation <$> checked (parsePaneId ("%" <> Text.pack (show index)))
     paneIndex <- checked (mkPaneIndex (fromIntegral index))
-    pure (Pane ref window paneIndex width height (index == 0) False "pane" "cat" "/work")) [0 .. paneCount - 1]
+    pure (Pane ref window paneIndex width height (index == 0) False "pane"
+      (Os.fromBytestring "cat") (Os.fromBytestring "/work"))) [0 .. paneCount - 1]
   links <- traverse (\index -> do
     windowIndex <- checked (mkWindowIndex (fromIntegral index))
     pure (WindowLink session windowIndex window (index == 0))) [0 .. linkCount - 1]

@@ -2,18 +2,30 @@ module EntityCaptureTest (tests) where
 
 import Control.Concurrent.Async (cancel, withAsync)
 import Control.Concurrent.STM
-import Control.Exception (bracket, try)
+import Control.Exception (bracket, bracket_, try)
 import Data.ByteString.Char8 qualified as Bytes
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef
 import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
+import GHC.Conc (threadWaitRead)
+import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Capture qualified as C
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Process qualified as P
+import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
+import LibTmux.Internal.SocketPin (pinPath, pinGeneration)
+import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Version qualified as V
 import System.Exit (ExitCode (..))
+import System.OsString.Posix qualified as Os
+import System.Posix.Directory.ByteString qualified as Directory
+import System.Posix.Files qualified as Files
+import System.Posix.IO qualified as Posix
+import System.Posix.IO.ByteString qualified as RawIO
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -46,6 +58,62 @@ tests = testGroup "entity capture"
         (_, _, graph) <- capture runtime client fixture
         G.graphSessions graph @?= []
         G.graphPanes graph @?= []
+  , testCase "captures lossless window, process and path values" $ do
+      (pane, expectedCommand, expectedPath, label) <- withRuntime $ \runtime client fixture -> do
+        let executable = Bytes.pack fixture.executable
+            raw args = do
+              let spec = N.spec executable
+                    ([executable, "-u", "-N", "-S", pinPath (R.clientPin client)] <> args)
+              result <- P.submit B.Ordinary P.defaultHooks (R.clientPool client) spec "" >>= P.await
+              (result.exit, result.errors) @?= (Just (N.Exited 0), "")
+              pure result.output
+            path = Bytes.pack fixture.directory <> "/\255"
+            readyPath = fixture.directory <> "/ready"
+            processName = "cmd\255x"
+            rawWindowName = "win\255x"
+        releaseBytes <- raw ["display-message", "-p", "-F", "#{version}"]
+        release <- either (fail . show) pure (V.parseVersion (Utf8.decodeUtf8 releaseBytes))
+        cleanedNames <- either (fail . show) pure (V.parseVersion "3.7")
+        Files.createNamedPipe readyPath 0o600
+        bracket_ (Directory.createDirectory path 0o700) (Directory.removeDirectory path) $
+          bracket (Posix.openFd readyPath Posix.ReadWrite Posix.defaultFileFlags) Posix.closeFd $ \ready -> do
+            receipt <- raw ["new-window", "-d", "-n", "byte-fields", "-P", "-F",
+              "#{window_id} #{pane_id} #{pane_pid}", "-c", path, "/bin/bash", "-c",
+              "exec -a \"$0\" /bin/sh -c 'printf R > \"$1\"; read -r value' \"$0\" \"$1\"",
+              processName, Bytes.pack readyPath]
+            case Bytes.words receipt of
+              [windowId, paneId, pid] -> Fixture.withTrackedPane (Lazy.fromStrict (pid <> "\n"))
+                (raw ["kill-window", "-t", windowId] >> pure ()) $ do
+                  observed <- timeout 1000000 (threadWaitRead ready >> RawIO.fdRead ready 1)
+                  observed @?= Just "R"
+                  (_, _, graph) <- capture runtime client fixture
+                  length (G.graphPanes graph) @?= 2
+                  ident <- either (fail . show) pure (Id.parsePaneId (Utf8.decodeUtf8 paneId))
+                  pane <- either (fail . show) pure (G.lookupPane graph (G.PaneRef (pinGeneration (R.clientPin client)) ident))
+                  label <- if release >= cleanedNames then pure Nothing else do
+                    named <- raw ["new-window", "-d", "-n", rawWindowName, "-P", "-F",
+                      "#{window_id} #{pane_pid}", "/bin/cat", "-"]
+                    case Bytes.words named of
+                      [namedWindow, namedPid] -> Fixture.withTrackedPane (Lazy.fromStrict (namedPid <> "\n"))
+                        (raw ["kill-window", "-t", namedWindow] >> pure ()) $ do
+                          (_, _, namedGraph) <- capture runtime client fixture
+                          windowIdent <- either (fail . show) pure (Id.parseWindowId (Utf8.decodeUtf8 namedWindow))
+                          window <- either (fail . show) pure (G.lookupWindow namedGraph
+                            (G.WindowRef (pinGeneration (R.clientPin client)) windowIdent))
+                          pure (Just window.name)
+                      other -> assertFailure ("invalid named-window receipt: " <> show other) >> pure Nothing
+                  pure (pane, if release < cleanedNames then processName else "", path, label)
+              other -> assertFailure ("invalid creation receipt: " <> show other)
+                >> fail "owned pane receipt required"
+      pane.currentCommand @?= Os.fromBytestring expectedCommand
+      pane.currentPath @?= Os.fromBytestring expectedPath
+      case label of
+        Nothing -> pure ()
+        Just name -> do
+          Label.toBytes name @?= "win\255x"
+          case Label.decodeUtf8 name of
+            Left _ -> pure ()
+            Right _ -> assertFailure "non-text window name became valid UTF-8"
   , testCase "retries one changed topology and rejects a second inconsistent attempt" $
       withRuntime $ \runtime client fixture -> do
         calls <- newIORef (0 :: Int)

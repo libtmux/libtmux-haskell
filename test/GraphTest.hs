@@ -4,7 +4,9 @@ import Data.ByteString qualified as Bytes
 import Data.Either (isLeft)
 import LibTmux.Id
 import LibTmux.Internal.Graph
+import LibTmux.Internal.TmuxText qualified as Label
 import LibTmux.Value
+import System.OsString.Posix qualified as Os
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 
@@ -64,6 +66,13 @@ tests = testGroup "detached entity graph"
         renamed.ref @?= window.ref
         assembleEntityGraph generation [session {attached = -1}] [] [] []
           @?= Left (InvalidAttachedCount session.ref (-1))
+  , testCase "keeps label bytes when explicit UTF-8 conversion fails" $ do
+      let bytes = Bytes.pack [120, 255, 121]
+          label = Label.fromBytes bytes
+      Label.toBytes label @?= bytes
+      assertBool "invalid text was silently replaced" (isLeft (Label.decodeUtf8 label))
+      Label.decodeUtf8 "editor λ" @?= Right "editor λ"
+      Label.toBytes "λ" @?= Bytes.pack [206, 187]
   ]
 
 require :: Show e => Either e a -> IO a
@@ -82,7 +91,8 @@ fixture action = do
   paneIndex <- require (mkPaneIndex 0)
   let session = Session sessionRef "work" 2
       window = Window windowRef "editor" width height
-      pane = Pane paneRef windowRef paneIndex width height True False "editor" "nvim" "/work"
+      pane = Pane paneRef windowRef paneIndex width height True False "editor"
+        (Os.fromBytestring "nvim") (Os.fromBytestring "/work")
       first = WindowLink sessionRef firstIndex windowRef True
       second = WindowLink sessionRef secondIndex windowRef False
   action generation session window pane first second

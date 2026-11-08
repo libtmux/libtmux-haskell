@@ -56,6 +56,29 @@ provenance. Provide validated offline fixtures with a detached origin; their
 references cannot target a live Server. Snapshot and reference construction
 remain validated, including through reconstruction-capable instances.
 
+## Reported text and POSIX values
+
+The private [graph model](../../internal/LibTmux/Internal/Graph.hs) keeps
+session names and pane titles as strict Text. Window names use a lossless
+[TmuxText](../../internal/LibTmux/Internal/TmuxText.hs) value with byte equality
+and explicit UTF-8 conversion. Conversion failure preserves the original
+label; it does not remove an entity or fail the complete capture.
+
+Current process names use PosixString and current paths use PosixPath. These
+hold reported endpoint bytes without filesystem access, locale conversion
+or local path resolution. Capture forces the owned values before returning.
+Explicit text conversion is subsequent pure application logic, not a hidden
+field read. No replacement decoding occurs.
+
+Preserving a report does not recover upstream normalization. Supported tmux
+releases before 3.7 can report invalid UTF-8 in names and process commands.
+tmux 3.7+ can instead report an empty command after rejecting its bytes, and
+new-window name validation also changes at that boundary. Verify the reported
+value against the qualified release; do not infer the original argv from it.
+
+These are private implementation types. Their installed public ergonomics,
+query/wire profiles and complete Snapshot coverage remain qualification work.
+
 ## Selection and cardinality
 
 Native `filter`, comprehensions, `map` and folds process captured lists

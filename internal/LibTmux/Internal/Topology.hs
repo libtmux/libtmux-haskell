@@ -13,6 +13,7 @@ import Data.Text.Encoding qualified as Utf8
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Value qualified as Value
+import System.OsString.Posix qualified as Os
 
 data TopologyError
   = MalformedTopology
@@ -77,7 +78,7 @@ decodeTopology generation bytes = do
           h <- dimension height
           selected <- boolean active
           exited <- boolean dead
-          values <- insert pane (G.Pane pane window position w h selected exited "" "" "")
+          values <- insert pane (G.Pane pane window position w h selected exited "" Os.empty Os.empty)
             G.ConflictingPane rows.panes
           pure rows {panes = values}
         _ -> Left MalformedTopology

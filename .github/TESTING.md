@@ -78,7 +78,11 @@ arguments store invalid bytes and literal escape sequences in owned options,
 then compare decoded output with the original fixed and seeded values.
 The checks include tmux 3.4 dollar escaping and the Runtime's entity-field
 binding. tmux's command-input normalization remains separate from output
-decoding. The final
+decoding. The lossless observation case waits on a FIFO receipt after the
+owned process has adopted its raw argv, captures without replacing bytes,
+and reads retained command/path/name values after cleanup. It checks tmux's
+release-specific name normalization and runs under both locale profiles.
+The final
 `required` job fails if any planned job fails, cancels or skips.
 
 Cabal caches contain the dependency store and package index. tmux cache keys
