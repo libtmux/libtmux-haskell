@@ -1,0 +1,78 @@
+name: docs
+
+# Manual builds remain separate from CI while the shared-site integration is
+# under review. Keep both reusable workflows pinned to the same docs commit.
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: Source ref to build
+        required: true
+        default: master
+      version:
+        description: URL version slug
+        required: true
+        default: latest
+      version-kind:
+        description: Version policy
+        required: true
+        type: choice
+        options: [trunk, tag, alias]
+        default: trunk
+      is-default:
+        description: Make this version canonical
+        required: true
+        type: boolean
+        default: false
+      resolves-to:
+        description: Immutable target for an alias
+        required: false
+        default: ''
+      publish:
+        description: Publish after the build passes and deployment is approved
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-deploy-${{ github.repository }}
+  queue: max
+
+jobs:
+  build:
+    uses: libtmux/docs/.github/workflows/port-docs.yml@b8b719ae4bea805cc6a1637ec04fb883f6940547
+    with:
+      port: haskell
+      source-ref: ${{ inputs.source-ref }}
+      version: ${{ inputs.version }}
+      version-kind: ${{ inputs.version-kind }}
+      is-default: ${{ inputs.is-default == true }}
+      resolves-to: ${{ inputs.resolves-to }}
+      publish: ${{ inputs.publish == true }}
+
+  publish:
+    needs: build
+    if: needs.build.outputs.should-publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.matrix) }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: libtmux/docs/.github/workflows/reusable-deploy.yml@b8b719ae4bea805cc6a1637ec04fb883f6940547
+    with:
+      path-prefix: haskell/${{ matrix.version }}
+      artifact: docs-haskell-${{ matrix.version }}
+      version-kind: ${{ matrix.kind }}
+      port: haskell
+      version: ${{ matrix.version }}
+      label: ${{ matrix.version }}
+      is-default: ${{ matrix.isDefault }}
+      resolves-to: ${{ matrix.resolvesTo }}
+      environment: docs
+    secrets:
+      role-arn: ${{ secrets.LIBTMUX_DOCS_ROLE_ARN }}
+      bucket: ${{ secrets.LIBTMUX_DOCS_BUCKET }}

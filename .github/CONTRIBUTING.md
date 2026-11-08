@@ -187,6 +187,19 @@ actual changed tree. Report `PASS`, `FAIL`, `PARTIAL`, or `UNVERIFIED` with
 the commands and whole-command times. Passing a subset of tests does not
 qualify the complete library or compatibility matrix.
 
+## Shared documentation
+
+[The docs workflow](workflows/docs.yml) is a manual caller of the shared
+libtmux.org build and deployment workflows. Keep both reusable-workflow pins
+on the same reviewed docs commit. It has no push, tag or pull-request trigger;
+`publish` defaults to false. A build artifact does not prove publication.
+
+Before enabling publication, qualify the selected source build and shared
+integration, and have the infrastructure owner configure the `docs`
+environment, deployment role and bucket secrets. The caller does not create
+those resources. Source refs and URL versions are separate inputs; use an
+immutable source ref when reviewing a specific build.
+
 ## Test loops
 
 Time each command from startup through setup and cleanup. Libraries should
