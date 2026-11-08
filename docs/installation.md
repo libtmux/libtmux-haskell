@@ -57,3 +57,11 @@ establishes. This example requires no running tmux server.
 The source revision above contains the current public scalar API. Native
 client operations and workspace tooling require further implementation;
 check [status](status.md) before choosing the package for automation.
+
+## Native backend host requirements
+
+The private native backend targets Linux x86_64 with glibc 2.39 or newer
+for `pidfd_spawn`, compatible kernel pidfd operations, and exclusive child
+reaping ownership. Missing host operations fail before launch. This is
+separate from the public pure scalar API. See the
+[process host contract](contracts/process.md#launch-and-host-requirements).

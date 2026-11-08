@@ -2,98 +2,56 @@
 
 ## Status
 
-**Proposed; awaiting expert review.** This record proposes the public model.
-It does not approve implementation or claim that the proposed API exists.
-Public entity API work is held for review; the private capture prototype
-remains visible in [PR #2][capture-pr].
+Accepted for implementation after the four external reviews and their
+[source and probe reconciliation](0001-native-domain-model-qualification.md).
+Public API acceptance remains conditional on the qualification work below.
+The current exported modules are `LibTmux.Id`, `LibTmux.Value` and
+`LibTmux.Version`; [PR #2][capture-pr] contains the private implementation.
 
-Reviewed on 2026-11-08 against the [capture prototype][capture-source] and
-[graph implementation][graph-source]. The public exports are still
-`LibTmux.Id`, `LibTmux.Value` and `LibTmux.Version`.
+## Context
 
-## Context and problem
+The library needs a recognizable tmux model with Haskell semantics. Reading
+captured values is pure; acquisition and mutation are explicit in `IO`.
+A window can appear in several sessions and at two indices in one session.
+A session-owned tree cannot represent that graph faithfully.
 
-The library needs a recognizable tmux domain model with Haskell semantics.
-Reading captured data should be pure. Acquiring data and changing tmux should
-be visible in `IO`. A window can have several links, including two indices in
-one session, so a tree of session-owned windows loses information.
+Naming follows inspected functional ports: [Elixir][elixir-entities] uses
+physical windows and links; [F#][fsharp-hierarchy] preserves familiar domain
+modules; [OCaml][ocaml-interface] and [Common Lisp][lisp-model] distinguish
+operational clients from captured data. [Clojure][clojure-data] makes local
+traversal explicit. [Python][python-server] supplies recognizable domain
+nouns, while [Java's contextual Window][java-window] demonstrates why names
+alone do not establish equivalent semantics. These precedents inform the
+API; their tests do not establish Haskell support.
 
-The existing private graph already separates physical entities, window links
-and pane occurrences. The proposed public facade has not shipped. This is
-the opportunity to settle names, identity, completeness and ownership before
-callers depend on them.
+This record follows the decision structure used by the [JVM][java-adr],
+[F#][fsharp-adr] and [Python][python-adr] repositories. Implementation evidence
+and unfinished qualification live in the linked companion, so prototype
+counts and budgets do not become permanent API guarantees accidentally.
 
-The recommendation is a native value model over an explicit operational
-handle, with ordinary finite collections and a separate typed query AST.
-This is a recommendation for this port, not a claim that Haskell has one
-universally preferred application architecture.
+## Decision
 
-## Scope
+### Use Server for one operational adoption
 
-This decision covers core domain names, graph structure, references, local
-queries and effect/resource boundaries. It preserves Linux x86_64, literal
-tmux 3.3+, the required exact-release matrix and the current qualified
-GHC 9.14.1/GHC2024 toolchain. No older-compiler layer is proposed.
+`Server` is an opaque operational handle to a pinned endpoint and one
+connection generation. Acquire it in `IO` from a pure `ServerConfig`.
+Closing it releases library-owned resources; killing the daemon is a separate
+operation. Reserve `Client` for a detached observation from the attached-client
+listing, and `ServerInfo` for observed server metadata. Rename private
+operational Client terminology before exposing source-linked public modules.
 
-Workspace remains a separate Cabal package using the core. MCP is excluded.
-Transport replacement, the full operation catalogue and release readiness
-are separate decisions. Existing behavioral contracts remain authoritative
-until a reviewed change explicitly supersedes them.
+Use a caller-owned `Runtime` for advanced ownership and recovery. Offer
+`withServerIn` for that runtime and a convenient `withServer` after its
+failure and recovery contract is qualified. Do not offer Client and Server
+as aliases for the same operational type.
 
-## Naming precedents
+### Keep observations detached and the graph relational
 
-These are inspected, revision-pinned interfaces. Their names inform this
-proposal; their behavior and passing tests do not establish Haskell support.
-
-| Port | Names and boundaries | Lesson for Haskell |
-| --- | --- | --- |
-| [Elixir Server][elixir-server] and [entities][elixir-entities] | `Server` describes the endpoint; `Snapshot`, `Session`, physical `Window`, `WindowLink`, `Pane` and captured `Client` separate observed state. | Keep the domain nouns and the physical-window/link distinction. Haskell's operational handle will own resources, unlike Elixir's pure Server descriptor. |
-| [F# hierarchy][fsharp-hierarchy] and [captured values][fsharp-values] | Qualified `Server`, `Session`, `Window`, `Pane`, `Snapshot` and `Selection` modules adapt .NET handles; effects return tasks. | Keep familiar module names, but use `IO`, lists and `Either` where they express the Haskell contract. Its contextual windows are not our physical-window model. |
-| [OCaml public interface][ocaml-interface] | `Endpoint`, `Source`, `Generation`, `Snapshot`, `Session`, `Window`, `Window_link`, and backend `Client` modules distinguish values from effects. | Preserve explicit provenance and immutable observations. A connection named Client is a credible alternative. |
-| [Common Lisp client][lisp-client] and [model][lisp-model] | Operational `client`; captured `snapshot`, `session`, `window`, `pane`, `window-link` and `attached-client`. | Separate an operational connection from an attached tmux client observation. |
-| [Clojure effects][clojure-core] and [data][clojure-data] | `open!` returns a Java `Server`; `snapshot!` acquires maps; local traversal and identity/link comparisons live in `libtmux.data`. | Make acquisition explicit and preserve physical identity separately from contextual occurrence. Native Haskell values need no foreign-reference payload. |
-| [Python Server][python-server] and [Java Window][java-window] | Server/Session/Window/Pane provide familiar entry points. Java's Window is a contextual link, with an underlying window ID. | Reuse vocabulary, while documenting the semantic difference rather than copying an object hierarchy. |
-
-The record follows the context/decision/alternatives/consequences structure
-used by the [JVM ADRs][java-adr] and [F# ADRs][fsharp-adr], with an explicit
-proposed status as in this [Python ADR][python-adr].
-
-## Proposed decision
-
-### Name the operational root Server
-
-Expose **`Server`** as the opaque handle for operations against one pinned
-tmux endpoint. Construct its pure configuration as `ServerConfig`; acquire
-its resources explicitly in `IO`. Closing the handle releases library-owned
-resources and never means killing the daemon.
-
-This changes the earlier public proposal's operational name from `Client`
-to `Server`. There is no exported Client to migrate. The private
-`Runtime.Client` can keep its backend name. Reserve public `Client` for an
-immutable tmux client observation, and use `ServerInfo` for captured server
-metadata. The client listing's attached-client scope is explicit; it does
-not promise every transient command client. Optional attachment is represented
-as supported absence, not an invented session.
-
-The reason is domain discoverability: a caller seeking sessions starts at a
-Server, while client inspection means tmux clients. The OCaml/Lisp naming
-alternative remains valid; critics should assess this choice before export.
-Do not offer Server and Client as two names for the same operational type.
-
-### Keep the graph as detached values
-
-| Type | Meaning |
-| --- | --- |
-| `Runtime` | Explicit owner of worker, child-process and cleanup obligations; advanced lifecycle API. |
-| `Server` | Operational handle bound to one connection generation and pinned endpoint. |
-| `ServerInfo` | Detached server metadata observed during a recorded interval. |
-| `Snapshot` | Validated entity graph, capture interval, origin and capability/coverage metadata. |
-| `Session`, `Window`, `Pane` | Immutable physical observations. |
-| `WindowLink` | Observed session/index/window binding, including contextual active state. |
-| `PaneOccurrence` | A physical pane together with one window-link context. |
-| `Client` | One captured tmux client observation; not a permanent client identity. |
-| `SessionRef`, `WindowRef`, `PaneRef` | Opaque, generation-bound physical targeting references. |
-| `WindowSlot` | Explicit session/index targeting intent; its execution-time occupant can change. |
+`Snapshot` owns a validated graph, capture interval, origin, capabilities and
+coverage. `Session`, `Window` and `Pane` are physical observations;
+`WindowLink` records a session/index/window binding and its contextual state.
+`PaneOccurrence` pairs a physical pane with a link. A pane belongs to one
+window; neither has a unique session.
 
 ```mermaid
 flowchart LR
@@ -113,44 +71,49 @@ flowchart LR
     C -. captured attachment .-> A
 ```
 
-Snapshot lookup resolves references locally. Records contain data and
-references, not an operational Server or a suspended read. A pane has one
-physical window; neither has a unique session. Session navigation therefore
-offers `windowLinks` and `paneOccurrences` explicitly.
+Records hold owned values and references, with no operational handle or
+suspended read. Finish fallible decoding and force the required graph normal
+form before transferring ownership. Later lazy collection processing remains
+safe after closure. Strict fields and [Data.Map.Strict][map-strict] alone do
+not establish that boundary; use explicit `NFData` forcing.
 
-Keep ordinary record types and documented field labels. Application-created
-or updated records are local values; they cannot alter the snapshot's indexes
-or tmux. Snapshot assembly and reference constructors remain controlled by
-validation. Mutation APIs take a Server and an explicit reference, not a
-record whose other fields might have been edited.
+Snapshot construction and live-reference constructors remain controlled.
+Caller-created or edited observation records are local values: they do not
+rewrite snapshot indexes, prove provenance or certify graph validity. Commands
+take a Server and an opaque reference. Provide validated offline fixture
+descriptions with a detached origin whose references cannot target a live
+Server. Decide observation constructor exports through an installed consumer
+covering imports, patterns, projections and local updates.
 
-### State identity and equality precisely
+Do not expose reconstruction-capable `Read`, `Generic`, codecs or coercions
+that bypass checked-value, reference or Snapshot invariants. `NFData` does not
+require a public `Generic` instance. Audit query roles before exporting them.
 
-A reference combines the typed tmux ID with the pinned endpoint and a fresh
-connection generation. Repeated captures through the same Server can compare
-references. Reconnection creates a new generation, even for the same daemon;
-references from independent handles are deliberately not interchangeable.
-This is connection-scoped targeting identity, not a universal daemon UUID.
+### Separate targeting identity from capture provenance
 
-Reference equality means the same target in that scope. Observation-record
-equality compares fields. A renamed window can retain its reference while
-producing a different record. References can outlive a connection as data;
-they do not prove that a target still exists or that an operation is allowed.
+A physical reference combines its typed tmux ID, pinned endpoint and fresh
+connection generation. Equality means the same target in that scope.
+Observation equality compares record contents. Independent handles and
+reconnections produce different generations, even against the same daemon.
 
-Window-link indices are reusable positions. An observed
-`(session, index, window)` triple does not create a permanent link identifier.
-Use an explicitly weaker slot operation when the caller intends the current
-occupant. Refuse an expected-window compare-and-mutate guarantee until an
-execution-time atomic check is proved. See the [observation contract][observations]
-and [contextual command contract][pane-commands].
+Lookup resolves the reference in the supplied snapshot if its generation
+matches. It may return a newer observation of an older reference. Capture
+identity is separate from reference equality. Missing and foreign references
+produce `LookupError`, not empty relationships. Re-resolving an ID against a
+new generation selects the currently observed entity; it does not restore an
+old guarantee. Defer cross-handle comparison and rebinding until a caller
+needs an explicitly weaker operation.
 
-Attached-client names are also reusable. Store their captured attachment
-context and observation identity; do not re-resolve an old name during pure
-navigation or mint a strong lifetime reference from it.
+A window-link index is a reusable position. `WindowSlot` expresses intent to
+operate on the execution-time occupant; an observed triple is not a permanent
+link identity. An expected-window mutation requires an execution-time atomic
+check or returns `UnsupportedGuarantee`. Attached-client names are reusable
+as well: preserve their captured context without inventing lifetime refs.
+See [observations][observations] and [contextual commands][pane-commands].
 
-### Use native collections and explicit effects
+### Use ordinary collections and explicit effects
 
-Signature sketches below are proposed interfaces, not runnable examples:
+These signatures describe proposed interfaces, not runnable examples:
 
 ```text
 withServerIn :: Runtime -> ServerConfig -> (Server -> IO a) -> IO a
@@ -158,195 +121,129 @@ capture      :: Server -> IO Snapshot
 sessions     :: Snapshot -> [Session]
 windows      :: Snapshot -> [Window]
 panes        :: Snapshot -> [Pane]
-clients      :: Snapshot -> [Client]
-windowLinks  :: Snapshot -> [WindowLink]
+lookupWindow :: Snapshot -> WindowRef -> Either LookupError Window
 panesForWindow :: Snapshot -> WindowRef -> Either LookupError [Pane]
 runQuery     :: Snapshot -> Query row -> Either QueryError [row]
 fetch        :: Server -> Query row -> IO (Either QueryError [row])
 exactlyOne   :: [row] -> Either CardinalityError row
 ```
 
-Lists support comprehensions, `filter`, `map` and folds without a mandatory
-Selection/QuerySet wrapper. Return global physical sources in numeric ID
-order; order links by session/index and window-local panes by pane index,
-then numeric ID. Preserve occurrence multiplicity. A foreign or missing
-reference is a lookup error, not an empty relation.
+Keep ordinary list views alongside indexed lookups. Global physical sources
+use numeric ID order; links use session/index order and window-local panes
+use pane index, then numeric ID. Preserve occurrence multiplicity. Qualify
+whether nonempty navigation results improve the installed consumer before
+changing the list contract.
 
-`fetch` acquires in IO and returns the same query-validation result as
-`runQuery`. Operational acquisition failures raise `TmuxException`;
-query-validation failures remain `Left QueryError`.
+Keep `Dimension` checked and without `Num`; native predicates use
+`dimensionValue pane.width >= 120`. Query thresholds may be `Integer` even
+when command dimensions must be positive. A writable numeric record field
+would bypass the invariant despite a hidden constructor. Preserve the
+existing accessor; add literal or record-dot conveniences only for a real
+consumer need. [Checked values](../values.md) · [Record rules][record-rules]
 
-Keep checked IDs, dimensions and indices. The current `Dimension` has no
-`Num` instance: ordinary predicates use `dimensionValue pane.width >= 120`.
-Do not publish the earlier shorthand `pane.width >= 120` as working code.
-Record dot improves reading; it does not make duplicate-label record updates
-unambiguous. Require neither overloaded updates nor an optics framework.
-See [checked values](../values.md) and the [GHC record rules][record-rules].
+Use GHC2024, record dot, `DuplicateRecordFields`, `NoFieldSelectors`, GADTs,
+newtypes, explicit deriving and ordinary `IO`. Require no custom prelude,
+compiler plugin, effect framework or optics library. Installed examples must
+qualify selective/qualified imports, duplicate labels and update behavior.
+[GHC edition guidance][ghc-editions]
 
-`GHC2024`, GADTs, newtypes, explicit deriving and ordinary `IO` provide the
-required distinctions. Add extensions for a demonstrated use, not to use
-every new compiler feature. Applications can wrap IO in ReaderT or their
-chosen effect system. No framework, compiler plugin or custom prelude is
-part of the consumer contract. [GHC edition guidance][ghc-editions]
+### Define a finite capture profile and each field's encoding
 
-### Validate completeness before publishing a Snapshot
+The initial complete Snapshot includes ServerInfo, physical entities, links,
+panes and attached-client observations. Unacquired clients cannot become an
+empty list. A scoped future capture must declare its coverage. Supported
+absence, unavailable capability and failed acquisition remain distinct.
+Private topology rows must not masquerade as hydrated observations.
 
-A complete Snapshot has the promised entity sets and baseline field profile,
-including attached-client observations. The current private capture acquires
-sessions, windows, links and panes only. It must not become a complete public
-Snapshot by treating unacquired clients as an empty list.
+Use one closed typed field catalogue carrying stable identity, format mapping,
+wire kind, decoder, capabilities and pure projection. Preserve potentially
+non-text window names and current commands with explicit text conversion;
+use an explicit POSIX path representation. State upstream normalization for
+each field. For example, tmux 3.7+ can report an empty command after rejecting
+invalid command-name bytes. No Haskell type can recover discarded data.
+Keep one observation hierarchy. Encoding uncertainty stays representable;
+malformed framing and invalid graph structure fail complete capture.
 
-Use a different type for a future scoped capture, or an explicit unsupported
-result. Supported absence is `Maybe`; unavailable capability and unacquired
-data are separate states. Query validation checks those requirements before
-evaluating predicates, including empty sources and short-circuit branches.
+Qualify a bounded, tagged, nonce-delimited record envelope before export.
+Prioritize reducing read boundaries over parallel per-field hydration.
+Backslash preservation and release-specific output decoding are required on
+tmux 3.4, 3.5 and 3.5a. Keep context receipts, response bounds, decoded limits,
+entity limits, deadlines and inspection reserves. Extra hook output fails.
+See [framing](../contracts/framing.md) and [acquisition](../contracts/acquisition.md).
 
-Replace the prototype's empty-name topology placeholders with private numeric
-topology row types before exposing capture. A wire topology is not yet a
-hydrated observation. This lets the type boundary prevent accidental early
-publication without making callers learn another result collection.
+A single expansion can improve consistency of tmux-owned state, but Snapshot
+promises an observation interval, not global atomicity. OS-derived callbacks
+can observe changing external state. Hooks can run between commands in one
+invocation. Qualify the tmux 3.3 client-listing fallback and repeated physical
+fields through links. Capture admission must either wait within its deadline
+or return an explicit capacity error; it cannot imply unlimited concurrency.
+Measure native capture latency and server pauses before qualifying defaults.
 
-Finish external reads, checked decoding and forcing before ownership transfer.
-Strict fields and [Data.Map.Strict][map-strict] alone provide only limited
-strictness guarantees; explicitly force the required graph normal form.
-Later lazy list processing may safely run after closure because it uses
-owned values. Preserve paths as bytes; decode declared Text fields strictly,
-without replacement characters or implicit normalization.
+### Preserve failure, cancellation and reachable recovery
 
-### Keep lifecycle ownership visible
+Closing admission, physical cleanup and logical completion are distinct.
+The [lifecycle outcomes](../contracts/process.md#public-scope-outcomes) are
+normative for both Server scopes. Preserve the callback exception, including
+asynchronous cancellation, when cleanup also fails. Retain secondary cleanup
+diagnostics and a reachable recovery owner. Successful callbacks with failed
+cleanup report that failure. Recovery-worker allocation failure must leave
+existing ownership reachable.
 
-Use a caller-owned Runtime as the explicit recovery-capable foundation.
-`withServerIn` closes its Server scope; failed cleanup remains reachable
-through that Runtime. Closing admission, physical cleanup and logical command
-completion are distinct observations.
+Correlate capture failure with operation ID, endpoint/generation, physical
+cleanup state, logical outcome and available recovery or explicit detachment.
+A caller must not infer that an operation never ran from cancellation or child
+exit. Batching alone does not justify deleting unresolved read responsibility.
+Avoid generally blocking uninterruptible cleanup. Exception-context mechanisms
+need integrated accepted-read cancellation and double-failure tests.
 
-A convenience `withServer` remains a required ergonomic goal, but its cleanup
-handoff must be reviewed and tested before export. A plain `bracket` around
-the existing private Runtime is insufficient: cleanup can fail while owners
-remain, and a secondary failure must not discard callback cancellation.
-The convenience form must wait for cleanup or retain a reachable recovery
-handle while preserving the primary exception. This ADR does not approve a
-specific exception-annotation or background-supervisor implementation.
+Operational failures use concrete `TmuxException`; parsing, lookup, query and
+cardinality use their respective `Either` results. `tryTmux` catches only
+library operational failures. Workers have an explicit wait, link or supervised
+failure channel. [Exceptions][exceptions] · [Scoped concurrency][async]
 
-Likewise, a failed or cancelled capture read can retain logical permits after
-physical cleanup. Expose unresolved operation receipts through the owner and
-allow an explicit responsibility-detach decision. Do not silently reset them
-on a timer or report success. Cancellation during an accepted read, followed
-by recovery and another capture, is a required acceptance case.
+### Keep queries optional and validate before evaluation
 
-Operational IO failures use a concrete `TmuxException`; pure parsing, lookup,
-query and cardinality failures use their respective `Either` results.
-`tryTmux` catches only library operational failures. Preserve asynchronous
-exceptions and their context. Workers need an explicit wait, link or supervised
-failure channel; merely spawning them with `withAsync` is insufficient.
-[Exception semantics][exceptions] · [Scoped concurrency][async]
+Use native predicates for unrestricted local logic. Use a closed `Expr row`
+and `Query row` with named combinators for inspection, interchange and plans.
+The authoritative field catalogue may include derived fields. Pure projections
+do not replace wire identity or prove decoder equivalence.
 
-### Keep the portable query representation small
+Validate every field, relationship and evaluator requirement before evaluating
+any branch, including empty sources and short-circuit cases. Preflight known
+capability failures before unnecessary acquisition. Keep prepared plans private
+until a consumer establishes their lifetime assumptions. Relationships preserve
+snapshot context and same-child semantics. Known empty relations follow ordinary
+quantifier laws; unavailable relations fail validation. Filter interchange has
+an explicit compatibility profile. [Typed-query precedent][beam]
 
-Ordinary predicates remain unrestricted local Haskell. Use `Expr row` and
-`Query row` when a caller needs inspection, interchange or a query plan.
-Opaque field/relation descriptors carry row/value types, stable identifiers,
-decoding, supported operators and capability metadata. A function-only field
-does not supply that portable identity.
+## Alternatives and consequences
 
-Use a closed GADT representation and named combinators. Avoid an Entity type
-class hierarchy and arbitrary callbacks inside the portable AST. Keep one
-authoritative catalogue for wire mappings and query fields; the prototype's
-small Runtime field sum must not become a competing schema.
+Operational Client is credible in OCaml and Lisp, but Server leaves Client
+available for the tmux domain object. Live entity handles hide acquisition and
+couple navigation to resource lifetime. Ordinary predicates remain supported;
+they do not replace the required inspectable representation. Rank-scoped and
+linear references cannot establish external entity liveness. A Java adapter
+needs a concrete consumer and is not the native default.
 
-Relations retain cardinality and snapshot context. Same-child predicates and
-independent existential predicates have different meanings. Empty known
-relations obey ordinary quantifier laws; unavailable ones fail validation.
-Filter interchange declares a compatibility profile, not blanket equivalence
-with another port's contextual Window model. [Typed-query precedent][beam]
+The public API requires explicit snapshots for navigation and Servers for
+commands. In exchange, captured values survive closure and repeated local
+queries perform no hidden reads. Native process ownership carries a Linux
+maintenance cost. Document glibc 2.39 and required kernel operations for the
+initial backend; any alternative launch path needs separate qualification.
+[Host contract](../contracts/process.md#launch-and-host-requirements)
 
-### Qualify acquisition cost before selecting optimizations
+Keep only the selected newest stable GHC series and the required exact tmux
+3.3+ matrix. Keep MCP excluded. Workspace is a separate Cabal package using
+public core APIs, with file-format and CLI dependencies outside the core.
+[Package policy](../../.github/CONTRIBUTING.md#package-and-dependency-policy) ·
+[Cabal projects][cabal-projects]
 
-Keep the private one-shot, no-start, pinned transport as the measured
-correctness baseline. It avoids attachment during ordinary observation.
-The current graph capture uses `2 + S + W + 3P` successful read requests per
-attempt for sessions S, unique windows W and unique panes P. It hydrates those
-fields serially; server metadata and attached-client acquisition will add work.
-
-That cost does not establish a suitable two-second default for large graphs.
-Measure realistic small, medium and linked-window cases before claiming the
-deadline or throughput is qualified. Bounded parallel hydration can use the
-ordinary read lane; preserve reserved inspection capacity. Batch arbitrary
-text only after its framing has an equivalence proof and real-tmux tests.
-
-Two matching topologies establish the documented consistency check, not a
-transaction or detection of every intermediate change. Do not promise atomic
-scalar observations. Control mode remains an explicit event capability with
-its own attachment, overflow and resynchronization contract, not a hidden
-capture optimization. See the [framing](../contracts/framing.md),
-[socket pin](../contracts/socket-pin.md) and [process](../contracts/process.md)
-contracts.
-
-## Alternatives
-
-| Alternative | Decision and consequence |
-| --- | --- |
-| Call the operational type Client, as OCaml and Lisp do | Credible runner-up. It emphasizes the connection role but needs a distinct name for tmux client observations. Decide before exports; do not maintain aliases. |
-| Live entity handles that read during navigation | Reject for the native public model. Detached values make acquisition, lifetime and repeated-query behavior explicit. |
-| Arbitrary predicates only | Keep them as the simplest local path, but retain a typed AST for the required portable query/interchange contract. |
-| Compulsory effect framework, optics or custom result collection | Reject as core requirements. They add consumer machinery without establishing tmux identity, completeness or external completion. |
-| Rank-scoped or linear references everywhere | Do not require them. They complicate detached observations and cannot establish that an external pane still exists. |
-| Mandatory Java backend | Reject as the default. The native API owns its data and effects; any future adapter must preserve the same contracts through an explicit boundary. |
-
-## Audit outcome and consequences
-
-The value/IO/physical-link separation is the recommended foundation. Public
-API readiness is **unproven**. The following are requirements before export,
-not claims of defects in an already shipped Client API:
-
-| Finding | Required action |
-| --- | --- |
-| Server/Client terminology is not settled | Review this naming proposal and use one operational root. |
-| Wire topology uses ordinary entity records with empty text | Separate private topology rows from hydrated observations. |
-| Attached clients and public completeness metadata are missing | Complete the declared Snapshot profile before exposing it. |
-| Private cleanup can fail with retained owners | Prove reachable recovery and primary-exception preservation. |
-| Capture errors can leave unresolved read responsibility | Expose receipts and test repeated failures followed by valid capture. |
-| Cancellation coverage currently pauses between reads | Add an oracle for cancellation during an accepted read. |
-| Exact-target and non-UTF-8-path acquisition need live oracles | Assert actual target rejection and exact returned path bytes. |
-| Per-field process cost and deadline suitability are unmeasured | Benchmark the acquisition plan and bound any concurrency. |
-| Public reexports and examples do not exist yet | Qualify actual Haddock interfaces and installed consumers. |
-
-The result is more explicit than a Python-style handle API: relationships
-need a snapshot and commands need a Server. That cost buys local reasoning
-and detached values. The native process/cleanup implementation also carries
-Linux-specific maintenance cost; this record does not hide that cost behind
-an idiomatic public facade.
-
-## Implementation sequence after acceptance
-
-1. Resolve naming and lifecycle review findings; update superseded contracts
-   explicitly. Keep rejected alternatives and their reasons in this record.
-2. Separate wire topology from hydrated records and complete the Snapshot
-   profile, identity laws and recovery cases on owned tmux fixtures.
-3. Add the public Server/Snapshot modules and installed graph-navigation
-   examples. Preserve native Haddock types, field links and source anchors.
-4. Add typed query and command consumers, then events and workspace. Keep
-   codecs and workspace dependencies outside the core. Use the existing
-   [Cabal package policy](../../.github/CONTRIBUTING.md#package-and-dependency-policy)
-   and [multi-package project support][cabal-projects].
-
-Each stage needs current-source tests, the required tmux matrix and independent
-review. Passing the prototype's present tests does not close the full goal.
-
-## Questions for the expert
-
-1. Is Server the clearest operational root, or does Client's connection meaning
-   justify diverging from the Python/JVM/Elixir naming?
-2. Are ordinary observation records, opaque references and one validated graph
-   the right Haskell boundary, including the checked-Dimension ergonomics?
-3. Is connection-scoped reference equality sufficient, or is a separate,
-   explicitly weaker cross-handle comparison needed by an actual caller?
-4. Does the Runtime/recovery foundation make cleanup responsibility usable
-   without imposing it on every successful high-level call?
-5. Should strict Text acquisition failure remain the default for invalid UTF-8,
-   or should a separate byte-preserving observation profile be designed?
-6. Is per-field hydration acceptable as a baseline once measured, and what
-   evidence would justify batching or bounded parallelism?
+Implement private framing, field semantics, complete capture and recovery
+first. Before export, qualify installed programs for detached navigation,
+typed selection plus mutation, and cancellation/recovery, along with offline
+fixtures and measured capture cost. The [qualification record](0001-native-domain-model-qualification.md)
+retains open gates. Architectural acceptance does not establish adoption or
+release readiness.
 
 ## References
 

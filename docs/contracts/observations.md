@@ -17,10 +17,12 @@ tmux, refreshes a handle or acquires a resource.
 `WindowLink.session` and `PaneOccurrence.link.session` provide session
 context. A physical window or pane has no unique session. The physical pane
 record identifies its window directly; resolving that reference to a record
-requires the same snapshot.
+uses the supplied snapshot. A reference from an earlier capture resolves to
+the supplied snapshot's observation when its connection generation matches.
+Capture provenance is separate from reference equality.
 
 References supplied to graph accessors must belong to the snapshot's endpoint
-and client generation. A missing or foreign reference is a `QueryError`, not
+and connection generation. A missing or foreign reference is a `LookupError`, not
 an empty relationship. Known empty relationships are valid values. Active
 window and pane accessors follow the validated graph; session active-pane
 access returns an occurrence carrying the active window link.
@@ -48,6 +50,11 @@ Deprecated Python `get` field helpers map to record projection. They do not
 introduce a string-keyed Haskell getter. Missing capabilities have a distinct
 representation or prevent the required capture; `Nothing` means supported
 absence. A projection never performs deferred fallible decoding.
+
+Caller-edited records do not alter snapshot indexes or certify capture
+provenance. Provide validated offline fixtures with a detached origin; their
+references cannot target a live Server. Snapshot and reference construction
+remain validated, including through reconstruction-capable instances.
 
 ## Selection and cardinality
 

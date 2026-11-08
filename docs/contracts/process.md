@@ -5,7 +5,9 @@ work, not a public client or a proof that a tmux operation completed.
 
 ## Launch and host requirements
 
-Launch uses Linux atomic pidfd creation through `pidfd_spawn`. The backend
+Launch uses Linux atomic pidfd creation through `pidfd_spawn`, introduced
+in [glibc 2.39](https://sourceware.org/pipermail/libc-announce/2024/000038.html).
+The initial stock-glibc backend requires glibc 2.39 or newer. The backend
 resolves that operation and the cwd/closefrom spawn actions dynamically.
 Missing operations and incompatible SIGCHLD policies refuse before birth.
 There is no numeric-PID signaling or post-spawn pidfd lookup fallback.
@@ -117,6 +119,28 @@ This ownership layer is private. The fixed server reads below bind logical and
 physical ownership. Other command bindings, capture and subscription consumers
 remain unimplemented. Physical shutdown does not resolve logical unknown
 outcomes or establish completion of a daemon job.
+
+## Public scope outcomes
+
+The proposed Server scopes must preserve the following outcomes before export:
+
+- Successful callback and cleanup return the callback result.
+- Successful callback with failed cleanup reports cleanup failure and retains
+  a reachable recovery owner.
+- Failed callback with successful cleanup preserves the callback exception.
+- Callback and cleanup failure preserve the callback exception as primary,
+  with secondary diagnostics and recovery responsibility still reachable.
+- Cancellation with incomplete cleanup preserves asynchronous cancellation
+  and the specified reachable owner.
+- Recovery-worker allocation failure retains existing ownership and reports
+  the failed handoff.
+
+A generally blocking uninterruptible region cannot supply bounded cleanup.
+Exception-context annotations are a candidate mechanism; the common scope
+needs integrated cancellation and double-failure tests. Correlate capture
+failure with operation ID, endpoint/generation, physical cleanup status,
+logical outcome and available recovery or explicit detachment. Batching
+alone does not establish logical completion or retire uncertainty.
 
 ## Logical admission
 
