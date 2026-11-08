@@ -74,9 +74,34 @@ Pools must not retain an uncharged terminal-result cache. An internal consumer
 must reserve a separate parent envelope before dispatch for data retained
 through decoding, then transfer that charge or release it on external delivery.
 
-This context is a private prerequisite. Full Runtime supervision, dispatch
-integration, deadlines and shared accounting in future capture/subscription
-consumers remain unimplemented.
+## Provisional Runtime ownership
+
+The private [Runtime](../../internal/LibTmux/Internal/Runtime.hs) constructs a
+fresh pin owner and reserves its pool's client credit in the same STM
+transaction that registers cleanup responsibility. Socket adoption starts
+after that registration. Exhausted or closed admission therefore refuses
+before creating a private socket alias. Only successful adoption on an open
+pool can return a client.
+
+Failed and cancelled adoption retain their pool and pin journal. Cleanup
+failure keeps the registry entry and client credit until a successful retry.
+The original adoption exception remains primary, including cancellation.
+Closing shared admission observes every registered owner; it cannot miss a
+pool between reservation and registration. Reports and later admission
+remove only entries whose cleanup has completed, so retired clients do not
+accumulate in the registry.
+
+Runtime close requests cleanup for all registered pools and reports ordinary
+request failures. Waiting propagates a failed cleanup restart before awaiting
+workers that could not start. It can also throw a retained pin-cleanup failure,
+and has no hard deadline. Existing pool workers own physical cleanup; the
+registry adds no process-global state or detached reaper. It does not issue
+`kill-server` or establish completion of daemon-side work.
+
+This ownership layer is private. Logical dispatch integration, monotonic
+deadlines, phased shutdown and shared accounting in future capture/subscription
+consumers remain unimplemented. Close currently waits for existing children
+through their pools; it does not implement the required termination phases.
 
 ## Logical admission
 

@@ -82,18 +82,22 @@ defaultHooks = Hooks (pure ()) (pure ()) (pure ()) (\child -> N.signalChild chil
 
 newPool :: B.Budget -> Fork -> PinOwner -> Int -> IO Pool
 -- The caller masks through cleanup registration; PinOwner transfers on success.
-newPool budget forker pinOwner capacity = mask_ $ do
+newPool budget forker pinOwner capacity = mask_ $
+  atomically (newPoolSTM budget forker pinOwner capacity)
+
+-- | Reserve the client and construct its owner in the caller's registration
+-- transaction. Failed registration rolls back every credit and TVar.
+newPoolSTM :: B.Budget -> Fork -> PinOwner -> Int -> STM Pool
+newPoolSTM budget forker pinOwner capacity = do
   unless (capacity > 0 && capacity <= 16 && B.inspectionAllowance budget >= inspectionBytes)
-    (throwIO ResourceLimit)
-  clientLease <- atomically (B.acquireClient budget)
-  (do
-    jobs <- newTVarIO Map.empty
-    closing <- newTVarIO False
-    nextKey <- newTVarIO 0
-    pinBusy <- newTVarIO False
-    pinResult <- newEmptyTMVarIO
-    pure Pool {jobs, closing, nextKey, capacity, forker, budget, clientLease, pinOwner, pinBusy, pinResult})
-    `onException` atomically (B.releaseClient clientLease)
+    (throwSTM ResourceLimit)
+  clientLease <- B.acquireClient budget
+  jobs <- newTVar Map.empty
+  closing <- newTVar False
+  nextKey <- newTVar 0
+  pinBusy <- newTVar False
+  pinResult <- newEmptyTMVar
+  pure Pool {jobs, closing, nextKey, capacity, forker, budget, clientLease, pinOwner, pinBusy, pinResult}
 
 inputLimitBytes, streamLimitBytes :: Int
 inputLimitBytes = 65536

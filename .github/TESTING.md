@@ -153,6 +153,17 @@ exact limits, overflow refusal, atomic reservation and repeated release. These
 are [private ownership contracts](../docs/contracts/process.md#streams-and-bounds),
 not evidence for a complete public Runtime or total-process memory cap.
 
+The provisional Runtime cases check that eight client credits prevent a ninth
+endpoint adoption, and that close sees acquisition before client publication.
+Cancellation during partial pin acquisition preserves its exception and retains
+an obstructed cleanup journal. A second healthy client still cleans up; removing
+the obstacle allows retry to retire the first owner and its credit. Repeated
+real PID inspections check pin targeting, complete streams and registry reuse.
+An injected cleanup-restart failure must throw before a 250 ms watchdog,
+retain the failed child and client credits, and allow a later successful retry.
+These cases qualify [provisional ownership](../docs/contracts/process.md#provisional-runtime-ownership),
+not logical dispatch integration, deadlines or phased shutdown.
+
 A deliberately held signal has a 250 ms watchdog to detect premature pidfd
 retirement. Native gate observations also have bounded watchdogs. These
 checks synchronize through STM, descriptors and RTS status; they do not
