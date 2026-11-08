@@ -35,6 +35,7 @@ extra-doc-files:
   docs/values.md
   docs/api.md
   docs/status.md
+  docs/decisions/0001-native-domain-model.md
   docs/contracts/README.md
   docs/contracts/environment.md
   docs/contracts/observations.md
