@@ -114,6 +114,14 @@ shared resource limiter. Independent source review passes this private
 increment; neither these checks nor the timing qualify complete public capture,
 creation-to-receipt cancellation, accepted-read cancellation or benchmarks.
 
+The private field catalogue now pairs each current physical/link field with
+its row and value types, stable key, tmux variable, wire decoder and pure
+projection. Numeric topology and scalar hydration consume those descriptors.
+Decoder tests cover numeric bounds, missing/malformed values, declared text
+and lossless bytes; contextual projection tests keep link state separate.
+This is the existing entity profile, without ServerInfo or observed clients.
+It does not establish a public query language or complete Snapshot coverage.
+
 ## Remaining gates
 
 - Qualify complete record framing on every required release, preserving the

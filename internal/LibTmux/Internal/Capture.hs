@@ -3,35 +3,34 @@
 -- This private slice observes sessions, windows and panes. It does not acquire
 -- observed clients. Framed read failures and cancellation can leave logical
 -- uncertainty in 'R.inspect'; the caller must retain the Runtime and inspect
--- those handles. Public recovery and scoped Client policies remain unfinished.
+-- those handles. Public recovery and Server scope policies remain unfinished.
 module LibTmux.Internal.Capture
   ( CapturedGraph, CaptureError (..), captureGraph, captureGraphWith ) where
 
 import Control.DeepSeq (force)
 import Control.Exception (Exception, Handler (..), catches, evaluate, mask, onException, throwIO)
-import Control.Monad (when)
+import Control.Monad (forM, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.IORef
-import Data.Text (Text)
-import Data.Text.Encoding qualified as Utf8
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Internal.Graph qualified as G
+import LibTmux.Internal.Graph qualified as Session (Session (..))
+import LibTmux.Internal.Graph qualified as Window (Window (..))
+import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin (pinGeneration)
 import LibTmux.Internal.Topology qualified as T
-import LibTmux.Internal.TmuxText qualified as Label
-import System.OsString.Posix qualified as Os
 import System.Timeout (timeout)
 
 type CapturedGraph = (Word64, Word64, G.EntityGraph)
 
 data CaptureError
   = CaptureChanged | CaptureDeadline | InvalidCaptureDeadline !Int
-  | CaptureByteLimit !Integer | InvalidFieldEncoding !R.EntityField
+  | CaptureByteLimit !Integer | InvalidCapturedField !Field.FieldError
   | CaptureReadUnavailable !S.Outcome
   deriving stock (Eq, Show)
 instance Exception CaptureError
@@ -92,13 +91,23 @@ captureGraphWith checkpoint runtime client executable duration = do
             bytes <- owned (R.readEntityFieldWith field P.defaultHooks left runtime client executable R.ScalarRead)
             charge (4 * toInteger (Bytes.length bytes))
             pure bytes
-          text field = do
-            bytes <- scalar field
-            either (const (throwIO (InvalidFieldEncoding field))) (evaluate . force) (Utf8.decodeUtf8' bytes)
+          decoded :: Field.Field row value -> R.EntityField -> IO value
+          decoded field target = do
+            bytes <- scalar target
+            either (throwIO . InvalidCapturedField) pure (Field.decodeField field bytes)
       before <- topology
-      sessions <- mapM (hydrateSession text) (G.graphSessions before)
-      windows <- mapM (hydrateWindow scalar) (G.graphWindows before)
-      panes <- mapM (hydratePane text scalar) (G.graphPanes before)
+      sessions <- forM (G.graphSessions before) $ \row -> do
+        name <- decoded Field.SessionName (R.SessionName (Field.project Field.SessionId row))
+        pure row {Session.name = name}
+      windows <- forM (G.graphWindows before) $ \row -> do
+        name <- decoded Field.WindowName (R.WindowName (Field.project Field.WindowId row))
+        pure row {Window.name = name}
+      panes <- forM (G.graphPanes before) $ \row -> do
+        let ident = Field.project Field.PaneId row
+        title <- decoded Field.PaneTitle (R.PaneTitle ident)
+        command <- decoded Field.PaneCommand (R.PaneCommand ident)
+        path <- decoded Field.PanePath (R.PanePath ident)
+        pure row {G.title = title, G.currentCommand = command, G.currentPath = path}
       checkpoint
       after <- topology
       when (before /= after) (throwIO CaptureChanged)
@@ -118,23 +127,3 @@ remaining deadline = do
   now <- getMonotonicTimeNSec
   when (now >= deadline) (throwIO CaptureDeadline)
   pure (fromIntegral ((deadline - now + 999) `div` 1000))
-
-hydrateSession :: (R.EntityField -> IO Text) -> G.Session -> IO G.Session
-hydrateSession text row = do
-  let G.SessionRef _ ident = row.ref
-  name <- text (R.SessionName ident)
-  pure (G.Session row.ref name row.attached)
-
-hydrateWindow :: (R.EntityField -> IO ByteString) -> G.Window -> IO G.Window
-hydrateWindow scalar row = do
-  let G.WindowRef _ ident = row.ref
-  name <- Label.fromBytes <$> scalar (R.WindowName ident)
-  pure (G.Window row.ref name row.width row.height)
-
-hydratePane :: (R.EntityField -> IO Text) -> (R.EntityField -> IO ByteString) -> G.Pane -> IO G.Pane
-hydratePane text scalar row = do
-  let G.PaneRef _ ident = row.ref
-  title <- text (R.PaneTitle ident)
-  command <- Os.fromBytestring <$> scalar (R.PaneCommand ident)
-  path <- Os.fromBytestring <$> scalar (R.PanePath ident)
-  pure row {G.title = title, G.currentCommand = command, G.currentPath = path}

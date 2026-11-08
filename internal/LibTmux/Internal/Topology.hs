@@ -8,9 +8,7 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Text (Text)
-import Data.Text.Encoding qualified as Utf8
-import LibTmux.Id qualified as Id
+import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Value qualified as Value
 import System.OsString.Posix qualified as Os
@@ -26,11 +24,17 @@ instance Exception TopologyError
 -- S/W/P loops are present in plain tmux 3.3. Only numeric fields enter rows;
 -- arbitrary strings are acquired separately inside fresh scalar envelopes.
 topologyFormat :: ByteString
-topologyFormat = "#{S:S\t#{session_id}\t#{session_attached}\n"
-  <> "#{W:W\t#{session_id}\t#{window_id}\t#{window_index}\t#{window_active}"
-  <> "\t#{window_width}\t#{window_height}\n"
-  <> "#{P:P\t#{window_id}\t#{pane_id}\t#{pane_index}\t#{pane_width}"
-  <> "\t#{pane_height}\t#{pane_active}\t#{pane_dead}\n}}}"
+topologyFormat = "#{S:" <> row "S" [variable Field.SessionId, variable Field.SessionAttached]
+  <> "#{W:" <> row "W" [variable Field.LinkSession, variable Field.WindowId,
+    variable Field.LinkIndex, variable Field.LinkActive,
+    variable Field.WindowWidth, variable Field.WindowHeight]
+  <> "#{P:" <> row "P" [variable Field.PaneWindow, variable Field.PaneId,
+    variable Field.PaneIndex, variable Field.PaneWidth, variable Field.PaneHeight,
+    variable Field.PaneActive, variable Field.PaneDead] <> "}}}"
+  where
+    variable :: Field.Field row value -> ByteString
+    variable selected = "#{" <> Field.formatVariable selected <> "}"
+    row tag fields = tag <> "\t" <> Bytes.intercalate "\t" fields <> "\n"
 
 data Rows = Rows
   { sessions :: !(Map G.SessionRef G.Session)
@@ -48,23 +52,23 @@ decodeTopology generation bytes = do
   graphResult (G.assembleEntityGraph generation (Map.elems rows.sessions)
     (Map.elems rows.windows) (Map.elems rows.panes) (Map.elems rows.links))
   where
-    sessionId = fmap (G.SessionRef generation) . ident Id.parseSessionId
-    windowId = fmap (G.WindowRef generation) . ident Id.parseWindowId
-    paneId = fmap (G.PaneRef generation) . ident Id.parsePaneId
+    sessionId = fmap (G.SessionRef generation) . field Field.SessionId
+    windowId = fmap (G.WindowRef generation) . field Field.WindowId
+    paneId = fmap (G.PaneRef generation) . field Field.PaneId
     step rows line = do
       result <- case Ascii.split '\t' line of
         ["S", sid, attached] -> do
           ref <- sessionId sid
-          count <- natural 4294967295 attached
+          count <- field Field.SessionAttached attached
           values <- insert ref (G.Session ref "" count) G.ConflictingSession rows.sessions
           pure rows {sessions = values}
         ["W", sid, wid, index, active, width, height] -> do
           session <- sessionId sid
           window <- windowId wid
-          position <- checked Value.mkWindowIndex =<< natural 2147483647 index
-          selected <- boolean active
-          w <- dimension width
-          h <- dimension height
+          position <- field Field.LinkIndex index
+          selected <- field Field.LinkActive active
+          w <- field Field.WindowWidth width
+          h <- field Field.WindowHeight height
           values <- insert window (G.Window window "" w h) G.ConflictingWindow rows.windows
           when (Map.member (session, position) rows.links)
             (Left (TopologyGraphError (G.DuplicateWindowSlot session position)))
@@ -73,11 +77,11 @@ decodeTopology generation bytes = do
         ["P", wid, pid, index, width, height, active, dead] -> do
           window <- windowId wid
           pane <- paneId pid
-          position <- checked Value.mkPaneIndex =<< natural 4294967295 index
-          w <- dimension width
-          h <- dimension height
-          selected <- boolean active
-          exited <- boolean dead
+          position <- field Field.PaneIndex index
+          w <- field Field.PaneWidth width
+          h <- field Field.PaneHeight height
+          selected <- field Field.PaneActive active
+          exited <- field Field.PaneDead dead
           values <- insert pane (G.Pane pane window position w h selected exited "" Os.empty Os.empty)
             G.ConflictingPane rows.panes
           pure rows {panes = values}
@@ -87,29 +91,8 @@ decodeTopology generation bytes = do
       when (count > 10000) (Left (TopologyEntityLimit count))
       pure result
 
-ident :: (Text -> Either Id.IdError a) -> ByteString -> Either TopologyError a
-ident parse bytes
-  | Bytes.length bytes > 11 = Left MalformedTopology
-  | otherwise = either (const (Left MalformedTopology)) Right (parse (Utf8.decodeLatin1 bytes))
-
-natural :: Integer -> ByteString -> Either TopologyError Integer
-natural upper bytes
-  | Bytes.null bytes || Bytes.length bytes > 10
-    || not (Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes) = Left MalformedTopology
-  | otherwise = case Ascii.readInteger bytes of
-      Just (value, "") | value <= upper -> Right value
-      _ -> Left MalformedTopology
-
-boolean :: ByteString -> Either TopologyError Bool
-boolean "0" = Right False
-boolean "1" = Right True
-boolean _ = Left MalformedTopology
-
-dimension :: ByteString -> Either TopologyError Value.Dimension
-dimension bytes = checked Value.mkDimension =<< natural 4294967295 bytes
-
-checked :: (Integer -> Either Value.ValueError a) -> Integer -> Either TopologyError a
-checked build = either (const (Left MalformedTopology)) Right . build
+field :: Field.Field row value -> ByteString -> Either TopologyError value
+field selected = either (const (Left MalformedTopology)) Right . Field.decodeField selected
 
 graphResult :: Either G.GraphError a -> Either TopologyError a
 graphResult = either (Left . TopologyGraphError) Right

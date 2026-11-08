@@ -35,6 +35,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Entropy qualified as Entropy
 import LibTmux.Internal.Frame qualified as F
+import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Scheduler qualified as S
@@ -335,11 +336,19 @@ commandFormat (ReadEntityField field) = let (_, receipt, value) = entityField fi
   receipt <> ":" <> F.escapedFieldFormat value
 
 entityField :: EntityField -> (ByteString, ByteString, ByteString)
-entityField (SessionName ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident), "#{session_id}", "session_name")
-entityField (WindowName ident) = (Utf8.encodeUtf8 (Id.renderWindowId ident), "#{window_id}", "window_name")
-entityField (PaneTitle ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "pane_title")
-entityField (PaneCommand ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "pane_current_command")
-entityField (PanePath ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "pane_current_path")
+entityField (SessionName ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident),
+  fieldFormat Field.SessionId, Field.formatVariable Field.SessionName)
+entityField (WindowName ident) = (Utf8.encodeUtf8 (Id.renderWindowId ident),
+  fieldFormat Field.WindowId, Field.formatVariable Field.WindowName)
+entityField (PaneTitle ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, Field.formatVariable Field.PaneTitle)
+entityField (PaneCommand ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, Field.formatVariable Field.PaneCommand)
+entityField (PanePath ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, Field.formatVariable Field.PanePath)
+
+fieldFormat :: Field.Field row value -> ByteString
+fieldFormat field = "#{" <> Field.formatVariable field <> "}"
 
 commandTarget :: ReadCommand value -> [ByteString]
 commandTarget (ReadEntityField field) = let (target, _, _) = entityField field in ["-t", target]
