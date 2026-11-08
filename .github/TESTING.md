@@ -161,8 +161,16 @@ the obstacle allows retry to retire the first owner and its credit. Repeated
 real PID inspections check pin targeting, complete streams and registry reuse.
 An injected cleanup-restart failure must throw before a 250 ms watchdog,
 retain the failed child and client credits, and allow a later successful retry.
-These cases qualify [provisional ownership](../docs/contracts/process.md#provisional-runtime-ownership),
-not logical dispatch integration, deadlines or phased shutdown.
+The phased shutdown cases hold an actual native launch across both 250 ms
+phases. Cancelling one caller leaves a single shared attempt running; its
+incomplete report retains client, child and byte credits until gate release.
+A monotonic measurement rejects collapsed phases. A real waiting command can
+finish normally during grace, while pin-only cleanup needs no fixed delay.
+Refusing the supervisor allocation closes admission and permits a later retry
+without stranding its completion latch. Each case verifies physical cleanup;
+an independent command checks that the owned tmux daemon remains usable.
+These cases qualify [private physical ownership](../docs/contracts/process.md#provisional-runtime-ownership),
+not logical dispatch integration, operation deadlines or daemon-job completion.
 
 A deliberately held signal has a 250 ms watchdog to detect premature pidfd
 retirement. Native gate observations also have bounded watchdogs. These

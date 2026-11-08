@@ -9,11 +9,13 @@ import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef
 import Fixture qualified
+import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.SocketPin
+import ProcessGate qualified as G
 import System.Exit (ExitCode (..))
 import System.Posix.Files.ByteString qualified as Files
 import System.Posix.IO.ByteString qualified as Posix
@@ -158,6 +160,108 @@ tests = testGroup "provisional Runtime ownership"
         R.awaitCleanup runtime
         atomically (R.inspect runtime) >>= assertEmpty
         atomically (R.usage runtime) >>= (@?= B.Usage False 0 0 0)
+
+  , testGroup "phased shutdown"
+      [ testCase "cancelled callers share an owned attempt that retains a pending launch" $ do
+          forks <- newIORef (0 :: Int)
+          let fork :: P.Fork
+              fork action = modifyIORef' forks (+ 1) >> P.normalFork action
+          Fixture.withFixture $ \fixture -> bracket (R.newRuntime fork) R.awaitCleanup $ \runtime ->
+            G.withGate $ \gate -> do
+              client <- adopt runtime fixture
+              let pool = R.clientPool client
+                  path = pinPath (R.clientPin client)
+                  hooks = P.defaultHooks {P.launchNative = G.launch G.BeforeLaunch gate}
+              (code, expected, errors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
+              code @?= ExitSuccess
+              errors @?= ""
+              ticket <- P.submit B.Ordinary hooks pool (native fixture client ["display-message", "-p", "#{pid}"]) ""
+              G.awaitGate gate
+              flip finally (G.releaseGate gate) $ do
+                started <- getMonotonicTimeNSec
+                withAsync (R.shutdown runtime) $ \caller -> do
+                  atomically (readTVar pool.closing >>= check)
+                  cancel caller
+                  waitCatch caller >>= assertCancelled
+                  observed <- timeout 750000 (R.shutdown runtime)
+                  case observed of
+                    Nothing -> assertFailure "shutdown waited for a retained native launch"
+                    Just report -> assertPending 1 report
+                ended <- getMonotonicTimeNSec
+                assertBool "grace and reap must each allow their 250 ms phase"
+                  (ended - started >= 500000000)
+                readIORef forks >>= (@?= 2)
+                atomically (readTVar ticket.cancelled) >>= (@?= True)
+                atomically (R.usage runtime) >>= (@?= B.Usage False 1 1 P.childBytes)
+                Files.fileExist path >>= (@?= True)
+              R.awaitCleanup runtime
+              atomically (R.inspect runtime) >>= assertEmpty
+              atomically (R.usage runtime) >>= (@?= B.Usage False 0 0 0)
+              Files.fileExist path >>= (@?= False)
+              Fixture.command fixture ["display-message", "-p", "#{pid}"] >>= (@?= (ExitSuccess, expected, ""))
+
+      , testCase "a waiting command can complete during grace without termination" $
+          withRuntime $ \runtime fixture -> do
+            client <- adopt runtime fixture
+            born <- newEmptyTMVarIO
+            let pool = R.clientPool client
+                hooks = P.defaultHooks {P.afterStart = atomically (putTMVar born ())}
+            ticket <- P.submit B.Ordinary hooks pool (native fixture client ["wait-for", "shutdown-grace"]) ""
+            atomically (readTMVar born)
+            withAsync (R.shutdown runtime) $ \closer -> do
+              atomically (readTVar pool.closing >>= check)
+              Fixture.command fixture ["wait-for", "-S", "shutdown-grace"] >>= (@?= (ExitSuccess, "", ""))
+              waitCatch closer >>= \case
+                Left problem -> assertFailure ("shutdown failed: " <> show problem)
+                Right report -> assertEmpty report
+            atomically (readTVar ticket.cancelled) >>= (@?= False)
+            result <- P.await ticket
+            result.exit @?= Just (N.Exited 0)
+            result.output @?= ""
+            result.errors @?= ""
+            atomically (R.usage runtime) >>= (@?= B.Usage False 0 0 0)
+
+      , testCase "pin-only cleanup finishes without waiting for a full phase" $
+          withRuntime $ \runtime fixture -> do
+            client <- adopt runtime fixture
+            observed <- timeout 250000 (R.shutdown runtime)
+            case observed of
+              Nothing -> assertFailure "completed cleanup waited for a fixed phase delay"
+              Just report -> assertEmpty report
+            repeated <- R.shutdown runtime
+            assertEmpty repeated
+            atomically (R.usage runtime) >>= (@?= B.Usage False 0 0 0)
+            Files.fileExist (pinPath (R.clientPin client)) >>= (@?= False)
+
+      , testCase "failed supervisor allocation closes admission and permits a retained retry" $ do
+          refuse <- newIORef False
+          let fork :: P.Fork
+              fork action = atomicModifyIORef' refuse (\old -> (False, old)) >>= \case
+                True -> throwIO (userError "injected shutdown supervisor allocation failure")
+                False -> P.normalFork action
+          Fixture.withFixture $ \fixture -> bracket (R.newRuntime fork) R.awaitCleanup $ \runtime ->
+            G.withGate $ \gate -> do
+              client <- adopt runtime fixture
+              let pool = R.clientPool client
+                  hooks = P.defaultHooks {P.launchNative = G.launch G.BeforeLaunch gate}
+              _ <- P.submit B.Ordinary hooks pool (native fixture client ["display-message", "-p", "#{pid}"]) ""
+              G.awaitGate gate
+              flip finally (writeIORef refuse False >> G.releaseGate gate) $ do
+                writeIORef refuse True
+                observed <- timeout 250000 (try @IOException (R.shutdown runtime))
+                case observed of
+                  Just (Left problem) -> ioeGetErrorString problem @?= "injected shutdown supervisor allocation failure"
+                  _ -> assertFailure "shutdown supervisor allocation failure was not reported"
+                atomically (R.usage runtime) >>= (@?= B.Usage False 1 1 P.childBytes)
+                atomically (R.inspect runtime) >>= assertPending 1
+                retried <- timeout 750000 (R.shutdown runtime)
+                case retried of
+                  Nothing -> assertFailure "failed shutdown left an unfilled run latch"
+                  Just report -> assertPending 1 report
+              R.awaitCleanup runtime
+              atomically (R.inspect runtime) >>= assertEmpty
+              atomically (R.usage runtime) >>= (@?= B.Usage False 0 0 0)
+      ]
   ]
 
 withRuntime :: (R.Runtime -> Fixture.Fixture -> IO a) -> IO a
@@ -170,6 +274,11 @@ adopt runtime fixture = R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack 
 adoptWith :: (PinCheckpoint -> Bytes.ByteString -> IO ()) -> R.Runtime -> Fixture.Fixture -> IO R.Client
 adoptWith checkpoint runtime fixture =
   R.adoptWith checkpoint runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+
+native :: Fixture.Fixture -> R.Client -> [Bytes.ByteString] -> N.Spec
+native fixture client arguments =
+  let tmux = Ascii.pack fixture.executable
+  in N.spec tmux ([tmux, "-u", "-N", "-S", pinPath (R.clientPin client)] <> arguments)
 
 assertPending :: Int -> R.Report -> Assertion
 assertPending expected report = length report.pending @?= expected

@@ -98,10 +98,25 @@ and has no hard deadline. Existing pool workers own physical cleanup; the
 registry adds no process-global state or detached reaper. It does not issue
 `kill-server` or establish completion of daemon-side work.
 
-This ownership layer is private. Logical dispatch integration, monotonic
-deadlines, phased shutdown and shared accounting in future capture/subscription
-consumers remain unimplemented. Close currently waits for existing children
-through their pools; it does not implement the required termination phases.
+The separate `shutdown` operation closes admission and shares one owned
+attempt among concurrent callers. Caller cancellation stops that caller's
+wait; the Runtime worker continues. It allows up to 250 ms for graceful
+cleanup, requests cancellation of remaining command clients, then allows up
+to 250 ms for physical retirement. Each phase ends early when cleanup
+completes. Cancellable monotonic timers bound STM observation, without
+polling or fixed sleeps.
+
+The returned report can remain incomplete. Phase expiration never deletes
+an owner, releases its credit or proves the daemon-side outcome. Existing
+pool workers continue cleanup; a later shutdown can retry a finished
+attempt. Supervisor allocation failure closes admission, reports the
+exception and leaves owners available for retry. The Runtime retains only
+the current attempt's completion latch.
+
+This ownership layer is private. Logical dispatch integration, operation
+deadlines and shared accounting in future capture/subscription consumers
+remain unimplemented. Physical shutdown does not resolve logical unknown
+outcomes or establish completion of a daemon job.
 
 ## Logical admission
 

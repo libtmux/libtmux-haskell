@@ -4,11 +4,12 @@
 -- A t'Runtime' registers a fresh pin owner and its process pool before
 -- adoption can create filesystem names. Failed or cancelled adoption leaves
 -- cleanup owned here. 'inspect' retires only successfully cleaned entries;
--- 'awaitCleanup' may wait without a deadline. Logical dispatch, deadlines
--- and phased shutdown are separate, unfinished contracts.
+-- 'awaitCleanup' may wait without a deadline. 'shutdown' bounds its two
+-- observation phases while retaining incomplete cleanup. Logical dispatch
+-- and operation deadlines remain separate, unfinished contracts.
 module LibTmux.Internal.Runtime
   ( Runtime, Client, Report (..), newRuntime, adopt, adoptWith
-  , clientPool, clientPin, usage, inspect, closeClient, requestClose, awaitCleanup
+  , clientPool, clientPin, usage, inspect, closeClient, requestClose, awaitCleanup, shutdown
   ) where
 
 import Control.Concurrent.STM
@@ -20,10 +21,12 @@ import Data.Maybe (catMaybes)
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.SocketPin
+import System.Timeout (timeout)
 
 data Runtime = Runtime
   { budget :: !B.Budget, entries :: !(TVar (Map.IntMap Entry)), nextKey :: !(TVar Int)
   , forker :: P.Fork
+  , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
   }
 data Entry = Entry {pool :: !P.Pool, closeFailure :: !(TVar (Maybe SomeException))}
 data Client = Client !Entry !SocketPin
@@ -37,7 +40,8 @@ newRuntime forker = do
   budget <- B.newBudget P.inspectionBytes
   entries <- newTVarIO Map.empty
   nextKey <- newTVarIO 0
-  pure Runtime {budget, entries, nextKey, forker}
+  shutdownRun <- newTVarIO Nothing
+  pure Runtime {budget, entries, nextKey, forker, shutdownRun}
 
 -- | Adopt one endpoint through a private socket pin. Reserve a client credit
 -- before filesystem acquisition. Cancellation preserves its original exception
@@ -130,3 +134,53 @@ awaitCleanup runtime = do
   entries <- atomically (Map.elems <$> readTVar runtime.entries)
   forM_ entries (P.awaitCleanup . (.pool))
   void (atomically (inspect runtime))
+
+-- | Close admission, allow 250 ms for graceful cleanup, request cancellation
+-- of remaining command clients, then allow 250 ms for reaping. Each phase
+-- finishes early when cleanup completes. Timeout retains owners and credits;
+-- it neither proves a daemon-side outcome nor terminates the tmux daemon.
+--
+-- Concurrent callers join one Runtime-owned attempt. Cancelling a caller
+-- leaves that attempt running. A later call can retry a finished attempt
+-- with pending cleanup. Supervisor allocation failure throws without losing
+-- its registered owners. Cleanup-request failures remain in 'closeFailures'.
+shutdown :: Runtime -> IO Report
+shutdown runtime@Runtime {forker} = mask $ \restore -> do
+  (start, selected) <- atomically $ do
+    B.closeAdmission runtime.budget
+    previous <- readTVar runtime.shutdownRun
+    running <- case previous of
+      Nothing -> pure False
+      Just run -> isEmptyTMVar run
+    if running then pure (False, previous) else do
+      report <- inspect runtime
+      if null report.pending then pure (False, Nothing) else do
+        run <- newEmptyTMVar
+        writeTVar runtime.shutdownRun (Just run)
+        pure (True, Just run)
+  forM_ selected $ \run -> do
+    when start $ do
+      let failed (problem :: SomeException) = do
+            atomically (putTMVar run (Left problem))
+            throwIO problem
+      void (forker (\unmask -> do
+        result <- try @SomeException (unmask (shutdownPhases runtime))
+        atomically (putTMVar run result))) `catch` failed
+    restore (atomically (readTMVar run)) >>= either throwIO pure
+  atomically (inspect runtime)
+
+shutdownPhases :: Runtime -> IO ()
+shutdownPhases runtime = do
+  _ <- requestClose runtime
+  graceful <- observe
+  case graceful of
+    Just () -> pure ()
+    Nothing -> do
+      entries <- atomically (Map.elems <$> readTVar runtime.entries)
+      forM_ entries (P.abortAll . (.pool))
+      _ <- requestClose runtime
+      void observe
+  where
+    observe = timeout 250000 $ atomically $ do
+      report <- inspect runtime
+      check (null report.pending)
