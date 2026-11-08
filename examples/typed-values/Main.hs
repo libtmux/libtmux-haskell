@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Construct tmux domain values without starting a process or contacting a server.
+-- | Construct tmux domain values without starting a process
+-- or contacting a server.
 module Main (main) where
 
 import LibTmux.Id (parseWindowId, renderWindowId)
