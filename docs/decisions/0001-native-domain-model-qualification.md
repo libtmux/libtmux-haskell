@@ -14,7 +14,7 @@ The complete research report has SHA-256
 The reviews and raw experiment records remain in the accompanying research
 archive. These measurements qualify bounded experiments, not the public API.
 
-- Across the required thirteen tmux releases, 74 fixed/seeded non-NUL samples
+- Across the then-required thirteen tmux releases, 74 fixed/seeded non-NUL samples
   per release passed the revised escape decoder: 962 round trips. Three real
   path fixtures per release distinguished invalid bytes from literal escapes.
   tmux 3.4, 3.5 and 3.5a otherwise conflate byte FF with literal backslash-377.
@@ -105,7 +105,7 @@ command/path values after resource closure and raw window names on releases
 that accept them. It also checks the later command-name normalization instead
 of inventing the bytes tmux discarded.
 
-The full integration suite passes on all thirteen required releases with one
+That increment's full integration suite passed on all thirteen then-required releases with one
 and two runtime capabilities under C.UTF-8. The focused lossless-field case
 also passes on each release under C. Specifications, units, type contracts,
 package checks, docs, Haddock and the existing archive consumer pass. The
@@ -155,15 +155,53 @@ bound the daemon's allocation and pause while expanding formats. OS-derived
 callbacks can change between repeated appearances. No global atomicity is
 promised. ServerInfo and observed clients remain outside this private profile.
 
+## Private Snapshot profile
+
+The finite private Snapshot adds server PID, start time, stable release and
+reported socket path to the physical graph and attached-client listing. The
+capture returns a monotonic observation interval. All observations are owned
+and forced before their read reservation is released; Snapshot construction
+and graph indexes remain opaque.
+
+One command client prints the graph, conditionally lists clients and closes
+the tagged envelope. The format-only conditional avoids list-clients' missing
+current-session error on an empty server. Listing failure, missing boundaries
+and malformed records remain failures, never empty inventories. The aggregate
+limit includes client rows. Snapshot reads retain the same construction credit
+and inspection reserve as graph reads, including during cancellation.
+
+Use list-clients on both required releases. Source inspection and owned probes
+show that the newer L loop inherits enclosing session/window/pane context.
+Client observations preserve duplicate name rows and detached attachments.
+Their pane is the session window's globally active pane, not independent client
+focus. Session attached counts follow different filtering rules and are not
+derived from the listing length. Hooks can change state between commands;
+this profile promises no atomic server transaction.
+
+The graph-only response failed the new required metadata/client cases before
+the complete command route was added. Pure checks cover duplicate names,
+missing or foreign attachment context, metadata validation, explicit empty
+sections and malformed framing. Owned control clients qualify listing context
+and cleanup, not terminal/PTY behavior. Public capture, correlated failure
+recovery and the common Server scope remain separate qualification work.
+
+The final private-profile checks pass on tmux 3.3a and 3.8 with one and two
+RTS capabilities; both endpoints also pass the C-locale cases. Intermediate
+releases remain supported. Earlier intermediate-release results are retained
+as evidence without adding those jobs to routine CI. The complete local driver
+took 56.465 seconds after resource admission, including package, documentation
+and the existing scalar archive consumer. This is verification timing, excludes
+resource-gate queueing and establishes no capture benchmark. The installed
+consumer still exercises scalar exports, not a public Snapshot API.
+
 ## Remaining gates
 
 - Qualify the complete record profile on every required release, preserving the
   scalar byte, limit, target and hook checks above. Cover exact field order,
   duplicate links, empty results and client acquisition. Record the supported
   locale/build profile rather than extrapolating from one build.
-- Acquire ServerInfo and attached clients and separate private topology rows
-  from hydrated records. Define repeated-link consistency, upstream field
-  normalization, empty-server behavior and complete-profile coverage.
+- Verify installed public ServerInfo, attached-client and graph access with
+  the declared finite profile, detached values and upstream normalization.
 - Qualify the common Server scope under callback/cleanup double failure,
   accepted-read cancellation and recovery-worker allocation failure. Capture
   failures must identify their recovery operation. Repeated malformed results

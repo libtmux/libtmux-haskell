@@ -14,7 +14,7 @@ module LibTmux.Internal.Runtime
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
   , readServerVersion, readServerVersionWith
-  , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, withCaptureBudget
+  , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, readSnapshotWith, withCaptureBudget
   , cancelRead, detachOperation
   ) where
 
@@ -87,6 +87,7 @@ data ReadCommand value where
   ReadTopology :: ReadCommand ByteString
   ReadEntityField :: !EntityField -> ReadCommand ByteString
   ReadGraph :: !Graph.Generation -> ReadCommand Graph.EntityGraph
+  ReadSnapshot :: !Graph.Generation -> ReadCommand Graph.Snapshot
 
 -- | Closed scalar acquisition targets; callers cannot supply format fragments.
 data EntityField
@@ -332,6 +333,12 @@ readGraphWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> IO (Reques
 readGraphWith hooks duration runtime client executable =
   startRead (ReadGraph (pinGeneration (clientPin client))) hooks duration runtime client executable ScalarRead
 
+-- | Acquire the finite metadata, physical and attached-client profile in one
+-- owned command queue. It retains ordinary graph credit through publication.
+readSnapshotWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> IO (Request Graph.Snapshot)
+readSnapshotWith hooks duration runtime client executable =
+  startRead (ReadSnapshot (pinGeneration (clientPin client))) hooks duration runtime client executable ScalarRead
+
 -- | Retain the complete capture envelope while fields and graphs accumulate.
 -- Native requests keep their independent child/parent reservations.
 withCaptureBudget :: Runtime -> IO a -> IO a
@@ -339,15 +346,18 @@ withCaptureBudget runtime action = bracket
   (atomically (B.acquireBytes runtime.budget B.Ordinary (64 * 1024 * 1024)))
   (atomically . B.releaseBytes) (const action)
 
-commandFormat :: F.Nonce -> ReadCommand value -> ByteString
-commandFormat nonce command = case command of
+commandArguments :: F.Nonce -> ReadCommand value -> [ByteString]
+commandArguments nonce command = case command of
   ReadPid -> framed "#{pid}"
   ReadVersion -> framed "#{version}"
   ReadTopology -> framed Topology.topologyFormat
   ReadEntityField field -> let (_, receipt, value) = entityField field in
     framed (receipt <> ":" <> F.escapedFieldFormat value)
-  ReadGraph generation -> Record.graphFormat generation nonce
-  where framed = F.scalarFormat nonce
+  ReadGraph generation -> display (Record.graphFormat generation nonce)
+  ReadSnapshot generation -> Record.snapshotCommands generation nonce
+  where
+    framed = display . F.scalarFormat nonce
+    display format = ["display-message", "-p"] <> commandTarget command <> ["-F", format]
 
 entityField :: EntityField -> (ByteString, ByteString, ByteString)
 entityField (SessionName ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident),
@@ -379,9 +389,8 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
         [Bytes.index hex (fromIntegral (shiftR byte 4)),
          Bytes.index hex (fromIntegral (byte .&. 15))]) (Bytes.unpack token))
   nonce <- either (throwIO . InvalidReadFrame) pure (F.parseNonce encoded)
-  let format = commandFormat nonce command
-      spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (clientPin client),
-        "display-message", "-p"] <> commandTarget command <> ["-F", format])
+  let spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (clientPin client)]
+        <> commandArguments nonce command)
       (lane, resourceClass) = case allocation of
         InspectionRead -> (S.Inspection, B.Inspection)
         ScalarRead -> (S.ScalarRead, B.Ordinary)
@@ -396,6 +405,7 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
           -- The caller may stop waiting while the worker still constructs the
           -- graph. Keep the former capture lease with that registered owner.
           ReadGraph _ -> P.retainedBytes + 64 * 1024 * 1024
+          ReadSnapshot _ -> P.retainedBytes + 64 * 1024 * 1024
           _ -> P.retainedBytes
     envelope <- B.acquireBytes runtime.budget resourceClass parentBytes
     result <- newEmptyTMVar
@@ -542,6 +552,7 @@ finishRead runtime owner@ReadOwner {command, result} ticket completed = do
           ReadTopology -> void (evaluate (force value))
           ReadEntityField _ -> void (evaluate (force value))
           ReadGraph _ -> void (evaluate (force value))
+          ReadSnapshot _ -> void (evaluate (force value))
         left <- remaining owner
         atomically $ do
           when (left == 0) $ do
@@ -582,6 +593,8 @@ decodeRead command nonce completed
           (Bytes.stripPrefix (target <> ":") bytes)
       ReadGraph generation -> either (Left . toException . InvalidRecordFrame) Right
         (Record.decodeGraph generation nonce completed.output)
+      ReadSnapshot generation -> either (Left . toException . InvalidRecordFrame) Right
+        (Record.decodeSnapshot generation nonce completed.output)
   where
     scalar decoder bound = either (Left . toException . InvalidReadFrame) Right
       (decoder nonce bound completed.output)

@@ -69,6 +69,26 @@ tests = testGroup "tagged graph records"
             Right nonce -> fmap (map (Label.toBytes . (.name)) . G.graphWindows)
               (R.decodeGraph generation nonce (wire (session <> window escaped <> link "$1" "1" "1" <> pane)))
                 Q.=== Right [original]
+  , testCase "requires metadata and a complete attached-client section" $ withNonce $ \nonce -> do
+      snapshot <- require (R.decodeSnapshot generation nonce
+        (snapshotWire (session <> window "editor" <> link "$1" "1" "1" <> pane) (client "22" <> client "11")))
+      (G.serverInfo snapshot).pid @?= 100
+      map (.pid) (G.clients snapshot) @?= [11, 22]
+      map (.name) (G.clients snapshot) @?= replicate 2 (Os.fromBytestring "tty\255")
+      map (.tty) (G.clients snapshot) @?= [Nothing, Nothing]
+      mapM_ (\bytes -> assertBool "incomplete Snapshot admitted" (isLeft (R.decodeSnapshot generation nonce bytes)))
+        [valid, snapshotWire "" (client "1"), snapshotWire "" "" <> "hook\n",
+         marker <> ":O:1\n" <> server <> marker <> ":Z\n",
+         snapshotWire "" (row "C" []), snapshotWire "" (client "0")]
+  , testCase "accepts explicit zero sessions and validates server metadata" $ withNonce $ \nonce -> do
+      empty <- require (R.decodeSnapshot generation nonce (snapshotWire "" ""))
+      G.graphSessions (G.entities empty) @?= []
+      G.clients empty @?= []
+      let invalidPid = marker <> ":O:1\n" <> row "I"
+            [("server.pid", "0"), ("server.startedAt", "0"), ("server.version", "3.3a"), ("server.socketPath", "/tmp/s")]
+            <> marker <> ":A\n" <> marker <> ":Z\n"
+      R.decodeSnapshot generation nonce invalidPid
+        @?= Left (R.InvalidRecordField (Field.FieldError "server.pid" Field.InvalidSyntax))
   ]
 
 generation :: G.Generation
@@ -97,6 +117,18 @@ row tag fields = marker <> ":" <> tag <> "\n"
 
 wire :: ByteString -> ByteString
 wire body = marker <> ":G:1\n" <> body <> marker <> ":Z\n"
+
+server :: ByteString
+server = row "I" [("server.pid", "100"), ("server.startedAt", "1700000000"),
+  ("server.version", "3.3a"), ("server.socketPath", "/tmp/s")]
+
+client :: ByteString -> ByteString
+client pid = row "C" [("client.name", "tty\\377"), ("client.pid", pid), ("client.tty", ""),
+  ("client.session", "$1"), ("client.window", "@7"), ("client.windowIndex", "1"), ("client.pane", "%9")]
+
+snapshotWire :: ByteString -> ByteString -> ByteString
+snapshotWire physical attached = marker <> ":O:1\n" <> server <> physical <> marker <> ":A\n"
+  <> attached <> marker <> ":Z\n"
 
 withNonce :: (Frame.Nonce -> IO ()) -> IO ()
 withNonce action = require (Frame.parseNonce token) >>= action

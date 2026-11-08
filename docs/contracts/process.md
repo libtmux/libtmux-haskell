@@ -177,7 +177,8 @@ transitions separately from the native process tests below.
 
 ## Framed server read ownership
 
-The private Runtime observes server PIDs, stable releases and physical graphs through
+The private Runtime observes server PIDs, stable releases, physical graphs and
+the finite Snapshot profile through
 the adopted socket pin. An opaque `Request value` retains the decoded result's
 type. A closed GADT pairs each fixed format with that type; the owned registry
 retains the witness without a cast or an arbitrary decoder callback.
@@ -186,7 +187,7 @@ Success requires a fresh nonce frame, empty stderr and successful command-client
 exit. PID decoding retains its 32-byte bound and checked positive process-ID
 domain. Version decoding accepts at most 64 bytes, requires valid UTF-8 and
 uses the existing [version parser](../../src/LibTmux/Version.hs). Stable-version
-observation is separate from minimum-version admission and feature capability
+observation is separate from supported-range admission and feature capability
 checks. Decoded values are forced before the read envelope is released.
 Extra hook output is a protocol failure. A receipt establishes that read's
 result; it does not establish completion of arbitrary daemon work.
@@ -197,7 +198,7 @@ logical permit and protected parent/child credits. A foreign client is refused
 before reservation. A worker claims only its own oldest eligible operation;
 STM rollback leaves other operations unchanged.
 
-The tagged graph read always uses ordinary admission. Its registered read
+Tagged graph and Snapshot reads always use ordinary admission. Their registered read
 owner retains the 64 MiB graph construction allowance together with the
 existing 4 MiB read envelope. Caller cancellation cannot release that allowance
 while a worker still constructs or forces the graph. The default graph capture

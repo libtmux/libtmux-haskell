@@ -79,6 +79,30 @@ value against the qualified release; do not infer the original argv from it.
 These are private implementation types. Their installed public ergonomics,
 query/wire profiles and complete Snapshot coverage remain qualification work.
 
+## Attached-client profile
+
+The private Snapshot profile owns server PID, start time, stable release and
+reported POSIX socket path alongside its generation and physical graph. These
+metadata values do not provide a permanent daemon identity or signal authority.
+Acquisition retains its monotonic observation interval.
+
+Client names use POSIX strings; tty paths are optional POSIX paths. An empty
+reported tty means no tty, including control clients. Names may repeat and do
+not identify a client's lifetime. Keep duplicate rows, ordered by name bytes
+then PID; do not normalize the listing into a map keyed by name.
+
+The attached listing resolves native session, window, link index and pane IDs
+against the captured graph. Its detached attachment owns the Session, Window
+and PaneOccurrence values. Foreign or inconsistent context fails acquisition.
+The pane is the session window's globally active pane, not independent client
+focus. An offline Client value may have no attachment; the attached-only live
+profile requires the complete context.
+
+Session attached counts exclude dead, suspended and exiting clients, while
+list-clients checks for a non-null session. Preserve each reported observation;
+do not require count equality. Hooks can run between the metadata/graph read
+and listing. A complete finite profile is not an atomic server transaction.
+
 ## Selection and cardinality
 
 Native `filter`, comprehensions, `map` and folds process captured lists

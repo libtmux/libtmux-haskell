@@ -76,7 +76,8 @@ then runs the integration subset with one and two RTS capabilities on its
 own runner under `C.UTF-8`. Scalar framing also runs under `C`: raw native
 arguments store invalid bytes and literal escape sequences in owned options,
 then compare decoded output with the original fixed and seeded values.
-The checks include tmux 3.4 dollar escaping and the Runtime's entity-field
+Pure decoder cases cover tmux 3.4 dollar escaping; earlier live results remain
+recorded separately. Current live checks also cover the Runtime's entity-field
 binding. tmux's command-input normalization remains separate from output
 decoding. The lossless observation case waits on a FIFO receipt after the
 owned process has adopted its raw argv, captures without replacing bytes,
@@ -87,8 +88,11 @@ bytes through the native process layer. A no-output hook changes two window
 names together: one graph expansion must retain their coherent names. Other
 cases cover malformed records, repeated links, byte aliases, retained graph
 allowances after native-launch cancellation and inspection progress.
-The final
-`required` job fails if any planned job fails, cancels or skips.
+Snapshot cases add server metadata, distinct attached-client contexts and the
+explicit zero-session branch. Owned control clients qualify listing context;
+they do not qualify terminal/PTY interaction or independent client focus.
+Their scopes also check callback failure and actual asynchronous cancellation.
+The final `required` job fails if any planned job fails, cancels or skips.
 
 Cabal caches contain the dependency store and package index. tmux cache keys
 include its pinned archive, runner image/version, architecture, compiler,

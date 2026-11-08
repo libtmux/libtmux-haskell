@@ -1,10 +1,13 @@
--- | One bounded format expansion for the private physical/link graph.
+-- | Tagged records for the private physical graph and finite Snapshot profile.
 --
 -- Typed layouts drive both 'graphFormat' and 'decodeGraph'. Each field is
 -- evaluated once in its tagged unit, decoded through the catalogue and copied
 -- into owned values. Context, repeated observations and graph laws are checked
--- before return. ServerInfo and attached clients are outside this profile.
-module LibTmux.Internal.Record (RecordError (..), graphFormat, decodeGraph) where
+-- before return. 'snapshotCommands' also acquires server metadata and the
+-- attached-client listing, without promising global atomicity.
+module LibTmux.Internal.Record
+  ( RecordError (..), graphFormat, decodeGraph, snapshotCommands, decodeSnapshot
+  ) where
 
 import Control.Exception (Exception)
 import Control.Monad (unless, when)
@@ -32,7 +35,7 @@ instance Exception RecordError
 -- The constructor's argument list has exactly the layout's field types.
 data Layout row constructor where
   End :: Layout row row
-  (:>) :: !(Field.Field row value) -> !(Layout row constructor) -> Layout row (value -> constructor)
+  (:>) :: !(Field.Field source value) -> !(Layout row constructor) -> Layout row (value -> constructor)
 infixr 5 :>
 
 data Row row where
@@ -61,24 +64,79 @@ paneRow generation = Row
     :> Field.PaneCommand :> Field.PanePath :> End)
   (\pane window -> G.Pane (G.PaneRef generation pane) (G.WindowRef generation window))
 
+serverRow :: G.Generation -> Row G.ServerInfo
+serverRow generation = Row
+  (Field.ServerPid :> Field.ServerStartedAt :> Field.ServerVersion :> Field.ServerSocketPath :> End)
+  (G.ServerInfo generation)
+
+clientRow :: Row G.ClientInput
+clientRow = Row
+  (Field.ClientName :> Field.ClientPid :> Field.ClientTty :> Field.ClientSession
+    :> Field.ClientWindow :> Field.ClientWindowIndex :> Field.ClientPane :> End)
+  G.ClientInput
+
 -- | Generate S/W/P loops present in tmux 3.3. Physical rows repeat through
 -- linked windows; the decoder admits them only when every value agrees.
 graphFormat :: G.Generation -> Frame.Nonce -> ByteString
 graphFormat generation nonce = marker <> ":G:1\n"
-  <> "#{S:" <> rowFormat "S" (sessionRow generation)
-  <> "#{W:" <> rowFormat "W" (windowRow generation) <> rowFormat "L" (linkRow generation)
-  <> "#{P:" <> rowFormat "P" (paneRow generation) <> "}}}"
-  <> marker <> ":Z"
+  <> physicalFormat generation nonce <> marker <> ":Z"
   where
     marker = Frame.recordMarker nonce
-    rowFormat :: ByteString -> Row row -> ByteString
-    rowFormat tag (Row layout _) = marker <> ":" <> tag <> "\n"
-      <> fields layout <> marker <> ":E\n"
+
+physicalFormat :: G.Generation -> Frame.Nonce -> ByteString
+physicalFormat generation nonce = "#{S:" <> rowFormat nonce "S" (sessionRow generation)
+  <> "#{W:" <> rowFormat nonce "W" (windowRow generation) <> rowFormat nonce "L" (linkRow generation)
+  <> "#{P:" <> rowFormat nonce "P" (paneRow generation) <> "}}}"
+
+rowFormat :: Frame.Nonce -> ByteString -> Row row -> ByteString
+rowFormat nonce tag (Row layout _) = marker <> ":" <> tag <> "\n"
+  <> fields layout <> marker <> ":E\n"
+  where
+    marker = Frame.recordMarker nonce
     fields :: Layout row constructor -> ByteString
     fields End = ""
     fields (selected :> rest) = marker <> ":F:" <> Utf8.encodeUtf8 (Field.fieldKey selected)
       <> ":" <> Frame.escapedRecordFieldFormat (Field.formatVariable selected)
       <> ":" <> marker <> "\n" <> fields rest
+
+snapshotCommands :: G.Generation -> Frame.Nonce -> [ByteString]
+snapshotCommands generation nonce =
+  [ "display-message", "-p", "-F", marker <> ":O:1\n" <> rowFormat nonce "I" (serverRow generation)
+      <> physicalFormat generation nonce <> marker <> ":A"
+  , ";", "if-shell", "-F", "#{S:1}", listing
+  , ";", "display-message", "-p", "-F", marker <> ":Z"
+  ]
+  where
+    marker = Frame.recordMarker nonce
+    client = rowFormat nonce "C" clientRow
+    -- The trusted template contains no quotes. Values expand only after this
+    -- command is parsed. list-clients adds the row's final LF itself.
+    listing = "list-clients -F '" <> Bytes.take (Bytes.length client - 1) client <> "'"
+
+-- | Require metadata and an explicitly acquired attached-client section.
+-- The command queue can run hooks between sections; every attachment must
+-- still join the physical graph. No atomicity or client-focus claim is made.
+decodeSnapshot :: G.Generation -> Frame.Nonce -> ByteString -> Either RecordError G.Snapshot
+decodeSnapshot generation nonce bytes = do
+  when (Bytes.length bytes > 1048576) (Left (RecordWireLimit (Bytes.length bytes)))
+  header <- consume (marker <> ":O:1\n" <> marker <> ":I\n") bytes
+  (info, afterInfo) <- parseRow nonce (serverRow generation) header
+  let (physical, clientSection) = Bytes.breakSubstring (marker <> ":A\n") afterInfo
+  afterBoundary <- consume (marker <> ":A\n") clientSection
+  graph <- decodeGraph generation nonce (marker <> ":G:1\n" <> physical <> marker <> ":Z\n")
+  let physicalCount = length (G.graphSessions graph) + length (G.graphWindows graph)
+        + length (G.graphPanes graph) + length (G.graphLinks graph)
+      clients count rows input
+        | input == marker <> ":Z\n" = Right (reverse rows)
+        | otherwise = do
+            when (count >= 10000) (Left (RecordEntityLimit (count + 1)))
+            body <- consume (marker <> ":C\n") input
+            (row, rest) <- parseRow nonce clientRow body
+            clients (count + 1) (row : rows) rest
+  inputs <- clients physicalCount [] afterBoundary
+  graphError (G.assembleSnapshot info graph inputs)
+  where
+    marker = Frame.recordMarker nonce
 
 data Rows = Rows
   { sessions :: !(Map G.SessionRef G.Session)
@@ -110,17 +168,17 @@ decodeGraph generation nonce bytes = do
           case Bytes.break (== 10) rest of
             ("S", tailBytes) -> do
               unless (rows.pendingLink == Nothing) (Left InvalidRecordContext)
-              (row, after) <- parseRow (sessionRow generation) =<< consume "\n" tailBytes
+              (row, after) <- parseRow nonce (sessionRow generation) =<< consume "\n" tailBytes
               when (Map.member row.ref rows.sessions) (Left InvalidRecordContext)
               next rows {sessions = Map.insert row.ref row rows.sessions,
                 sessionContext = Just row.ref, windowContext = Nothing} after
             ("W", tailBytes) -> do
               unless (rows.sessionContext /= Nothing && rows.pendingLink == Nothing) (Left InvalidRecordContext)
-              (row, after) <- parseRow (windowRow generation) =<< consume "\n" tailBytes
+              (row, after) <- parseRow nonce (windowRow generation) =<< consume "\n" tailBytes
               values <- insert row.ref row G.ConflictingWindow rows.windows
               next rows {windows = values, windowContext = Nothing, pendingLink = Just row.ref} after
             ("L", tailBytes) -> do
-              (row, after) <- parseRow (linkRow generation) =<< consume "\n" tailBytes
+              (row, after) <- parseRow nonce (linkRow generation) =<< consume "\n" tailBytes
               unless (Just row.session == rows.sessionContext && Just row.window == rows.pendingLink)
                 (Left InvalidRecordContext)
               when (Map.member (row.session, row.index) rows.links)
@@ -128,7 +186,7 @@ decodeGraph generation nonce bytes = do
               next rows {links = Map.insert (row.session, row.index) row rows.links,
                 windowContext = Just row.window, pendingLink = Nothing} after
             ("P", tailBytes) -> do
-              (row, after) <- parseRow (paneRow generation) =<< consume "\n" tailBytes
+              (row, after) <- parseRow nonce (paneRow generation) =<< consume "\n" tailBytes
               unless (Just row.window == rows.windowContext && rows.pendingLink == Nothing)
                 (Left InvalidRecordContext)
               values <- insert row.ref row G.ConflictingPane rows.panes
@@ -138,11 +196,14 @@ decodeGraph generation nonce bytes = do
       let count = Map.size rows.sessions + Map.size rows.windows + Map.size rows.panes + Map.size rows.links
       when (count > 10000) (Left (RecordEntityLimit count))
       records rows rest
-    parseRow :: Row row -> ByteString -> Either RecordError (row, ByteString)
-    parseRow (Row layout build) input = do
-      (row, rest) <- parseFields layout build input
-      after <- consume (marker <> ":E\n") rest
-      pure (row, after)
+
+parseRow :: Frame.Nonce -> Row row -> ByteString -> Either RecordError (row, ByteString)
+parseRow nonce (Row layout buildRow) initial = do
+  (row, rest) <- parseFields layout buildRow initial
+  after <- consume (marker <> ":E\n") rest
+  pure (row, after)
+  where
+    marker = Frame.recordMarker nonce
     parseFields :: Layout row constructor -> constructor -> ByteString -> Either RecordError (row, ByteString)
     parseFields End row input = Right (row, input)
     parseFields (selected :> rest) build input = do

@@ -1,13 +1,14 @@
--- | Acquisition of a validated, detached physical entity graph.
+-- | Acquisition of detached physical graphs and the finite Snapshot profile.
 --
--- This private slice observes sessions, windows and panes. It does not acquire
--- observed clients. Framed read failures and cancellation can leave logical
+-- 'captureSnapshot' includes daemon metadata and attached clients; 'captureGraph'
+-- acquires only physical entities and links. Read failures and cancellation
+-- can leave logical
 -- uncertainty in 'R.inspect'; the caller must retain the Runtime and inspect
 -- those handles. Public recovery and Server scope policies remain unfinished.
 module LibTmux.Internal.Capture
-  ( CapturedGraph, CaptureError (..), captureGraph, captureGraphWith ) where
+  ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot ) where
 
-import Control.DeepSeq (force)
+import Control.DeepSeq (NFData, force)
 import Control.Exception (Exception, Handler (..), catches, evaluate, mask, onException, throwIO)
 import Control.Monad (forM, when)
 import Data.ByteString (ByteString)
@@ -27,6 +28,7 @@ import LibTmux.Internal.Topology qualified as T
 import System.Timeout (timeout)
 
 type CapturedGraph = (Word64, Word64, G.EntityGraph)
+type CapturedSnapshot = (Word64, Word64, G.Snapshot)
 
 data CaptureError
   = CaptureChanged | CaptureDeadline | InvalidCaptureDeadline !Int
@@ -39,6 +41,11 @@ captureGraph :: R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline duration $ \deadline -> do
   left <- remaining deadline
   owned runtime (R.readGraphWith P.defaultHooks left runtime client executable)
+
+captureSnapshot :: R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedSnapshot
+captureSnapshot runtime client executable duration = withinDeadline duration $ \deadline -> do
+  left <- remaining deadline
+  owned runtime (R.readSnapshotWith P.defaultHooks left runtime client executable)
 
 -- | Serial comparison path with a checkpoint before its final topology read.
 -- The tagged default above does not use these scalar hydration boundaries.
@@ -108,7 +115,7 @@ captureGraphWith checkpoint runtime client executable duration =
         (G.assembleEntityGraph generation sessions windows panes (G.graphLinks before))
       evaluate (force graph)
 
-withinDeadline :: Int -> (Word64 -> IO G.EntityGraph) -> IO CapturedGraph
+withinDeadline :: NFData value => Int -> (Word64 -> IO value) -> IO (Word64, Word64, value)
 withinDeadline duration action = do
   when (duration < 1 || duration > 10000000) (throwIO (InvalidCaptureDeadline duration))
   started <- getMonotonicTimeNSec

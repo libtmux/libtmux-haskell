@@ -96,27 +96,10 @@ tests = testGroup "owned Runtime reads"
         expectValue expected request
         atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
 
-  , testCase "cancelled graph reads retain their envelope and leave inspection usable" $
-      withRuntime P.normalFork $ \runtime client fixture -> G.withGate $ \gate -> do
-        expected <- serverPid fixture
-        let executable = Bytes.pack fixture.executable
-            hooks = P.defaultHooks {P.launchNative = G.launch G.AfterLaunch gate}
-        request <- R.readGraphWith hooks 1000000 runtime client executable
-        G.awaitGate gate
-        flip finally (G.releaseGate gate) $ do
-          R.cancelRead runtime request
-          expectUnavailable S.OutcomeUnknown request
-          atomically (R.usage runtime) >>= (@?= B.Usage True 1 1
-            (64 * 1024 * 1024 + P.childBytes + P.retainedBytes))
-          start runtime client fixture R.InspectionRead >>= expectValue expected
-        waitWorkers runtime
-        atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
-        atomically (R.inspect runtime) >>= \report -> map fst report.unresolved @?= [R.readOperation request]
-        atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= True)
-        recovered <- R.readGraphWith P.defaultHooks 1000000 runtime client executable
-        R.awaitRead recovered >>= \case
-          R.ReadValue graph -> length (Graph.graphPanes graph) @?= 1
-          other -> assertFailure (show other)
+  , cancelledProfile "graph" R.readGraphWith $ \graph -> length (Graph.graphPanes graph) @?= 1
+  , cancelledProfile "snapshot" R.readSnapshotWith $ \snapshot -> do
+      length (Graph.graphPanes (Graph.entities snapshot)) @?= 1
+      Graph.clients snapshot @?= []
 
   , testCase "queued expiry proves non-dispatch behind four claimed inspections" $
       withRuntime P.normalFork $ \runtime client fixture -> withGates 4 $ \gates -> do
@@ -352,6 +335,33 @@ tests = testGroup "owned Runtime reads"
                   Nothing -> assertFailure "logical uncertainty restarted physical phase waits"
               [] -> assertFailure "no held request"
   ]
+
+cancelledProfile
+  :: Show value => String
+  -> (P.Hooks -> Int -> R.Runtime -> R.Client -> Bytes.ByteString -> IO (R.Request value))
+  -> (value -> Assertion) -> TestTree
+cancelledProfile label readProfile verifyValue =
+  testCase ("cancelled " <> label <> " reads retain their envelope and leave inspection usable") $
+    withRuntime P.normalFork $ \runtime client fixture -> G.withGate $ \gate -> do
+      expected <- serverPid fixture
+      let executable = Bytes.pack fixture.executable
+          hooks = P.defaultHooks {P.launchNative = G.launch G.AfterLaunch gate}
+      request <- readProfile hooks 1000000 runtime client executable
+      G.awaitGate gate
+      flip finally (G.releaseGate gate) $ do
+        R.cancelRead runtime request
+        expectUnavailable S.OutcomeUnknown request
+        atomically (R.usage runtime) >>= (@?= B.Usage True 1 1
+          (64 * 1024 * 1024 + P.childBytes + P.retainedBytes))
+        start runtime client fixture R.InspectionRead >>= expectValue expected
+      waitWorkers runtime
+      atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+      atomically (R.inspect runtime) >>= \report -> map fst report.unresolved @?= [R.readOperation request]
+      atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= True)
+      recovered <- readProfile P.defaultHooks 1000000 runtime client executable
+      R.awaitRead recovered >>= \case
+        R.ReadValue value -> verifyValue value
+        other -> assertFailure (show other)
 
 withRuntime :: P.Fork -> (R.Runtime -> R.Client -> Fixture.Fixture -> IO a) -> IO a
 withRuntime fork action = Fixture.withFixture $ \fixture ->

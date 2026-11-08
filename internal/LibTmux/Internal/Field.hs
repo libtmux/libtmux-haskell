@@ -15,16 +15,29 @@ import Data.ByteString.Char8 qualified as Ascii
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
+import Foreign.C.Types (CInt)
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.TmuxText qualified as Label
 import LibTmux.Value qualified as V
+import LibTmux.Version qualified as Version
 import System.OsPath.Posix (PosixPath)
 import System.OsString.Posix (PosixString)
 import System.OsString.Posix qualified as Os
 
 -- | Fields belong to physical rows or contextual links, never both implicitly.
 data Field row value where
+  ServerPid :: Field G.ServerInfo Integer
+  ServerStartedAt :: Field G.ServerInfo Integer
+  ServerVersion :: Field G.ServerInfo Version.TmuxVersion
+  ServerSocketPath :: Field G.ServerInfo PosixPath
+  ClientName :: Field G.Client PosixString
+  ClientPid :: Field G.Client Integer
+  ClientTty :: Field G.Client (Maybe PosixPath)
+  ClientSession :: Field G.ClientAttachment Id.SessionId
+  ClientWindow :: Field G.ClientAttachment Id.WindowId
+  ClientWindowIndex :: Field G.ClientAttachment V.WindowIndex
+  ClientPane :: Field G.ClientAttachment Id.PaneId
   SessionId :: Field G.Session Id.SessionId
   SessionName :: Field G.Session Text
   SessionAttached :: Field G.Session Integer
@@ -57,6 +70,12 @@ data WireType value where
   LabelValue :: WireType Label.TmuxText
   PosixStringValue :: WireType PosixString
   PosixPathValue :: WireType PosixPath
+  NonEmptyPosixStringValue :: WireType PosixString
+  NonEmptyPosixPathValue :: WireType PosixPath
+  OptionalPosixPathValue :: WireType (Maybe PosixPath)
+  ProcessIdValue :: WireType Integer
+  EpochSecondsValue :: WireType Integer
+  VersionValue :: WireType Version.TmuxVersion
   DimensionValue :: WireType V.Dimension
   PaneIndexValue :: WireType V.PaneIndex
   WindowIndexValue :: WireType V.WindowIndex
@@ -67,6 +86,17 @@ data Descriptor row value = Descriptor !Text !ByteString !(WireType value) !(row
 
 descriptor :: Field row value -> Descriptor row value
 descriptor = \case
+  ServerPid -> Descriptor "server.pid" "pid" ProcessIdValue (.pid)
+  ServerStartedAt -> Descriptor "server.startedAt" "start_time" EpochSecondsValue (.startedAt)
+  ServerVersion -> Descriptor "server.version" "version" VersionValue (.version)
+  ServerSocketPath -> Descriptor "server.socketPath" "socket_path" NonEmptyPosixPathValue (.socketPath)
+  ClientName -> Descriptor "client.name" "client_name" NonEmptyPosixStringValue (.name)
+  ClientPid -> Descriptor "client.pid" "client_pid" ProcessIdValue (.pid)
+  ClientTty -> Descriptor "client.tty" "client_tty" OptionalPosixPathValue (.tty)
+  ClientSession -> Descriptor "client.session" "session_id" SessionIdValue (\row -> sessionId row.session.ref)
+  ClientWindow -> Descriptor "client.window" "window_id" WindowIdValue (\row -> windowId row.window.ref)
+  ClientWindowIndex -> Descriptor "client.windowIndex" "window_index" WindowIndexValue (\row -> row.pane.link.index)
+  ClientPane -> Descriptor "client.pane" "pane_id" PaneIdValue (\row -> paneId row.pane.pane.ref)
   SessionId -> Descriptor "session.id" "session_id" SessionIdValue (sessionId . (.ref))
   SessionName -> Descriptor "session.name" "session_name" TextValue (.name)
   SessionAttached -> Descriptor "session.attached" "session_attached" AttachedCountValue (.attached)
@@ -111,9 +141,9 @@ wireType :: Field row value -> WireType value
 wireType field = case descriptor field of Descriptor _ _ valueType _ -> valueType
 
 -- | Minimum qualified profile, not the release that introduced each variable.
--- Every field in this finite profile is available at the tmux 3.3 floor.
+-- Every field in this finite profile is available at the tmux 3.3a floor.
 minimumTmux :: Field row value -> Text
-minimumTmux _ = "3.3"
+minimumTmux _ = "3.3a"
 
 -- | Read an owned observation. This never navigates a graph or contacts tmux.
 project :: Field row value -> row -> value
@@ -146,6 +176,15 @@ decodeValue valueType bytes = case valueType of
   LabelValue -> Right (Label.fromBytes bytes)
   PosixStringValue -> Right (Os.fromBytestring bytes)
   PosixPathValue -> Right (Os.fromBytestring bytes)
+  NonEmptyPosixStringValue -> if Bytes.null bytes then Left InvalidSyntax else Right (Os.fromBytestring bytes)
+  NonEmptyPosixPathValue -> if Bytes.null bytes then Left InvalidSyntax else Right (Os.fromBytestring bytes)
+  OptionalPosixPathValue -> Right (if Bytes.null bytes then Nothing else Just (Os.fromBytestring bytes))
+  ProcessIdValue -> do
+    value <- natural (toInteger (maxBound @CInt))
+    if value > 0 then Right value else Left InvalidSyntax
+  EpochSecondsValue -> number 19 9223372036854775807
+  VersionValue -> either (const (Left InvalidSyntax)) Right
+    (Version.parseVersion (Utf8.decodeLatin1 bytes) >>= Version.requireSupported)
   DimensionValue -> natural 4294967295 >>= checked V.mkDimension
   PaneIndexValue -> natural 4294967295 >>= checked V.mkPaneIndex
   WindowIndexValue -> natural 2147483647 >>= checked V.mkWindowIndex
@@ -160,8 +199,10 @@ decodeValue valueType bytes = case valueType of
       | Bytes.length bytes > 11 = Left InvalidSyntax
       | otherwise = either (const (Left InvalidSyntax)) Right (parse (Utf8.decodeLatin1 bytes))
     natural :: Integer -> Either FieldFailure Integer
-    natural upper
-      | Bytes.null bytes || Bytes.length bytes > 10
+    natural = number 10
+    number :: Int -> Integer -> Either FieldFailure Integer
+    number digits upper
+      | Bytes.null bytes || Bytes.length bytes > digits
         || not (Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes) = Left InvalidSyntax
       | otherwise = case Ascii.readInteger bytes of
           Just (value, "") | value <= upper -> Right value

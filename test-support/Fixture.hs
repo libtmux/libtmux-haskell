@@ -1,9 +1,10 @@
-module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, command, registerPane, withTrackedPane) where
+module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, withAttachedClient, command, registerPane, withTrackedPane) where
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Exception (bracket, finally, mask_, throwIO)
 import Control.Monad (unless)
 import Data.ByteString qualified as Strict
+import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as Bytes
@@ -17,11 +18,12 @@ import System.Directory (removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
+import System.IO (hFlush)
 import System.Posix.IO (closeFd)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
 import System.Process.Typed
-  ( Process, createPipe, getStderr, getStdout, nullStream, proc, setEnv, setStderr, setStdin, setStdout
+  ( Process, createPipe, getStderr, getStdin, getStdout, nullStream, proc, setEnv, setStderr, setStdin, setStdout
   , waitExitCode, withProcessTerm
   )
 import System.Timeout (timeout)
@@ -88,6 +90,34 @@ command fixture args = withProcessTerm config $ \client -> do
   where
     config = setEnv fixture.environment . setStdin nullStream . setStdout createPipe . setStderr createPipe $
       proc fixture.executable (["-N", "-S", fixture.socket] <> args)
+
+-- | Own one control client through an acknowledged attachment and normal
+-- detachment. These clients qualify listing context, not terminal/PTY behavior.
+withAttachedClient :: Fixture -> String -> IO a -> IO a
+withAttachedClient fixture session action = withProcessTerm config $ \client -> do
+  let output = getStdout client
+      acknowledge = do
+        line <- Ascii.hGetLine output
+        unless ("%end " `Strict.isPrefixOf` line) acknowledge
+      drain = do
+        chunk <- Strict.hGetSome output 4096
+        unless (Strict.null chunk) drain
+      detach = do
+        Ascii.hPutStrLn (getStdin client) "detach-client"
+        hFlush (getStdin client)
+        exited <- timeout 1000000 (waitExitCode client)
+        unless (exited == Just ExitSuccess) (throwIO (userError "owned control client did not exit"))
+  ready <- timeout 1000000 acknowledge
+  unless (ready == Just ()) (throwIO (userError "owned control client did not acknowledge attachment"))
+  withAsync drain $ \out ->
+    withAsync (Strict.hGetContents (getStderr client)) $ \err -> do
+      result <- action `finally` detach
+      (_, errors) <- waitBoth out err
+      unless (Strict.null errors) (throwIO (userError ("owned control client stderr: " <> show errors)))
+      pure result
+  where
+    config = setEnv fixture.environment . setStdin createPipe . setStdout createPipe . setStderr createPipe $
+      proc fixture.executable ["-u", "-N", "-S", fixture.socket, "-C", "attach-session", "-t", session]
 
 openWatch :: FilePath -> IO Fd
 openWatch directory = withCString directory $ \path ->

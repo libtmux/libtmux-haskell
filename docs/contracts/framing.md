@@ -8,8 +8,8 @@ separates measured research from Haskell implementation acceptance.
 ## One evaluation, one envelope
 
 For a scalar read of a closed catalogue field, generate a fresh 256-bit nonce
-in IO, encoded as 64 lowercase ASCII hexadecimal digits. Expand the field once between
-fixed prefix and suffix bytes containing that nonce. Require the prefix at
+in IO, encoded as 64 lowercase ASCII hexadecimal digits. Expand the field once
+between fixed prefix and suffix bytes containing that nonce. Require the prefix at
 byte zero and suffix plus command-added LF at EOF. Consume boundaries
 sequentially so they cannot overlap on an empty payload. Reject a nonce in
 the decoded payload, missing boundaries or extra bytes. Copy accepted bytes
@@ -71,9 +71,24 @@ layouts generate and parse the same field sequence. Values protect literal
 backslashes before replacing ASCII g with an octal escape; graph and field
 markers start with g plus the nonce. Encoded values contain no literal g, so
 cannot contain a full marker. The decoder rejects unescaped g, decoded nonce
-collisions, unexpected fields, context mismatches and trailing output. The serial path remains a
-comparison implementation. ServerInfo and attached-client coverage are still
-required before this becomes a complete Snapshot.
+collisions, unexpected fields, context mismatches and trailing output. The serial
+path remains a comparison implementation.
+
+The private Snapshot profile adds ServerInfo and an attached-client section in
+one owned command queue. The first command prints metadata and physical rows;
+a format-only conditional runs list-clients when sessions exist; the final
+command prints the required end boundary. An empty server still has metadata
+and explicit client-section boundaries. Arbitrary command failure cannot become
+an empty listing. The aggregate entity/link/client limit and encoded stream
+ceiling apply to the whole response.
+
+Use list-clients for this profile on every supported release. The newer L loop
+inherits the enclosing session/window/pane context, so its attachment variables
+cannot substitute for that listing directly. Preserve duplicate client names.
+The listed pane context is the session window's globally active pane; it does
+not acquire independent client focus. Session attached counts follow different
+tmux rules from the listing and are not reconstructed from its length. See
+[captured observations](observations.md#attached-client-profile).
 
 Arbitrary option listings, binary buffer output and raw commands retain their
 separate contracts. This protocol does not establish completion of a mutation

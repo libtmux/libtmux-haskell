@@ -6,6 +6,7 @@ import Control.Exception (bracket, bracket_, try)
 import Data.ByteString.Char8 qualified as Bytes
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef
+import Data.List (sort)
 import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
 import GHC.Conc (threadWaitRead)
@@ -76,6 +77,40 @@ tests = testGroup "entity capture"
         (_, _, graph) <- capture runtime client fixture
         G.graphSessions graph @?= []
         G.graphPanes graph @?= []
+  , testCase "captures metadata and detached attached-client values" $ do
+      snapshot <- withRuntime $ \runtime client fixture -> do
+        (code, receipt, errors) <- Fixture.command fixture
+          ["new-session", "-d", "-s", "other", "-P", "-F", "#{pane_pid}", "/bin/cat", "-"]
+        (code, errors) @?= (ExitSuccess, "")
+        Fixture.withTrackedPane receipt (command fixture ["kill-session", "-t", "other"]) $
+          Fixture.withAttachedClient fixture "$0" $
+            Fixture.withAttachedClient fixture "$1" $ do
+              (started, ended, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
+              assertBool "reversed Snapshot interval" (started <= ended)
+              let info = G.serverInfo snapshot
+              info.generation @?= pinGeneration (R.clientPin client)
+              info.socketPath @?= Os.fromBytestring (Bytes.pack fixture.socket)
+              reported <- rawCommand client fixture ["display-message", "-p", "-F", "#{pid} #{start_time} #{version}"]
+              reported @?= Bytes.pack (show info.pid <> " " <> show info.startedAt <> " ")
+                <> Utf8.encodeUtf8 (V.renderVersion info.version) <> "\n"
+              length (G.clients snapshot) @?= 2
+              mapM_ (\observed -> case observed.attachment of
+                Nothing -> assertFailure "attached listing lost attachment"
+                Just attached -> do
+                  attached.pane.link.session @?= attached.session.ref
+                  attached.pane.pane.window @?= attached.window.ref
+                  assertBool "inactive client context" (attached.pane.link.active && attached.pane.pane.active))
+                (G.clients snapshot)
+              pure snapshot
+      sort [attached.session.name | observed <- G.clients snapshot, Just attached <- [observed.attachment]]
+        @?= ["fixture", "other"]
+  , testCase "captures metadata and an explicit empty client section without sessions" $
+      withRuntime $ \runtime client fixture -> do
+        command fixture ["kill-session", "-t", "$0"]
+        (_, _, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
+        G.clients snapshot @?= []
+        G.graphSessions (G.entities snapshot) @?= []
+        assertBool "empty server metadata lost" ((G.serverInfo snapshot).pid > 0)
   , testCase "captures lossless window, process and path values" $ do
       (pane, expectedCommand, expectedPath, label) <- withRuntime $ \runtime client fixture -> do
         let raw = rawCommand client fixture
