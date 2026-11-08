@@ -361,19 +361,24 @@ requestClose pool = mask_ $ do
   debts <- atomically $ do
     writeTVar pool.closing True
     Map.elems <$> readTVar pool.jobs
-  forM_ debts $ \ticket -> do
-    claimed <- atomically $ do
-      present <- Map.member ticket.key <$> readTVar pool.jobs
-      running <- readTVar ticket.busy
-      if present && not running then writeTVar ticket.busy True >> pure True else pure False
-    when claimed $ do
-      original <- atomically (readTVar ticket.failure)
-      case original of
-        Nothing -> atomically (writeTVar ticket.busy False)
-        Just problem -> void (forkIn pool (\_ -> recover pool ticket problem))
-          `onException` atomically (writeTVar ticket.busy False)
+  forM_ debts (resumeCleanup pool)
   finishPin pool
   atomically (report pool)
+
+-- | Resume one already registered child cleanup without closing admission or
+-- executing its command again. Failed worker allocation keeps the job owned.
+resumeCleanup :: Pool -> Ticket -> IO ()
+resumeCleanup pool ticket = mask_ $ do
+  claimed <- atomically $ do
+    present <- Map.member ticket.key <$> readTVar pool.jobs
+    running <- readTVar ticket.busy
+    if present && not running then writeTVar ticket.busy True >> pure True else pure False
+  when claimed $ do
+    original <- atomically (readTVar ticket.failure)
+    case original of
+      Nothing -> atomically (writeTVar ticket.busy False)
+      Just problem -> void (forkIn pool (\_ -> recover pool ticket problem))
+        `onException` atomically (writeTVar ticket.busy False)
 
 report :: Pool -> STM CloseReport
 report pool = do

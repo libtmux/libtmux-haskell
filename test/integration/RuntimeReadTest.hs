@@ -101,6 +101,74 @@ tests = testGroup "owned Runtime reads"
       length (Graph.graphPanes (Graph.entities snapshot)) @?= 1
       Graph.clients snapshot @?= []
 
+  , testCase "receipts correlate retained native cleanup after the decoder retires" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        blocked <- newIORef True
+        let hooks = P.defaultHooks
+              { P.afterStart = throwIO (userError "read checkpoint failed")
+              , P.signalChild = \child -> readIORef blocked >>= \case
+                  True -> throwIO (userError "native cleanup blocked")
+                  False -> P.defaultHooks.signalChild child
+              }
+        flip finally (writeIORef blocked False) $ do
+          request <- startWith hooks 1000000 runtime client fixture R.ScalarRead
+          expectUnavailable S.OutcomeUnknown request
+          waitWorkers runtime
+          let receipt = R.readReceipt request
+          observed <- atomically (R.inspectReceipt runtime client receipt)
+          observed.logical.retained @?= True
+          observed.workerOwned @?= False
+          observed.nativeOwned @?= True
+          case observed.nativeFailure >>= fromException of
+            Just problem -> ioeGetErrorString problem @?= "native cleanup blocked"
+            Nothing -> assertFailure "receipt lost the native cleanup failure"
+          healthy <- start runtime client fixture R.InspectionRead
+          serverPid fixture >>= flip expectValue healthy
+          unrelated <- atomically (R.inspectReceipt runtime client (R.readReceipt healthy))
+          unrelated.nativeOwned @?= False
+          unrelated.logical.retained @?= False
+          atomically (R.detachReceipt runtime client receipt) >>= (@?= True)
+          atomically (R.inspectReceipt runtime client receipt) >>= \detached -> do
+            detached.logical.retained @?= False
+            detached.nativeOwned @?= True
+          writeIORef blocked False
+          R.resumeReceipt runtime client receipt
+          recovered <- atomically $ do
+            current <- R.inspectReceipt runtime client receipt
+            check (not current.nativeOwned)
+            pure current
+          recovered.logical.outcome @?= Just S.OutcomeUnknown
+          expected <- serverPid fixture
+          start runtime client fixture R.ScalarRead >>= expectValue expected
+          atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
+  , testCase "receipts reject other handles and runtimes before changing ownership" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        request <- start runtime client fixture R.ScalarRead
+        expected <- serverPid fixture
+        expectValue expected request
+        let receipt = R.readReceipt request
+            rejected selected other = do
+              try @R.ReadError (atomically (R.inspectReceipt selected other receipt)) >>= \case
+                Left R.ForeignClient -> pure ()
+                _ -> assertFailure "foreign receipt was inspected"
+              try @R.ReadError (R.resumeReceipt selected other receipt) >>= \case
+                Left R.ForeignClient -> pure ()
+                _ -> assertFailure "foreign receipt resumed cleanup"
+              try @R.ReadError (R.cancelReceipt selected other receipt) >>= \case
+                Left R.ForeignClient -> pure ()
+                _ -> assertFailure "foreign receipt requested cancellation"
+              try @R.ReadError (atomically (R.detachReceipt selected other receipt)) >>= \case
+                Left R.ForeignClient -> pure ()
+                _ -> assertFailure "foreign receipt detached responsibility"
+        other <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+        rejected runtime other
+        bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \foreignRuntime -> do
+          foreignClient <- R.adopt foreignRuntime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+          rejected foreignRuntime foreignClient
+        observed <- atomically (R.inspectReceipt runtime client receipt)
+        observed.logical @?= S.Status S.OperationComplete (Just S.Succeeded) False
+
   , testCase "queued expiry proves non-dispatch behind four claimed inspections" $
       withRuntime P.normalFork $ \runtime client fixture -> withGates 4 $ \gates -> do
         expected <- serverPid fixture
@@ -253,7 +321,7 @@ tests = testGroup "owned Runtime reads"
             check (any (maybe False (const True) . snd) report.readWorkers)
           atomically (R.usage runtime) >>= (@?= B.Usage False 1 1 (P.childBytes + P.retainedBytes))
           writeIORef refuse True
-          failed <- timeout 250000 (try @IOException (R.awaitCleanup runtime))
+          failed <- timeout 250000 (try @IOException (R.resumeReceipt runtime client (R.readReceipt request)))
           case failed of
             Just (Left problem) -> ioeGetErrorString problem @?= "request recovery allocation refused"
             _ -> assertFailure "known recovery allocation failure became an unbounded join"
@@ -356,8 +424,12 @@ cancelledProfile label readProfile verifyValue =
         start runtime client fixture R.InspectionRead >>= expectValue expected
       waitWorkers runtime
       atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
-      atomically (R.inspect runtime) >>= \report -> map fst report.unresolved @?= [R.readOperation request]
-      atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= True)
+      observed <- atomically (R.readStatus request)
+      observed.outcome @?= Just S.OutcomeUnknown
+      let expectedDebt = if observed.retained then [R.readOperation request] else []
+      atomically (R.inspect runtime) >>= \report -> map fst report.unresolved @?= expectedDebt
+      atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= observed.retained)
+      if observed.retained then pure () else observed.stage @?= S.OperationComplete
       recovered <- readProfile P.defaultHooks 1000000 runtime client executable
       R.awaitRead recovered >>= \case
         R.ReadValue value -> verifyValue value
