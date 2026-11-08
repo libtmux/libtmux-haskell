@@ -80,7 +80,7 @@ tests getChild = testGroup "private process owner"
           Right _ -> assertFailure "cleanup failure unexpectedly became success"
 
     , testCase "two pools share sixteen pending launches even after waiter cancellation" $ do
-        budget <- B.newBudget
+        budget <- B.newBudget O.inspectionBytes
         forks <- newIORef (0 :: Int)
         let tracked :: O.Fork
             tracked action = do
@@ -93,11 +93,13 @@ tests getChild = testGroup "private process owner"
           withPoolIn budget fixture 16 tracked $ \first firstPin ->
             withPoolIn budget fixture 16 tracked $ \second _ ->
               gates (16 :: Int) $ \held -> G.withGate $ \extra -> do
-                let start pool gate = O.submit (O.defaultHooks {O.launchNative = G.launch G.BeforeLaunch gate})
+                let start allocation pool gate = O.submit allocation (O.defaultHooks {O.launchNative = G.launch G.BeforeLaunch gate})
                       pool (N.spec executable [executable, "--wait"]) ""
                     release = mapM_ G.releaseGate (extra : held)
                 (do
-                  tickets <- sequence [start pool gate | (pool, gate) <- zip (replicate 8 first <> replicate 8 second) held]
+                  tickets <- sequence [start allocation pool gate
+                    | (allocation, pool, gate) <- zip3 (replicate 15 B.Ordinary <> [B.Inspection])
+                        (replicate 8 first <> replicate 8 second) held]
                   mapM_ G.awaitGate held
                   case tickets of
                     initial : _ -> withAsync (O.await initial) $ \waiter -> do
@@ -106,7 +108,7 @@ tests getChild = testGroup "private process owner"
                     [] -> assertFailure "no pending launch was created"
                   O.requestClose first >>= assertIncomplete
                   Files.fileExist (pinPath firstPin) >>= assertBool "pending context keeps socket pin"
-                  try @B.LimitError (start second extra) >>= \case
+                  try @B.LimitError (start B.Ordinary second extra) >>= \case
                     Left (B.Exhausted B.Children 1 16 16) -> pure ()
                     _ -> assertFailure "seventeenth child reached native dispatch"
                   readIORef forks >>= (@?= 16)
@@ -131,30 +133,133 @@ tests getChild = testGroup "private process owner"
                   O.awaitCleanup second
                   atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)) `finally` release
 
-    , testCase "shared bytes reject dispatch before allocating a worker" $ do
-        budget <- B.newBudget
+    , testCase "a pool rejects an insufficient inspection allowance" $ do
+        budget <- B.newBudget (O.inspectionBytes - 1)
+        Fixture.withFixture $ \fixture -> bracket newPinOwner closePin $ \owner -> do
+          pin <- acquirePin owner (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          try @O.OwnerError (O.newPool budget O.normalFork owner 16) >>= \case
+            Left O.ResourceLimit -> pure ()
+            Left other -> assertFailure ("unexpected pool refusal: " <> show other)
+            Right pool -> do
+              _ <- O.requestClose pool
+              O.awaitCleanup pool
+              assertFailure "pool accepted less than its inspection buffer allowance"
+          atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)
+          Files.fileExist (pinPath pin) >>= assertBool "refused construction preserves caller pin ownership"
+
+    , testCase "ordinary work leaves the pool inspection slot usable" $ do
+        budget <- B.newBudget O.inspectionBytes
+        (_, (executable, _)) <- getChild
+        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 2 O.normalFork $ \pool pin ->
+          G.withGate $ \held -> G.withGate $ \extra -> do
+            (code, expected, errors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
+            code @?= ExitSuccess
+            errors @?= ""
+            let tmux = Ascii.pack fixture.executable
+                inspect = N.spec tmux [tmux, "-N", "-S", pinPath pin, "display-message", "-p", "#{pid}"]
+                start gate = O.submit B.Ordinary (O.defaultHooks {O.launchNative = G.launch G.BeforeLaunch gate})
+                  pool (N.spec executable [executable, "--wait"]) ""
+                release = mapM_ G.releaseGate [extra, held]
+            (do
+              ordinary <- start held
+              G.awaitGate held
+              try @O.OwnerError (start extra) >>= \case
+                Left O.ResourceLimit -> pure ()
+                Left other -> assertFailure ("unexpected admission failure: " <> show other)
+                Right ticket -> O.abort ticket >> assertFailure "ordinary work consumed the inspection slot"
+              bracket (atomically (B.acquireBytes budget B.Inspection O.retainedBytes))
+                (atomically . B.releaseBytes) $ \_ -> do
+                  observed <- O.submit B.Inspection O.defaultHooks pool inspect "" >>= O.await
+                  observed.output @?= Lazy.toStrict expected
+                  observed.errors @?= ""
+                  observed.exit @?= Just (N.Exited 0)
+                  observed.launchFailure @?= Nothing
+                  atomically (B.usage budget) >>= (@?= B.Usage True 1 1 (O.childBytes + O.retainedBytes))
+              release
+              O.await ordinary >>= \result -> result.exit @?= Just (N.Exited 24)
+              _ <- O.requestClose pool
+              O.awaitCleanup pool
+              atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)) `finally` release
+
+    , testCase "inspection reaches tmux under shared child and payload saturation" $ do
+        budget <- B.newBudget O.inspectionBytes
+        forks <- newIORef (0 :: Int)
+        let tracked :: O.Fork
+            tracked action = do
+              atomicModifyIORef' forks (\n -> (n + 1, ()))
+              O.normalFork action
+            gates 0 action = action []
+            gates n action = G.withGate $ \gate -> gates (n - 1) (action . (gate :))
+        (_, (executable, _)) <- getChild
+        Fixture.withFixture $ \fixture ->
+          withPoolIn budget fixture 16 tracked $ \first _ ->
+            withPoolIn budget fixture 16 tracked $ \second pin ->
+              gates (15 :: Int) $ \held -> do
+                (code, expected, errors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
+                code @?= ExitSuccess
+                errors @?= ""
+                let tmux = Ascii.pack fixture.executable
+                    inspect = N.spec tmux [tmux, "-N", "-S", pinPath pin, "display-message", "-p", "#{pid}"]
+                    start pool gate = O.submit B.Ordinary (O.defaultHooks {O.launchNative = G.launch G.BeforeLaunch gate})
+                      pool (N.spec executable [executable, "--wait"]) ""
+                    release = mapM_ G.releaseGate held
+                (do
+                  tickets <- sequence [start pool gate | (pool, gate) <- zip (replicate 8 first <> replicate 7 second) held]
+                  mapM_ G.awaitGate held
+                  case tickets of
+                    initial : _ -> withAsync (O.await initial) $ \waiter -> do
+                      cancel waiter
+                      waitCatch waiter >>= assertCancelled
+                    [] -> assertFailure "no pending launch was created"
+                  bracket (atomically (B.acquireBytes budget B.Ordinary 58720256))
+                    (atomically . B.releaseBytes) $ \_ -> do
+                      atomically (B.usage budget) >>= (@?= B.Usage True 2 15 125566976)
+                      try @B.LimitError (O.submit B.Ordinary O.defaultHooks second inspect "") >>= \case
+                        Left actual -> actual @?= B.Exhausted B.OrdinaryChildren 1 15 15
+                        Right ticket -> O.abort ticket >> assertFailure "ordinary work reached protected capacity"
+                      readIORef forks >>= (@?= 15)
+                      bracket (atomically (B.acquireBytes budget B.Inspection O.retainedBytes))
+                        (atomically . B.releaseBytes) $ \_ -> do
+                          observed <- O.submit B.Inspection O.defaultHooks second inspect "" >>= O.await
+                          observed.output @?= Lazy.toStrict expected
+                          observed.errors @?= ""
+                          observed.exit @?= Just (N.Exited 0)
+                          observed.launchFailure @?= Nothing
+                          readIORef forks >>= (@?= 16)
+                          atomically (B.usage budget) >>= (@?= B.Usage True 2 15 129761280)
+                      atomically (B.usage budget) >>= (@?= B.Usage True 2 15 125566976)
+                  release
+                  mapM_ (\ticket -> O.await ticket >>= \result -> result.exit @?= Just (N.Exited 24)) tickets
+                  _ <- O.requestClose first
+                  _ <- O.requestClose second
+                  O.awaitCleanup first
+                  O.awaitCleanup second
+                  atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)) `finally` release
+
+    , testCase "total shared bytes reject dispatch before allocating a worker" $ do
+        budget <- B.newBudget O.inspectionBytes
         forks <- newIORef (0 :: Int)
         let tracked :: O.Fork
             tracked action = do
               atomicModifyIORef' forks (\n -> (n + 1, ()))
               O.normalFork action
         (_, (executable, _)) <- getChild
-        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 1 tracked $ \pool _ -> do
+        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 2 tracked $ \pool _ -> do
           let bytes = 128 * 1024 * 1024
               command = N.spec executable [executable, "--exit"]
-          bracket (atomically (B.acquireBytes budget bytes)) (atomically . B.releaseBytes) $ \_ -> do
-            try @B.LimitError (O.submit O.defaultHooks pool command "") >>= \case
+          bracket (atomically (B.acquireBytes budget B.Inspection bytes)) (atomically . B.releaseBytes) $ \_ -> do
+            try @B.LimitError (O.submit B.Ordinary O.defaultHooks pool command "") >>= \case
               Left (B.Exhausted B.PendingBytes requested used limit) ->
                 (requested, used, limit) @?= (O.childBytes, bytes, bytes)
               _ -> assertFailure "byte exhaustion reached dispatch"
             readIORef forks >>= (@?= 0)
             atomically (B.usage budget) >>= (@?= B.Usage True 1 0 bytes)
-          O.submit O.defaultHooks pool command "" >>= O.await >>= \result ->
+          O.submit B.Ordinary O.defaultHooks pool command "" >>= O.await >>= \result ->
             result.exit @?= Just (N.Exited 23)
           atomically (B.usage budget) >>= (@?= B.Usage True 1 0 0)
 
     , testCase "failed pin cleanup retains a client lease until successful retry" $ do
-        budget <- B.newBudget
+        budget <- B.newBudget O.inspectionBytes
         Fixture.withFixture $ \fixture -> withPoolIn budget fixture 1 O.normalFork $ \pool pin -> do
           let path = pinPath pin
               sentinel = Bytes.take (Bytes.length path - 1) path <> "hold"
@@ -171,7 +276,7 @@ tests getChild = testGroup "private process owner"
           atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)
 
     , testCase "pending cancellation after pool construction waits for caller registration" $ do
-        budget <- B.newBudget
+        budget <- B.newBudget O.inspectionBytes
         registered <- newIORef False
         Fixture.withFixture $ \fixture -> G.withGate $ \gate ->
           bracket newPinOwner closePin $ \owner -> do
@@ -196,13 +301,13 @@ tests getChild = testGroup "private process owner"
             Files.fileExist (pinPath pin) >>= (@?= False)
 
     , testCase "unawaited detached results leave only their consumer envelope charged" $ do
-        budget <- B.newBudget
+        budget <- B.newBudget O.inspectionBytes
         (_, (executable, _)) <- getChild
-        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 1 O.normalFork $ \pool _ -> do
+        Fixture.withFixture $ \fixture -> withPoolIn budget fixture 2 O.normalFork $ \pool _ -> do
           let envelope = 2 * 1024 * 1024
               payload = Bytes.pack (take 65536 (cycle [0..255]))
-          bracket (atomically (B.acquireBytes budget envelope)) (atomically . B.releaseBytes) $ \_ -> do
-            ticket <- O.submit O.defaultHooks pool (N.spec executable [executable, "--echo"]) payload
+          bracket (atomically (B.acquireBytes budget B.Ordinary envelope)) (atomically . B.releaseBytes) $ \_ -> do
+            ticket <- O.submit B.Ordinary O.defaultHooks pool (N.spec executable [executable, "--echo"]) payload
             atomically (O.activeCount pool >>= check . (== 0))
             atomically (B.usage budget) >>= (@?= B.Usage True 1 0 envelope)
             _ <- O.requestClose pool
@@ -226,21 +331,21 @@ tests getChild = testGroup "private process owner"
                 valid {N.args = ["a\0b"]}, valid {N.env = ["missing-equals"]},
                 valid {N.env = ["=empty-name"]}, valid {N.args = repeat "x"},
                 valid {N.env = replicate 4097 "A=B"}, valid {N.args = [Bytes.replicate 65536 120]}]
-          mapM_ (\spec -> try @N.Failure (O.submit O.defaultHooks pool spec "") >>= \case
+          mapM_ (\spec -> try @N.Failure (O.submit B.Ordinary O.defaultHooks pool spec "") >>= \case
             Left (N.InvalidInput _) -> pure ()
             _ -> assertFailure "invalid vectors reached dispatch") invalid
-          try @O.OwnerError (O.submit O.defaultHooks pool valid (Bytes.replicate 65537 120)) >>= \case
+          try @O.OwnerError (O.submit B.Ordinary O.defaultHooks pool valid (Bytes.replicate 65537 120)) >>= \case
             Left O.ResourceLimit -> pure ()
             _ -> assertFailure "oversized stdin reached dispatch"
           readIORef forks >>= (@?= 0)
           atomically (O.activeCount pool) >>= (@?= 0)
-          O.submit O.defaultHooks pool valid "" >>= O.await >>= \result ->
+          O.submit B.Ordinary O.defaultHooks pool valid "" >>= O.await >>= \result ->
             result.exit @?= Just (N.Exited 23)
 
     , testCase "exec refusal retains no child or descriptors" $
         withPool getChild O.normalFork $ \pool _ fixture _child -> do
           let missing = Ascii.pack fixture.directory <> "/missing-executable"
-          ticket <- O.submit O.defaultHooks pool (N.spec missing [missing]) ""
+          ticket <- O.submit B.Ordinary O.defaultHooks pool (N.spec missing [missing]) ""
           result <- O.await ticket
           result.launchFailure @?= Just (N.LaunchRefused N.Execute 2)
           result.exit @?= Nothing
@@ -252,7 +357,7 @@ tests getChild = testGroup "private process owner"
     , testCase "external status consumption remains explicit lost-status data" $
         withPool getChild O.normalFork $ \pool _ _ child -> do
           let hooks = O.defaultHooks {O.waitNative = N.waitWith stolenWait}
-          ticket <- O.submit hooks pool (child ["--exit"]) ""
+          ticket <- O.submit B.Ordinary hooks pool (child ["--exit"]) ""
           first <- O.await ticket
           second <- O.await ticket
           first.exit @?= Just (N.StatusLost 10)
@@ -260,7 +365,7 @@ tests getChild = testGroup "private process owner"
 
     , testCase "output overflow retires its owned child before reporting failure" $
         withPool getChild O.normalFork $ \pool _ _ child -> do
-          ticket <- O.submit O.defaultHooks pool (child ["--flood"]) ""
+          ticket <- O.submit B.Ordinary O.defaultHooks pool (child ["--flood"]) ""
           try @O.OwnerError (O.await ticket) >>= \case
             Left O.ResourceLimit -> pure ()
             _ -> assertFailure "oversized stdout was accepted"
@@ -271,7 +376,7 @@ tests getChild = testGroup "private process owner"
     , testCase "owner failure after native return retires the child" $
         withPool getChild O.normalFork $ \pool pin _ child -> G.withGate $ \gate -> do
           let hooks = O.defaultHooks {O.afterStart = throwIO AsyncCancelled, O.launchNative = G.launch G.AfterLaunch gate}
-          ticket <- O.submit hooks pool
+          ticket <- O.submit B.Ordinary hooks pool
             (child ["--wait"]) ""
           G.awaitGate gate
           withAsync (O.await ticket) $ \waiter -> do
@@ -289,7 +394,7 @@ tests getChild = testGroup "private process owner"
     , testCase "worker failure after consuming status preserves the exit cache" $
         withPool getChild O.normalFork $ \pool _ _ child -> G.withGate $ \gate -> do
           let hooks = O.defaultHooks {O.afterReap = throwIO AsyncCancelled, O.waitNative = G.consume gate}
-          ticket <- O.submit hooks pool (child ["--exit"]) ""
+          ticket <- O.submit B.Ordinary hooks pool (child ["--exit"]) ""
           G.awaitGate gate
           withAsync (O.await ticket) $ \waiter -> do
             cancel waiter
@@ -307,7 +412,7 @@ tests getChild = testGroup "private process owner"
           -- Keep the journaled launch alive and stdin open for in-flight delivery.
           let hooks = O.defaultHooks {O.launchNative = G.launch G.AfterLaunch gate,
                 O.afterStart = atomically retry}
-          ticket <- O.submit hooks pool (child ["--wait"]) ""
+          ticket <- O.submit B.Ordinary hooks pool (child ["--wait"]) ""
           G.awaitGate gate
           target <- atomically (G.gateThread gate)
           withAsync (throwTo target AsyncCancelled) $ \sender -> do
@@ -327,7 +432,7 @@ tests getChild = testGroup "private process owner"
           -- A sender can be blocked on an in-flight message to another capability.
           -- Keep the receiver alive after caching until that message is delivered.
           let hooks = O.defaultHooks {O.waitNative = G.consume gate, O.afterReap = atomically retry}
-          ticket <- O.submit hooks pool (child ["--exit"]) ""
+          ticket <- O.submit B.Ordinary hooks pool (child ["--exit"]) ""
           G.awaitGate gate
           target <- atomically (G.gateThread gate)
           withAsync (throwTo target AsyncCancelled) $ \sender -> do
@@ -368,7 +473,7 @@ tests getChild = testGroup "private process owner"
           withForeignPtr storage $ \base ->
             bracket_ (watchInput (base `plusPtr` offset) (fromIntegral (Bytes.length backing)))
               (watchInput nullPtr 0) $ do
-                result <- O.submit hooks pool original input >>= O.await
+                result <- O.submit B.Ordinary hooks pool original input >>= O.await
                 result.output @?= input
                 result.errors @?= input
                 result.exit @?= Just (N.Exited 0)
@@ -380,7 +485,7 @@ tests getChild = testGroup "private process owner"
           Files.createNamedPipe fifo 0o600
           bracket (Posix.openFd fifo Posix.ReadWrite Posix.defaultFileFlags) Posix.closeFd $ \control -> do
             let hooks = O.defaultHooks {O.signalChild = \owned -> N.signalChild owned 9999}
-            ticket <- O.submit hooks pool (child ["--gate", fifo]) ""
+            ticket <- O.submit B.Ordinary hooks pool (child ["--gate", fifo]) ""
             atomically $ O.progress ticket >>= \p -> check (p.outputBytes >= 1)
             replicateM_ 32 (O.stop ticket)
             retained <- atomically (readTVar ticket.signalErrors)
@@ -405,7 +510,7 @@ tests getChild = testGroup "private process owner"
                   atomically (putTMVar entered ())
                   atomically (readTMVar resume)
                   N.signalChild owned 0}
-            ticket <- O.submit hooks pool (child ["--gate", fifo]) ""
+            ticket <- O.submit B.Ordinary hooks pool (child ["--gate", fifo]) ""
             atomically $ O.progress ticket >>= \p -> check (p.outputBytes >= 1)
             withAsync (O.stop ticket) $ \sender -> do
               early <- (do
@@ -427,7 +532,7 @@ tests getChild = testGroup "private process owner"
           bracket (Posix.openFd fifo Posix.ReadWrite Posix.defaultFileFlags)
             Posix.closeFd $ \control -> do
               let hooks = O.defaultHooks {O.signalChild = \owned -> N.signalChild owned 9999}
-              ticket <- O.submit hooks pool (child ["--gate", fifo]) ""
+              ticket <- O.submit B.Ordinary hooks pool (child ["--gate", fifo]) ""
               atomically $ O.progress ticket >>= \p -> check (p.outputBytes >= 1)
               O.abort ticket
               atomically $ readTVar ticket.signalErrors >>= check . not . null
@@ -447,7 +552,7 @@ tests getChild = testGroup "private process owner"
           let tmux = Ascii.pack fixture.executable
               launch = N.spec tmux [tmux, "-N", "-S", pinPath pin, "display-message", "-p", "#{pid}"]
               hooks = O.defaultHooks {O.launchNative = G.launch G.BeforeLaunch gate}
-          ticket <- O.submit hooks pool launch ""
+          ticket <- O.submit B.Ordinary hooks pool launch ""
           G.awaitGate gate
           withAsync (O.await ticket) $ \waiter -> do
             cancel waiter
@@ -455,7 +560,7 @@ tests getChild = testGroup "private process owner"
           O.requestClose pool >>= assertIncomplete
           atomically (O.activeCount pool) >>= (@?= 1)
           Files.fileExist (pinPath pin) >>= assertBool "alias retained for the admitted launch"
-          try @O.OwnerError (O.submit hooks pool launch "") >>= \case
+          try @O.OwnerError (O.submit B.Ordinary hooks pool launch "") >>= \case
             Left O.PoolClosed -> pure ()
             other -> assertFailure ("expected closed admission: " <> either show (const "ticket") other)
           G.releaseGate gate
@@ -483,7 +588,7 @@ tests getChild = testGroup "private process owner"
             assertBool "high descriptor allocation failed" (sentinel >= 512 && sentinel < 1024)
             status <- Files.getFdStatus (Fd sentinel)
             assertBool "sentinel is not an open character device" (Files.isCharacterDevice status)
-            result <- O.submit O.defaultHooks pool
+            result <- O.submit B.Ordinary O.defaultHooks pool
               (base {N.args = arguments, N.env = environment, N.cwd = cwd}) input >>= O.await
             result.launchFailure @?= Nothing
             result.exit @?= Just (N.Exited 0)
@@ -501,7 +606,7 @@ tests getChild = testGroup "private process owner"
           Files.createNamedPipe fifo 0o600
           bracket (Posix.openFd fifo Posix.ReadWrite Posix.defaultFileFlags) Posix.closeFd $ \control ->
             (do
-              ticket <- O.submit hooks pool (child ["--gated-echo", fifo]) input
+              ticket <- O.submit B.Ordinary hooks pool (child ["--gated-echo", fifo]) input
               atomically (putTMVar published ticket)
               observed <- timeout 250000 (G.awaitGate notice)
               assertBool "the production send must actually encounter EAGAIN" (isJust observed)
@@ -517,7 +622,7 @@ tests getChild = testGroup "private process owner"
     , testCase "drains stdout and stderr while sending bounded input" $
         withPool getChild O.normalFork $ \pool _ _ child -> do
           let bytes = Bytes.pack (take 65536 (cycle [0 .. 255]))
-          ticket <- O.submit O.defaultHooks pool (child ["--echo"]) bytes
+          ticket <- O.submit B.Ordinary O.defaultHooks pool (child ["--echo"]) bytes
           result <- O.await ticket
           result.output @?= bytes
           result.errors @?= bytes
@@ -525,7 +630,7 @@ tests getChild = testGroup "private process owner"
 
     , testCase "preserves signaled status for repeated waiters" $
         withPool getChild O.normalFork $ \pool _ _ child -> do
-          ticket <- O.submit O.defaultHooks pool (child ["--signal"]) ""
+          ticket <- O.submit B.Ordinary O.defaultHooks pool (child ["--signal"]) ""
           first <- O.await ticket
           second <- O.await ticket
           first.exit @?= Just (N.Signaled 15 False)
@@ -538,12 +643,12 @@ tests getChild = testGroup "private process owner"
               True -> throwIO (userError "injected fork allocation failure")
               False -> O.normalFork action
         withPool getChild failOnce $ \pool _ _ child -> do
-          try @SomeException (O.submit O.defaultHooks pool (child ["--exit"]) "") >>= \case
+          try @SomeException (O.submit B.Ordinary O.defaultHooks pool (child ["--exit"]) "") >>= \case
             Left _ -> pure ()
             Right _ -> assertFailure "worker creation unexpectedly succeeded"
           atomically (O.activeCount pool) >>= (@?= 0)
           atomically (B.usage pool.budget) >>= (@?= B.Usage True 1 0 0)
-          ticket <- O.submit O.defaultHooks pool (child ["--exit"]) ""
+          ticket <- O.submit B.Ordinary O.defaultHooks pool (child ["--exit"]) ""
           O.await ticket >>= \result -> result.exit @?= Just (N.Exited 23)
 
     , testCase "retry fork failure leaves other cleanup debts resumable" $ do
@@ -560,8 +665,8 @@ tests getChild = testGroup "private process owner"
                     True -> throwIO (userError "injected cleanup failure")
                     False -> N.signalChild owned 9
                 }
-          first <- O.submit hooks pool (child ["--wait"]) ""
-          second <- O.submit hooks pool (child ["--wait"]) ""
+          first <- O.submit B.Ordinary hooks pool (child ["--wait"]) ""
+          second <- O.submit B.Ordinary hooks pool (child ["--wait"]) ""
           try @SomeException (O.await first) >>= assertCancelled
           try @SomeException (O.await second) >>= assertCancelled
           atomically (B.usage pool.budget) >>= (@?= B.Usage True 1 2 (2 * O.childBytes))
@@ -596,7 +701,7 @@ tests getChild = testGroup "private process owner"
                     ticket <- atomically (readTMVar box)
                     atomically $ O.progress ticket >>= \p -> check (p.outputBytes >= 1)
                     throwIO (userError "injected second stream startup failure")}
-              ticket <- O.submit hooks pool (child ["--gate", fifo]) ""
+              ticket <- O.submit B.Ordinary hooks pool (child ["--gate", fifo]) ""
               atomically (putTMVar box ticket)
               try @SomeException (O.await ticket) >>= \case
                 Left problem -> assertBool "startup failure remains an IOException"
@@ -610,13 +715,13 @@ tests getChild = testGroup "private process owner"
           let tmux = Ascii.pack fixture.executable
               command args = N.spec tmux ([tmux, "-u", "-N", "-S", pinPath pin] <> args)
               payload = Bytes.pack (take 65536 (cycle [0..255]))
-          loaded <- O.submit O.defaultHooks pool
+          loaded <- O.submit B.Ordinary O.defaultHooks pool
             (command ["load-buffer", "-b", "native-socket-bin", "-"]) payload >>= O.await
           loaded.launchFailure @?= Nothing
           loaded.exit @?= Just (N.Exited 0)
           loaded.output @?= ""
           loaded.errors @?= ""
-          saved <- O.submit O.defaultHooks pool
+          saved <- O.submit B.Ordinary O.defaultHooks pool
             (command ["save-buffer", "-b", "native-socket-bin", "-"]) "" >>= O.await
           saved.exit @?= Just (N.Exited 0)
           saved.output @?= payload
@@ -626,12 +731,12 @@ tests getChild = testGroup "private process owner"
         withPool getChild O.normalFork $ \pool pin fixture _child -> do
           let tmux = Ascii.pack fixture.executable
               command args = N.spec tmux ([tmux, "-u", "-N", "-S", pinPath pin] <> args)
-          loaded <- O.submit O.defaultHooks pool
+          loaded <- O.submit B.Ordinary O.defaultHooks pool
             (command ["load-buffer", "-b", "native-socket-empty", "-"]) "" >>= O.await
           loaded.exit @?= Just (N.Exited 0)
           loaded.output @?= ""
           loaded.errors @?= ""
-          listed <- O.submit O.defaultHooks pool
+          listed <- O.submit B.Ordinary O.defaultHooks pool
             (command ["list-buffers", "-F", "#{buffer_name}"]) "" >>= O.await
           listed.exit @?= Just (N.Exited 0)
           assertBool "empty input created no named buffer"
@@ -660,10 +765,10 @@ withPool resource = withPoolAt resource 1
 
 withPoolAt :: IO (FilePath, (Bytes.ByteString, FilePath)) -> Int -> O.Fork
   -> (O.Pool -> SocketPin -> Fixture.Fixture -> ([Bytes.ByteString] -> N.Spec) -> IO a) -> IO a
-withPoolAt resource capacity forker action = do
+withPoolAt resource ordinaryCapacity forker action = do
   (_, (executable, _)) <- resource
-  budget <- B.newBudget
-  Fixture.withFixture $ \fixture -> withPoolIn budget fixture capacity forker $ \pool pin ->
+  budget <- B.newBudget O.inspectionBytes
+  Fixture.withFixture $ \fixture -> withPoolIn budget fixture (ordinaryCapacity + 1) forker $ \pool pin ->
     action pool pin fixture (\args -> N.spec executable (executable : args))
 
 withPoolIn :: B.Budget -> Fixture.Fixture -> Int -> O.Fork -> (O.Pool -> SocketPin -> IO a) -> IO a

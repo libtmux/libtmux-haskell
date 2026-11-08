@@ -32,7 +32,9 @@ uses MSG_NOSIGNAL without changing the host's handlers, masks or pending
 signals. Closing the sole parent writer delivers EOF. Child stdin is a
 socket, not a promise of pipe-identical behavior for arbitrary programs.
 
-Each pool admits at most 16 jobs. Each job accepts at most 64 KiB of stdin
+Each pool admits at most 16 jobs, leaving its final position for inspection.
+Ordinary work stops one position below the pool capacity; a capacity-one
+pool is inspection-only. Each job accepts at most 64 KiB of stdin
 and retains at most 1 MiB each of stdout and stderr. Accepted byte slices
 are copied before worker ownership. Failed signals retain eight recent
 errors and a saturating total count; the retained list is forced when
@@ -45,6 +47,19 @@ child reserves 4,456,448 bytes: both streams' chunks and final concatenations,
 stdin, owned/marshaled vectors and read scratch. This conservative allowance
 can reject earlier than accounting only actual payload sizes. It is not an
 RSS limit; Haskell object headers, GC and detached caller values are separate.
+
+Child and byte leases declare Ordinary or Inspection admission. Ordinary
+work stops at fifteen children and leaves the context's configured byte
+allowance for inspection. Inspections may borrow unused ordinary capacity,
+subject to the same sixteen-child and 128 MiB totals. An inspection still
+pending cleanup may hold that capacity; this reserve protects against
+ordinary saturation, not arbitrary inspection debt.
+
+Pool construction requires at least 8,650,752 protected bytes: one child's allowance plus a
+4,194,304-byte consumer envelope. The envelope covers both completed streams
+and equally bounded decoded copies; consumers must enforce those bounds or
+reserve more. Ordinary reservations therefore stop at 125,566,976 bytes.
+This bounded profile does not guarantee admission of a maximum-size capture.
 
 Constructors require caller masking through cleanup/registry installation.
 A pool's client lease survives pin-cleanup failure and is released only after
@@ -88,9 +103,10 @@ Closing admission settles queued work as not dispatched and returns active
 handles for supervision. Retired handles retain metadata without retaining
 the scheduler's live-operation registry.
 
-This reserve is logical. Runtime integration must also protect usable
-physical-child and byte capacity for inspection; the shared budget above
-has no lane reserve. The scheduler performs no tmux IO, supplies no external
+This scheduler reserve is logical. The process budget separately protects
+physical-child and byte capacity for inspection. Runtime integration must
+map these classes, charge consumer envelopes and supervise ownership across
+both layers. The scheduler performs no tmux IO, supplies no external
 completion evidence and does not implement the Runtime's shutdown phases.
 The [scheduler tests](../../test/SchedulerTest.hs) qualify these state
 transitions separately from the native process tests below.

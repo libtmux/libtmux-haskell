@@ -83,7 +83,8 @@ defaultHooks = Hooks (pure ()) (pure ()) (pure ()) (\child -> N.signalChild chil
 newPool :: B.Budget -> Fork -> PinOwner -> Int -> IO Pool
 -- The caller masks through cleanup registration; PinOwner transfers on success.
 newPool budget forker pinOwner capacity = mask_ $ do
-  unless (capacity > 0 && capacity <= 16) (throwIO ResourceLimit)
+  unless (capacity > 0 && capacity <= 16 && B.inspectionAllowance budget >= inspectionBytes)
+    (throwIO ResourceLimit)
   clientLease <- atomically (B.acquireClient budget)
   (do
     jobs <- newTVarIO Map.empty
@@ -103,12 +104,20 @@ childBytes :: Word64
 childBytes = fromIntegral (4 * streamLimitBytes + inputLimitBytes
   + 2 * N.vectorLimitBytes + 4 * N.chunkBytes)
 
+-- Allow both completed streams and equally bounded decoded copies. Consumers
+-- must enforce those copy bounds or reserve a larger parent envelope.
+retainedBytes, inspectionBytes :: Word64
+retainedBytes = fromIntegral (4 * streamLimitBytes)
+inspectionBytes = childBytes + retainedBytes
+
 -- | Return a detached caller-owned t'Ticket'. Reserve shared child/byte credits
 -- before copying or forking; allocation failure rolls back both credits.
+-- Ordinary work leaves the pool's final position for inspection. A pool with
+-- capacity one therefore admits inspections only; Runtime pools use sixteen.
 -- Internal consumers precharge a separate parent envelope in
 -- "LibTmux.Internal.Budget" for output retained after result publication.
-submit :: Hooks -> Pool -> N.Spec -> ByteString -> IO Ticket
-submit hooks pool spec input = mask_ $ do
+submit :: B.Class -> Hooks -> Pool -> N.Spec -> ByteString -> IO Ticket
+submit allocation hooks pool spec input = mask_ $ do
   N.validate spec
   when (Bytes.length input > inputLimitBytes) (throwIO ResourceLimit)
   ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
@@ -119,10 +128,11 @@ submit hooks pool spec input = mask_ $ do
     closed <- readTVar pool.closing
     when closed (throwSTM PoolClosed)
     jobs <- readTVar pool.jobs
-    when (Map.size jobs >= pool.capacity) (throwSTM ResourceLimit)
+    let available = pool.capacity - if allocation == B.Ordinary then 1 else 0
+    when (Map.size jobs >= available) (throwSTM ResourceLimit)
     key <- readTVar pool.nextKey
     when (key == maxBound) (throwSTM ResourceLimit)
-    lease <- B.acquireChild pool.budget childBytes
+    lease <- B.acquireChild pool.budget allocation childBytes
     let owned = (ticket lease) {key}
     writeTVar pool.nextKey (key + 1)
     writeTVar pool.jobs (Map.insert key owned jobs)

@@ -140,8 +140,13 @@ processes. They never change the Haskell test runner's host policy. Binary
 load-buffer/save-buffer cases use the owned private tmux pin; empty stdin
 checks EOF independently.
 
-Shared-context cases hold sixteen native launches across two pools and reject
-the seventeenth before dispatch. They also check byte exhaustion, constructor
+Shared-context cases hold fifteen ordinary native launches and one inspection
+across two pools and reject the seventeenth before dispatch. Another case fills
+ordinary child and payload reservations, then executes an inspection against
+the owned tmux daemon and compares its PID with an independent receipt. It
+checks retained parent bytes, cancelled waiters and eventual zero credits.
+A small-pool case checks that ordinary work leaves its final position usable
+by inspection. They also check total byte exhaustion, constructor
 handoff under actual pending cancellation, retryable pin cleanup and a consumer
 envelope retained after unawaited result publication. Pure budget tests cover
 exact limits, overflow refusal, atomic reservation and repeated release. These
