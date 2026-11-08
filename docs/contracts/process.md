@@ -177,7 +177,7 @@ transitions separately from the native process tests below.
 
 ## Framed server read ownership
 
-The private Runtime observes server PIDs and stable release identities through
+The private Runtime observes server PIDs, stable releases and physical graphs through
 the adopted socket pin. An opaque `Request value` retains the decoded result's
 type. A closed GADT pairs each fixed format with that type; the owned registry
 retains the witness without a cast or an arbitrary decoder callback.
@@ -197,12 +197,21 @@ logical permit and protected parent/child credits. A foreign client is refused
 before reservation. A worker claims only its own oldest eligible operation;
 STM rollback leaves other operations unchanged.
 
+The tagged graph read always uses ordinary admission. Its registered read
+owner retains the 64 MiB graph construction allowance together with the
+existing 4 MiB read envelope. Caller cancellation cannot release that allowance
+while a worker still constructs or forces the graph. The default graph capture
+does not acquire a second copy of it. Scalar comparison capture retains its
+separate scoped allowance. These reservations bound admitted work, not RSS;
+minimal inspection reads keep their protected capacity.
+
 The process reservation transaction records its Ticket in the Runtime journal
 before the native worker can start. The interpreter masks through constructor
 return and ownership recognition. Explicit native refusal survives later worker
 failure; possible native birth is not a tmux acknowledgment.
 
-Reads have a one-second default deadline and a ten-second maximum. One absolute
+PID/version conveniences use a one-second default. Explicit read deadlines have
+a ten-second maximum; graph reads require a supplied deadline. One absolute
 monotonic expiration governs queueing, submission and validated-result
 eligibility. It is sampled before submission and immediately before the final
 publication transaction; this does not promise real-time OS scheduling. Scoped

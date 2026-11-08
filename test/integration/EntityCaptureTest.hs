@@ -35,9 +35,9 @@ tests = testGroup "entity capture"
       graph <- withRuntime $ \runtime client fixture -> do
         command fixture ["link-window", "-s", "@0", "-t", "$0:4"]
         command fixture ["new-session", "-d", "-s", "other", "-t", "$0"]
-        command fixture ["select-pane", "-t", "%0", "-T", "editor λ"]
+        _ <- rawCommand client fixture ["select-pane", "-t", "%0", "-T", Utf8.encodeUtf8 "editor g λ"]
         (code, title, errors) <- Fixture.command fixture ["-u", "display-message", "-p", "-t", "%0", "#{pane_title}"]
-        (code, title, errors) @?= (ExitSuccess, Lazy.fromStrict (Utf8.encodeUtf8 "editor λ\n"), "")
+        (code, title, errors) @?= (ExitSuccess, Lazy.fromStrict (Utf8.encodeUtf8 "editor g λ\n"), "")
         (started, ended, graph) <- capture runtime client fixture
         assertBool "reversed capture interval" (started <= ended)
         length (G.graphSessions graph) @?= 2
@@ -46,12 +46,30 @@ tests = testGroup "entity capture"
         length (G.graphLinks graph) @?= 4
         length (G.graphOccurrences graph) @?= 4
         map (.name) (G.graphSessions graph) @?= ["fixture", "other"]
-        map (.title) (G.graphPanes graph) @?= ["editor λ"]
+        map (.title) (G.graphPanes graph) @?= ["editor g λ"]
         command fixture ["rename-session", "-t", "$0", "after-capture"]
         atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
         pure graph
       map (.name) (G.graphSessions graph) @?= ["fixture", "other"]
       length (G.graphOccurrences graph) @?= 4
+  , testCase "captures coherent record names before a no-output after hook" $
+      withRuntime $ \runtime client fixture -> do
+        command fixture ["rename-window", "-t", "@0", "v0"]
+        (code, output, errors) <- Fixture.command fixture
+          ["new-window", "-d", "-n", "v0", "-P", "-F", "#{window_id} #{pane_pid}", "/bin/cat", "-"]
+        (code, errors) @?= (ExitSuccess, "")
+        case Bytes.words (Lazy.toStrict output) of
+          [window, pid] -> Fixture.withTrackedPane (Lazy.fromStrict (pid <> "\n"))
+            (command fixture ["kill-window", "-t", Bytes.unpack window]) $ do
+              let rename name = "rename-window -t @0 " <> name
+                    <> " ; rename-window -t " <> Bytes.unpack window <> " " <> name
+                  hook = "if-shell -F '#{==:#{window_name},v0}' '" <> rename "v1"
+                    <> "' '" <> rename "v0" <> "'"
+              bracket_ (command fixture ["set-hook", "-g", "after-display-message", hook])
+                (command fixture ["set-hook", "-gu", "after-display-message"]) $ do
+                  (_, _, graph) <- capture runtime client fixture
+                  map (.name) (G.graphWindows graph) @?= ["v0", "v0"]
+          other -> assertFailure ("invalid owned-window receipt: " <> show other)
   , testCase "returns a valid empty graph from an existing empty daemon" $
       withRuntime $ \runtime client fixture -> do
         command fixture ["kill-session", "-t", "$0"]
@@ -60,17 +78,11 @@ tests = testGroup "entity capture"
         G.graphPanes graph @?= []
   , testCase "captures lossless window, process and path values" $ do
       (pane, expectedCommand, expectedPath, label) <- withRuntime $ \runtime client fixture -> do
-        let executable = Bytes.pack fixture.executable
-            raw args = do
-              let spec = N.spec executable
-                    ([executable, "-u", "-N", "-S", pinPath (R.clientPin client)] <> args)
-              result <- P.submit B.Ordinary P.defaultHooks (R.clientPool client) spec "" >>= P.await
-              (result.exit, result.errors) @?= (Just (N.Exited 0), "")
-              pure result.output
-            path = Bytes.pack fixture.directory <> "/\255"
+        let raw = rawCommand client fixture
+            path = Bytes.pack fixture.directory <> "/\255g\\147"
             readyPath = fixture.directory <> "/ready"
             processName = "cmd\255x"
-            rawWindowName = "win\255x"
+            rawWindowName = "win\255g\\147x"
         releaseBytes <- raw ["display-message", "-p", "-F", "#{version}"]
         release <- either (fail . show) pure (V.parseVersion (Utf8.decodeUtf8 releaseBytes))
         cleanedNames <- either (fail . show) pure (V.parseVersion "3.7")
@@ -110,7 +122,7 @@ tests = testGroup "entity capture"
       case label of
         Nothing -> pure ()
         Just name -> do
-          Label.toBytes name @?= "win\255x"
+          Label.toBytes name @?= "win\255g\\147x"
           case Label.decodeUtf8 name of
             Left _ -> pure ()
             Right _ -> assertFailure "non-text window name became valid UTF-8"
@@ -159,3 +171,11 @@ command :: Fixture.Fixture -> [String] -> IO ()
 command fixture args = do
   (code, _, errors) <- Fixture.command fixture args
   assertEqual (show errors) ExitSuccess code
+
+rawCommand :: R.Client -> Fixture.Fixture -> [Bytes.ByteString] -> IO Bytes.ByteString
+rawCommand client fixture args = do
+  let executable = Bytes.pack fixture.executable
+      spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.clientPin client)] <> args)
+  result <- P.submit B.Ordinary P.defaultHooks (R.clientPool client) spec "" >>= P.await
+  (result.exit, result.errors) @?= (Just (N.Exited 0), "")
+  pure result.output

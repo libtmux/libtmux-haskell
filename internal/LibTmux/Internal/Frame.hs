@@ -9,6 +9,9 @@ module LibTmux.Internal.Frame
   , parseNonce
   , scalarFormat
   , escapedFieldFormat
+  , recordMarker
+  , escapedRecordFieldFormat
+  , decodeEscapedRecordField
   , decodeScalar
   , decodeEscapedScalar
   ) where
@@ -28,6 +31,7 @@ data FrameError
   | AmbiguousScalarFrame
   | NulInScalar
   | InvalidScalarEscape !Int
+  | ReservedRecordByte
   deriving stock (Eq, Show)
 
 parseNonce :: ByteString -> Either FrameError Nonce
@@ -45,27 +49,49 @@ scalarFormat (Nonce token) field = token <> ":" <> field <> ":" <> token
 escapedFieldFormat :: ByteString -> ByteString
 escapedFieldFormat field = "#{s/\\\\/\\\\\\\\/:" <> field <> "}"
 
+-- | A record boundary whose initial @g@ is absent from encoded field bytes.
+recordMarker :: Nonce -> ByteString
+recordMarker (Nonce token) = "g" <> token
+
+-- | Look up a trusted variable once, protecting slashes before escaping @g@.
+-- Encoded values contain no literal @g@, so cannot contain a 'recordMarker'.
+escapedRecordFieldFormat :: ByteString -> ByteString
+escapedRecordFieldFormat field = "#{s/\\\\/\\\\\\\\/;s/g/\\\\147/:" <> field <> "}"
+
+-- | Decode a record field after its exact tagged boundaries were consumed.
+-- An unescaped @g@ signals a producer/encoding mismatch, even without a nonce.
+decodeEscapedRecordField :: Nonce -> Int -> ByteString -> Either FrameError ByteString
+decodeEscapedRecordField nonce@(Nonce token) limit payload
+  | limit < 0 = Left InvalidScalarLimit
+  | Bytes.elem 103 payload = Left ReservedRecordByte
+  | token `Bytes.isInfixOf` payload = Left AmbiguousScalarFrame
+  | otherwise = decodeEscapedPayload nonce limit payload
+
 -- | Decode protected backslashes and tmux's octal, C-style and dollar escapes.
 -- Limits apply to decoded bytes; the process owner separately bounds stdout.
 -- Validate before allocation so an escaped payload needs only its output-sized
 -- buffer. The second traversal reads the same immutable validated bytes.
 decodeEscapedScalar :: Nonce -> Int -> ByteString -> Either FrameError ByteString
-decodeEscapedScalar nonce@(Nonce token) limit output
+decodeEscapedScalar nonce limit output
   | limit < 0 = Left InvalidScalarLimit
   | otherwise = do
       payload <- framePayload nonce maxBound output
-      let next rest = scalarByte (Bytes.length payload - Bytes.length rest) rest
-          measure !count rest = next rest >>= \case
-            Nothing -> Right count
-            Just (_, remaining) -> measure (count + 1) remaining
-      count <- measure 0 payload
-      if count > limit then Left (ScalarLimitExceeded limit count) else do
-        let (decoded, remaining) = Bytes.unfoldrN count (either (const Nothing) id . next) payload
-        if Bytes.length decoded /= count || maybe False (not . Bytes.null) remaining
-          then Left UnexpectedScalarFrame
-          else if token `Bytes.isInfixOf` decoded
-            then Left AmbiguousScalarFrame
-            else Right decoded
+      decodeEscapedPayload nonce limit payload
+
+decodeEscapedPayload :: Nonce -> Int -> ByteString -> Either FrameError ByteString
+decodeEscapedPayload (Nonce token) limit payload = do
+  let next rest = scalarByte (Bytes.length payload - Bytes.length rest) rest
+      measure !count rest = next rest >>= \case
+        Nothing -> Right count
+        Just (_, remaining) -> measure (count + 1) remaining
+  count <- measure 0 payload
+  if count > limit then Left (ScalarLimitExceeded limit count) else do
+    let (decoded, remaining) = Bytes.unfoldrN count (either (const Nothing) id . next) payload
+    if Bytes.length decoded /= count || maybe False (not . Bytes.null) remaining
+      then Left UnexpectedScalarFrame
+      else if token `Bytes.isInfixOf` decoded
+        then Left AmbiguousScalarFrame
+        else Right decoded
 
 scalarByte :: Int -> ByteString -> Either FrameError (Maybe (Word8, ByteString))
 scalarByte offset input = case Bytes.uncons input of

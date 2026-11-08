@@ -7,8 +7,8 @@ separates measured research from Haskell implementation acceptance.
 
 ## One evaluation, one envelope
 
-For a closed catalogue field, generate a fresh 256-bit nonce in IO, encoded
-as 64 lowercase ASCII hexadecimal digits. Expand the field once between
+For a scalar read of a closed catalogue field, generate a fresh 256-bit nonce
+in IO, encoded as 64 lowercase ASCII hexadecimal digits. Expand the field once between
 fixed prefix and suffix bytes containing that nonce. Require the prefix at
 byte zero and suffix plus command-added LF at EOF. Consume boundaries
 sequentially so they cannot overlap on an empty payload. Reject a nonce in
@@ -65,6 +65,15 @@ that protocol before replacing per-field capture; scalar decoder success alone
 is insufficient. Separate coherent tmux-owned graph observations from
 OS-derived values and the tmux 3.3 client-listing fallback. Do not promise a
 globally atomic Snapshot.
+
+The private physical-graph path now uses one S/W/P expansion. Its typed row
+layouts generate and parse the same field sequence. Values protect literal
+backslashes before replacing ASCII g with an octal escape; graph and field
+markers start with g plus the nonce. Encoded values contain no literal g, so
+cannot contain a full marker. The decoder rejects unescaped g, decoded nonce
+collisions, unexpected fields, context mismatches and trailing output. The serial path remains a
+comparison implementation. ServerInfo and attached-client coverage are still
+required before this becomes a complete Snapshot.
 
 Arbitrary option listings, binary buffer output and raw commands retain their
 separate contracts. This protocol does not establish completion of a mutation

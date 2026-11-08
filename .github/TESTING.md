@@ -82,6 +82,11 @@ decoding. The lossless observation case waits on a FIFO receipt after the
 owned process has adopted its raw argv, captures without replacing bytes,
 and reads retained command/path/name values after cleanup. It checks tmux's
 release-specific name normalization and runs under both locale profiles.
+Tagged graph cases also run under C. Their setup uses explicit UTF-8 or POSIX
+bytes through the native process layer. A no-output hook changes two window
+names together: one graph expansion must retain their coherent names. Other
+cases cover malformed records, repeated links, byte aliases, retained graph
+allowances after native-launch cancellation and inspection progress.
 The final
 `required` job fails if any planned job fails, cancels or skips.
 

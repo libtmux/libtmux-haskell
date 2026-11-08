@@ -122,9 +122,42 @@ and lossless bytes; contextual projection tests keep link state separate.
 This is the existing entity profile, without ServerInfo or observed clients.
 It does not establish a public query language or complete Snapshot coverage.
 
+## Private tagged physical graph
+
+The private default now acquires sessions, physical windows, links and panes
+through one bounded S/W/P expansion. Typed row layouts drive format generation
+and parsing from the field catalogue. Encoded values contain no literal g after
+backslash protection and g escaping, so cannot contain a full marker. The codec
+validates exact field order, context, repeated physical observations, graph laws
+and EOF.
+The existing serial path remains available for comparison and checkpoints.
+
+A real after-display-message hook renames two windows together after each
+read. Serial capture returned v0/v1; the tagged capture returns v0/v0 from one
+expansion. Separate cases check non-text names and POSIX paths containing
+invalid bytes and literal escapes after resource closure. Declared UTF-8 titles
+are checked during capture.
+Test setup uses byte arguments: String arguments under C can lose Unicode,
+and newer tmux releases normalize literal backslashes in pane titles.
+
+The graph's registered read owner retains the existing 64 MiB construction
+allowance plus the ordinary 4 MiB read envelope through decoding and forcing.
+Caller cancellation cannot refund it while native work remains owned. Graph
+reads never use inspection admission. Native-launch cancellation and noisy
+framing cases retain correlated logical responsibility; explicit detachment
+then permits another graph read. This is private Request-level evidence,
+not the public capture/recovery contract.
+
+The 1 MiB encoded stream limit is unchanged. Record overhead and byte escaping
+consume part of it, so some graphs accepted by serial hydration can exceed
+this single-response profile. This does not qualify large-graph defaults or
+bound the daemon's allocation and pause while expanding formats. OS-derived
+callbacks can change between repeated appearances. No global atomicity is
+promised. ServerInfo and observed clients remain outside this private profile.
+
 ## Remaining gates
 
-- Qualify complete record framing on every required release, preserving the
+- Qualify the complete record profile on every required release, preserving the
   scalar byte, limit, target and hook checks above. Cover exact field order,
   duplicate links, empty results and client acquisition. Record the supported
   locale/build profile rather than extrapolating from one build.
@@ -138,8 +171,8 @@ It does not establish a public query language or complete Snapshot coverage.
 - Define concurrent capture admission. The prototype reserves 64 MiB per
   capture against 125,566,976 ordinary bytes after inspection reserve, so it
   admits at most one full capture envelope. That reservation is not RSS.
-  Its numeric comparison also includes selection and geometry; document which
-  changes invalidate each acquisition strategy.
+  The serial comparison also includes selection and geometry; the tagged path
+  rejects conflicting repeated observations. Document both acquisition policies.
 - Provide validated offline fixtures whose references cannot target tmux.
   Qualify reference equality across captures, missing/foreign lookup,
   reconstruction instances, roles and installed record import/update behavior.

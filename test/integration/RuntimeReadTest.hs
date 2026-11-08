@@ -14,6 +14,7 @@ import Fixture qualified
 import GHC.Conc (BlockReason (BlockedOnSTM))
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Process qualified as P
+import LibTmux.Internal.Graph qualified as Graph
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Version qualified as Version
@@ -94,6 +95,28 @@ tests = testGroup "owned Runtime reads"
             atomically (R.usage runtime) >>= (@?= B.Usage True 1 1 (P.childBytes + P.retainedBytes))
         expectValue expected request
         atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
+  , testCase "cancelled graph reads retain their envelope and leave inspection usable" $
+      withRuntime P.normalFork $ \runtime client fixture -> G.withGate $ \gate -> do
+        expected <- serverPid fixture
+        let executable = Bytes.pack fixture.executable
+            hooks = P.defaultHooks {P.launchNative = G.launch G.AfterLaunch gate}
+        request <- R.readGraphWith hooks 1000000 runtime client executable
+        G.awaitGate gate
+        flip finally (G.releaseGate gate) $ do
+          R.cancelRead runtime request
+          expectUnavailable S.OutcomeUnknown request
+          atomically (R.usage runtime) >>= (@?= B.Usage True 1 1
+            (64 * 1024 * 1024 + P.childBytes + P.retainedBytes))
+          start runtime client fixture R.InspectionRead >>= expectValue expected
+        waitWorkers runtime
+        atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+        atomically (R.inspect runtime) >>= \report -> map fst report.unresolved @?= [R.readOperation request]
+        atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= True)
+        recovered <- R.readGraphWith P.defaultHooks 1000000 runtime client executable
+        R.awaitRead recovered >>= \case
+          R.ReadValue graph -> length (Graph.graphPanes graph) @?= 1
+          other -> assertFailure (show other)
 
   , testCase "queued expiry proves non-dispatch behind four claimed inspections" $
       withRuntime P.normalFork $ \runtime client fixture -> withGates 4 $ \gates -> do
@@ -279,6 +302,20 @@ tests = testGroup "owned Runtime reads"
         Fixture.command fixture ["set-hook", "-g", "after-display-message", "display-message -p extra"] >>= (@?= (ExitSuccess, "", ""))
         request <- start runtime client fixture R.ScalarRead
         expectUnavailable S.OutcomeUnknown request
+        waitWorkers runtime
+        atomically (R.readStatus request) >>= \status -> status.retained @?= True
+        atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+        atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= True)
+
+  , testCase "noisy graph framing preserves correlated logical responsibility" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        Fixture.command fixture ["set-hook", "-g", "after-display-message", "display-message -p extra"] >>= (@?= (ExitSuccess, "", ""))
+        request <- R.readGraphWith P.defaultHooks 1000000 runtime client (Bytes.pack fixture.executable)
+        R.awaitRead request >>= \case
+          R.ReadUnavailable S.OutcomeUnknown (Just problem) -> case fromException problem of
+            Just (R.InvalidRecordFrame _) -> pure ()
+            _ -> assertFailure (show problem)
+          other -> assertFailure (show other)
         waitWorkers runtime
         atomically (R.readStatus request) >>= \status -> status.retained @?= True
         atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)

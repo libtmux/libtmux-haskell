@@ -36,22 +36,15 @@ data CaptureError
 instance Exception CaptureError
 
 captureGraph :: R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedGraph
-captureGraph = captureGraphWith (pure ())
+captureGraph runtime client executable duration = withinDeadline duration $ \deadline -> do
+  left <- remaining deadline
+  owned runtime (R.readGraphWith P.defaultHooks left runtime client executable)
 
+-- | Serial comparison path with a checkpoint before its final topology read.
+-- The tagged default above does not use these scalar hydration boundaries.
 captureGraphWith :: IO () -> R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedGraph
-captureGraphWith checkpoint runtime client executable duration = do
-  when (duration < 1 || duration > 10000000) (throwIO (InvalidCaptureDeadline duration))
-  started <- getMonotonicTimeNSec
-  let delta = fromIntegral duration * 1000
-  when (started > maxBound - delta) (throwIO R.ReadClockOverflow)
-  let deadline = started + delta
-  R.withCaptureBudget runtime $ do
-    left <- remaining deadline
-    completed <- timeout left (attempt deadline 2)
-    graph <- maybe (throwIO CaptureDeadline) pure completed
-    ended <- getMonotonicTimeNSec
-    when (ended >= deadline) (throwIO CaptureDeadline)
-    pure (started, ended, graph)
+captureGraphWith checkpoint runtime client executable duration =
+  withinDeadline duration (\deadline -> R.withCaptureBudget runtime (attempt deadline 2))
   where
     generation = pinGeneration (R.clientPin client)
     attempt :: Word64 -> Int -> IO G.EntityGraph
@@ -78,7 +71,7 @@ captureGraphWith checkpoint runtime client executable duration = do
             writeIORef retained total
           topology = do
             left <- remaining deadline
-            bytes <- owned (R.readTopologyWith P.defaultHooks left runtime client executable R.ScalarRead)
+            bytes <- owned runtime (R.readTopologyWith P.defaultHooks left runtime client executable R.ScalarRead)
             charge (4 * toInteger (Bytes.length bytes))
             graph <- either throwIO pure (T.decodeTopology generation bytes)
             -- Both topology graphs coexist during validation. Reserve metadata
@@ -88,7 +81,7 @@ captureGraphWith checkpoint runtime client executable duration = do
             pure graph
           scalar field = do
             left <- remaining deadline
-            bytes <- owned (R.readEntityFieldWith field P.defaultHooks left runtime client executable R.ScalarRead)
+            bytes <- owned runtime (R.readEntityFieldWith field P.defaultHooks left runtime client executable R.ScalarRead)
             charge (4 * toInteger (Bytes.length bytes))
             pure bytes
           decoded :: Field.Field row value -> R.EntityField -> IO value
@@ -114,13 +107,29 @@ captureGraphWith checkpoint runtime client executable duration = do
       graph <- either (const (throwIO CaptureChanged)) pure
         (G.assembleEntityGraph generation sessions windows panes (G.graphLinks before))
       evaluate (force graph)
-    owned start = mask $ \restore -> do
-      request <- start
-      response <- restore (R.awaitRead request) `onException` R.cancelRead runtime request
-      case response of
-        R.ReadValue value -> pure value
-        R.ReadUnavailable _ (Just problem) -> throwIO problem
-        R.ReadUnavailable outcome Nothing -> throwIO (CaptureReadUnavailable outcome)
+
+withinDeadline :: Int -> (Word64 -> IO G.EntityGraph) -> IO CapturedGraph
+withinDeadline duration action = do
+  when (duration < 1 || duration > 10000000) (throwIO (InvalidCaptureDeadline duration))
+  started <- getMonotonicTimeNSec
+  let delta = fromIntegral duration * 1000
+  when (started > maxBound - delta) (throwIO R.ReadClockOverflow)
+  let deadline = started + delta
+  left <- remaining deadline
+  completed <- timeout left (action deadline >>= evaluate . force)
+  graph <- maybe (throwIO CaptureDeadline) pure completed
+  ended <- getMonotonicTimeNSec
+  when (ended >= deadline) (throwIO CaptureDeadline)
+  pure (started, ended, graph)
+
+owned :: R.Runtime -> IO (R.Request value) -> IO value
+owned runtime start = mask $ \restore -> do
+  request <- start
+  response <- restore (R.awaitRead request) `onException` R.cancelRead runtime request
+  case response of
+    R.ReadValue value -> pure value
+    R.ReadUnavailable _ (Just problem) -> throwIO problem
+    R.ReadUnavailable outcome Nothing -> throwIO (CaptureReadUnavailable outcome)
 
 remaining :: Word64 -> IO Int
 remaining deadline = do

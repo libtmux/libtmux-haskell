@@ -7,14 +7,14 @@
 -- 'awaitCleanup' may wait without a deadline. 'shutdown' bounds its two
 -- observation phases while retaining incomplete cleanup. Typed framed server
 -- reads bind logical admission and deadlines to native ownership. Other
--- command bindings and the public Client remain unfinished.
+-- command bindings and the public Server scope remain unfinished.
 module LibTmux.Internal.Runtime
   ( Runtime, Client, Report (..), newRuntime, adopt, adoptWith
   , clientPool, clientPin, usage, inspect, closeClient, requestClose, awaitCleanup, shutdown
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
   , readServerVersion, readServerVersionWith
-  , EntityField (..), readTopologyWith, readEntityFieldWith, withCaptureBudget
+  , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, withCaptureBudget
   , cancelRead, detachOperation
   ) where
 
@@ -36,6 +36,8 @@ import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Entropy qualified as Entropy
 import LibTmux.Internal.Frame qualified as F
 import LibTmux.Internal.Field qualified as Field
+import LibTmux.Internal.Graph qualified as Graph
+import LibTmux.Internal.Record qualified as Record
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Scheduler qualified as S
@@ -84,6 +86,7 @@ data ReadCommand value where
   ReadVersion :: ReadCommand Version.TmuxVersion
   ReadTopology :: ReadCommand ByteString
   ReadEntityField :: !EntityField -> ReadCommand ByteString
+  ReadGraph :: !Graph.Generation -> ReadCommand Graph.EntityGraph
 
 -- | Closed scalar acquisition targets; callers cannot supply format fragments.
 data EntityField
@@ -95,6 +98,7 @@ data ReadError
   = ForeignClient | InvalidReadDeadline !Int | ReadClockOverflow
   | ReadExpired | ReadCancelled | ReadClosing
   | InvalidReadFrame !F.FrameError | InvalidServerPid
+  | InvalidRecordFrame !Record.RecordError
   | InvalidVersionEncoding | InvalidServerVersion !Version.VersionError
   | InvalidEntityReceipt
   | ReadExit !(Maybe N.Exit) | ReadStderr !Int
@@ -321,6 +325,13 @@ readTopologyWith = startRead ReadTopology
 readEntityFieldWith :: EntityField -> P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request ByteString)
 readEntityFieldWith field = startRead (ReadEntityField field)
 
+-- | Read the physical/link profile in one tagged format expansion. Its
+-- registered owner retains the capture reservation through decoding and
+-- forcing, including after caller cancellation. This does not acquire clients.
+readGraphWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> IO (Request Graph.EntityGraph)
+readGraphWith hooks duration runtime client executable =
+  startRead (ReadGraph (pinGeneration (clientPin client))) hooks duration runtime client executable ScalarRead
+
 -- | Retain the complete capture envelope while fields and graphs accumulate.
 -- Native requests keep their independent child/parent reservations.
 withCaptureBudget :: Runtime -> IO a -> IO a
@@ -328,12 +339,15 @@ withCaptureBudget runtime action = bracket
   (atomically (B.acquireBytes runtime.budget B.Ordinary (64 * 1024 * 1024)))
   (atomically . B.releaseBytes) (const action)
 
-commandFormat :: ReadCommand value -> ByteString
-commandFormat ReadPid = "#{pid}"
-commandFormat ReadVersion = "#{version}"
-commandFormat ReadTopology = Topology.topologyFormat
-commandFormat (ReadEntityField field) = let (_, receipt, value) = entityField field in
-  receipt <> ":" <> F.escapedFieldFormat value
+commandFormat :: F.Nonce -> ReadCommand value -> ByteString
+commandFormat nonce command = case command of
+  ReadPid -> framed "#{pid}"
+  ReadVersion -> framed "#{version}"
+  ReadTopology -> framed Topology.topologyFormat
+  ReadEntityField field -> let (_, receipt, value) = entityField field in
+    framed (receipt <> ":" <> F.escapedFieldFormat value)
+  ReadGraph generation -> Record.graphFormat generation nonce
+  where framed = F.scalarFormat nonce
 
 entityField :: EntityField -> (ByteString, ByteString, ByteString)
 entityField (SessionName ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident),
@@ -365,7 +379,7 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
         [Bytes.index hex (fromIntegral (shiftR byte 4)),
          Bytes.index hex (fromIntegral (byte .&. 15))]) (Bytes.unpack token))
   nonce <- either (throwIO . InvalidReadFrame) pure (F.parseNonce encoded)
-  let format = F.scalarFormat nonce (commandFormat command)
+  let format = commandFormat nonce command
       spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (clientPin client),
         "display-message", "-p"] <> commandTarget command <> ["-F", format])
       (lane, resourceClass) = case allocation of
@@ -378,7 +392,12 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
   (owner, request) <- atomically $ do
     readTVar pool.closing >>= flip when (throwSTM P.PoolClosed)
     operation <- S.admit runtime.scheduler lane
-    envelope <- B.acquireBytes runtime.budget resourceClass P.retainedBytes
+    let parentBytes = case command of
+          -- The caller may stop waiting while the worker still constructs the
+          -- graph. Keep the former capture lease with that registered owner.
+          ReadGraph _ -> P.retainedBytes + 64 * 1024 * 1024
+          _ -> P.retainedBytes
+    envelope <- B.acquireBytes runtime.budget resourceClass parentBytes
     result <- newEmptyTMVar
     submission <- newTVar NotSubmitted
     cancelled <- newTVar False
@@ -522,6 +541,7 @@ finishRead runtime owner@ReadOwner {command, result} ticket completed = do
           ReadVersion -> void (evaluate value)
           ReadTopology -> void (evaluate (force value))
           ReadEntityField _ -> void (evaluate (force value))
+          ReadGraph _ -> void (evaluate (force value))
         left <- remaining owner
         atomically $ do
           when (left == 0) $ do
@@ -541,31 +561,30 @@ decodeRead :: ReadCommand value -> F.Nonce -> P.Completion -> Either SomeExcepti
 decodeRead command nonce completed
   | completed.exit /= Just (N.Exited 0) = Left (toException (ReadExit completed.exit))
   | not (Bytes.null completed.errors) = Left (toException (ReadStderr (Bytes.length completed.errors)))
-  | otherwise = do
-      let bound = case command of
-            ReadPid -> 32
-            ReadVersion -> 64
-            ReadTopology -> 1048576
-            ReadEntityField _ -> 1048576
-          decoder = case command of
-            ReadEntityField _ -> F.decodeEscapedScalar
-            _ -> F.decodeScalar
-      bytes <- either (Left . toException . InvalidReadFrame) Right (decoder nonce bound completed.output)
-      case command of
-        ReadPid -> case Ascii.readInteger bytes of
+  | otherwise = case command of
+      ReadPid -> do
+        bytes <- scalar F.decodeScalar 32
+        case Ascii.readInteger bytes of
           Just (pid, "") | Bytes.length bytes <= 10 && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
               && pid > 0 && pid <= toInteger (maxBound @CInt) -> Right $! pid
           _ -> Left (toException InvalidServerPid)
-        ReadVersion -> do
-          text <- either (const (Left (toException InvalidVersionEncoding))) Right (Utf8.decodeUtf8' bytes)
-          case Version.parseVersion text of
-            Left problem -> Left (toException (InvalidServerVersion problem))
-            Right version -> Right $! version
-        ReadTopology -> Right bytes
-        ReadEntityField field ->
-          let (target, _, _) = entityField field in
-          maybe (Left (toException InvalidEntityReceipt)) (Right . Bytes.copy)
-            (Bytes.stripPrefix (target <> ":") bytes)
+      ReadVersion -> do
+        bytes <- scalar F.decodeScalar 64
+        text <- either (const (Left (toException InvalidVersionEncoding))) Right (Utf8.decodeUtf8' bytes)
+        case Version.parseVersion text of
+          Left problem -> Left (toException (InvalidServerVersion problem))
+          Right version -> Right $! version
+      ReadTopology -> scalar F.decodeScalar 1048576
+      ReadEntityField field -> do
+        bytes <- scalar F.decodeEscapedScalar 1048576
+        let (target, _, _) = entityField field
+        maybe (Left (toException InvalidEntityReceipt)) (Right . Bytes.copy)
+          (Bytes.stripPrefix (target <> ":") bytes)
+      ReadGraph generation -> either (Left . toException . InvalidRecordFrame) Right
+        (Record.decodeGraph generation nonce completed.output)
+  where
+    scalar decoder bound = either (Left . toException . InvalidReadFrame) Right
+      (decoder nonce bound completed.output)
 
 publishUnavailable :: ReadOwner -> SomeException -> STM ()
 publishUnavailable owner@ReadOwner {result} problem = do
