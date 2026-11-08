@@ -9,12 +9,14 @@ import Data.ByteString.Char8 qualified as Bytes
 import Data.ByteString.Lazy.Char8 qualified as Lazy
 import Data.IORef
 import Data.IntMap.Strict qualified as Map
+import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
 import GHC.Conc (BlockReason (BlockedOnSTM))
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Version qualified as Version
 import ProcessGate qualified as G
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString)
@@ -39,6 +41,22 @@ tests = testGroup "owned Runtime reads"
           length report.unresolved @?= 0
         atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
         pure (expected, immediate <> detached)
+      mapM_ (expectValue expected) detached
+      forM_ detached $ \request ->
+        atomically (R.readStatus request) >>= (@?= S.Status S.OperationComplete (Just S.Succeeded) False)
+
+  , testCase "typed server versions survive close and share the owned read lifecycle" $ do
+      (expected, detached) <- withRuntime P.normalFork $ \runtime client fixture -> do
+        expected <- serverVersion fixture
+        requests <- forM [R.ScalarRead, R.InspectionRead] $ \allocation -> do
+          request <- R.readServerVersion runtime client (Bytes.pack fixture.executable) allocation
+          expectValue expected request
+          pure request
+        atomically (R.inspect runtime) >>= \report -> do
+          length report.readWorkers @?= 0
+          length report.unresolved @?= 0
+        atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+        pure (expected, requests)
       mapM_ (expectValue expected) detached
       forM_ detached $ \request ->
         atomically (R.readStatus request) >>= (@?= S.Status S.OperationComplete (Just S.Succeeded) False)
@@ -85,7 +103,7 @@ tests = testGroup "owned Runtime reads"
             1000000 runtime client fixture R.InspectionRead
         flip finally (mapM_ G.releaseGate gates) $ do
           mapM_ G.awaitGate gates
-          cancelled <- start runtime client fixture R.InspectionRead
+          cancelled <- R.readServerVersion runtime client (Bytes.pack fixture.executable) R.InspectionRead
           R.cancelRead runtime cancelled
           R.awaitRead cancelled >>= \case
             R.ReadUnavailable S.NotDispatched (Just problem) ->
@@ -94,7 +112,8 @@ tests = testGroup "owned Runtime reads"
                 _ -> assertFailure "queued cancellation lost its cause"
             _ -> assertFailure "queued cancellation was not undispatched"
           atomically (R.inspect runtime >>= check . (== 4) . length . (.readWorkers))
-          queued <- startWith P.defaultHooks 50000 runtime client fixture R.InspectionRead
+          queued <- R.readServerVersionWith P.defaultHooks 50000 runtime client
+            (Bytes.pack fixture.executable) R.InspectionRead
           expectUnavailable S.NotDispatched queued
           atomically (R.readStatus queued) >>= \status -> status.retained @?= False
           atomically (R.usage runtime) >>= (@?= B.Usage True 1 4 (4 * (P.childBytes + P.retainedBytes)))
@@ -317,12 +336,19 @@ serverPid fixture = Fixture.command fixture ["display-message", "-p", "#{pid}"] 
     _ -> assertFailure "invalid independent PID receipt" >> pure 0
   other -> assertFailure ("independent PID receipt failed: " <> show other) >> pure 0
 
-expectValue :: Integer -> R.PidRead -> Assertion
+serverVersion :: Fixture.Fixture -> IO Version.TmuxVersion
+serverVersion fixture = Fixture.command fixture ["-V"] >>= \case
+  (ExitSuccess, output, "") -> do
+    text <- either throwIO pure (Utf8.decodeUtf8' (Lazy.toStrict output))
+    either (throwIO . userError . show) pure (Version.parseVersion text)
+  other -> throwIO (userError ("independent version receipt failed: " <> show other))
+
+expectValue :: (Eq value, Show value) => value -> R.Request value -> Assertion
 expectValue expected request = R.awaitRead request >>= \case
   R.ReadValue actual -> actual @?= expected
-  other -> assertFailure ("expected a verified PID: " <> show other)
+  other -> assertFailure ("expected a verified value: " <> show other)
 
-expectUnavailable :: S.Outcome -> R.PidRead -> Assertion
+expectUnavailable :: Show value => S.Outcome -> R.Request value -> Assertion
 expectUnavailable expected request = R.awaitRead request >>= \case
   R.ReadUnavailable actual _ -> actual @?= expected
   other -> assertFailure ("expected an unavailable request: " <> show other)

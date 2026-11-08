@@ -113,7 +113,7 @@ attempt. Supervisor allocation failure closes admission, reports the
 exception and leaves owners available for retry. The Runtime retains only
 the current attempt's completion latch.
 
-This ownership layer is private. The fixed PID read below binds logical and
+This ownership layer is private. The fixed server reads below bind logical and
 physical ownership. Other command bindings, capture and subscription consumers
 remain unimplemented. Physical shutdown does not resolve logical unknown
 outcomes or establish completion of a daemon job.
@@ -151,13 +151,21 @@ completion evidence and does not implement the Runtime's shutdown phases.
 The [scheduler tests](../../test/SchedulerTest.hs) qualify these state
 transitions separately from the native process tests below.
 
-## Framed PID read ownership
+## Framed server read ownership
 
-The private Runtime binds one fixed operation: a fresh server-PID read through
-the adopted socket pin. Success requires a fresh nonce frame, checked positive
-PID, empty stderr and successful command-client exit. Extra hook output is a
-protocol failure. This receipt establishes that read's result; it does not
-establish completion of arbitrary daemon work.
+The private Runtime observes server PIDs and stable release identities through
+the adopted socket pin. An opaque `Request value` retains the decoded result's
+type. A closed GADT pairs each fixed format with that type; the owned registry
+retains the witness without a cast or an arbitrary decoder callback.
+
+Success requires a fresh nonce frame, empty stderr and successful command-client
+exit. PID decoding retains its 32-byte bound and checked positive process-ID
+domain. Version decoding accepts at most 64 bytes, requires valid UTF-8 and
+uses the existing [version parser](../../src/LibTmux/Version.hs). Stable-version
+observation is separate from minimum-version admission and feature capability
+checks. Decoded values are forced before the read envelope is released.
+Extra hook output is a protocol failure. A receipt establishes that read's
+result; it does not establish completion of arbitrary daemon work.
 
 Each admitted read reserves a parent byte envelope and registers its owner
 before copying or forking. The matching inspection class reserves both the

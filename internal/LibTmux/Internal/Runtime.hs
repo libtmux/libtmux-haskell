@@ -5,14 +5,15 @@
 -- adoption can create filesystem names. Failed or cancelled adoption leaves
 -- cleanup owned here. 'inspect' retires only successfully cleaned entries;
 -- 'awaitCleanup' may wait without a deadline. 'shutdown' bounds its two
--- observation phases while retaining incomplete cleanup. Fixed framed PID
+-- observation phases while retaining incomplete cleanup. Typed framed server
 -- reads bind logical admission and deadlines to native ownership. Other
 -- command bindings and the public Client remain unfinished.
 module LibTmux.Internal.Runtime
   ( Runtime, Client, Report (..), newRuntime, adopt, adoptWith
   , clientPool, clientPin, usage, inspect, closeClient, requestClose, awaitCleanup, shutdown
-  , PidRead, ReadClass (..), ReadResult (..), ReadError (..)
+  , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
+  , readServerVersion, readServerVersionWith
   , cancelRead, detachOperation
   ) where
 
@@ -25,6 +26,7 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.IntMap.Strict qualified as Map
 import Data.Maybe (catMaybes)
+import Data.Text.Encoding qualified as Utf8
 import Data.Word (Word64)
 import Foreign.C.Types (CInt)
 import GHC.Clock (getMonotonicTimeNSec)
@@ -35,6 +37,7 @@ import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin
+import LibTmux.Version qualified as Version
 import System.Timeout (timeout)
 
 data Runtime = Runtime
@@ -59,26 +62,42 @@ data Report = Report
 data ReadClass = InspectionRead | ScalarRead
   deriving stock (Eq, Show)
 
--- The handle has no reference to its Runtime, Client, Ticket or input buffers.
-data PidRead = PidRead !S.Operation !(TMVar ReadResult)
-data ReadResult = ReadValue !Integer | ReadUnavailable !S.Outcome !(Maybe SomeException)
+-- | A typed observation handle with no reference to its t'Runtime', t'Client',
+-- native ticket or input buffers. 'awaitRead' also works after cleanup.
+data Request value = Request !S.Operation !(TMVar (ReadResult value))
+-- | A checked positive server PID, observed by 'readServerPid'.
+type PidRead = Request Integer
+-- | A stable release identity, observed by 'readServerVersion'.
+type VersionRead = Request Version.TmuxVersion
+
+data ReadResult value = ReadValue !value | ReadUnavailable !S.Outcome !(Maybe SomeException)
   deriving stock (Show)
+
+-- Pair each fixed wire format with its decoded result type.
+data ReadCommand value where
+  ReadPid :: ReadCommand Integer
+  ReadVersion :: ReadCommand Version.TmuxVersion
 
 data ReadError
   = ForeignClient | InvalidReadDeadline !Int | ReadClockOverflow
   | ReadExpired | ReadCancelled | ReadClosing
   | InvalidReadFrame !F.FrameError | InvalidServerPid
+  | InvalidVersionEncoding | InvalidServerVersion !Version.VersionError
   | ReadExit !(Maybe N.Exit) | ReadStderr !Int
   deriving stock (Eq, Show)
 instance Exception ReadError
 
 data Submission = NotSubmitted | Registering !P.Ticket | Submitted !P.Ticket | SubmissionRefused
-data ReadOwner = ReadOwner
-  { handle :: !PidRead, nonce :: !F.Nonce, deadline :: !Word64
-  , envelope :: !B.ByteLease, submission :: !(TVar Submission)
-  , cancelled :: !(TVar Bool), busy :: !(TVar Bool)
-  , failure :: !(TVar (Maybe SomeException))
-  }
+-- Retain the result's type witness until its worker releases ownership.
+data ReadOwner where
+  ReadOwner ::
+    { operation :: !S.Operation
+    , command :: !(ReadCommand value), result :: !(TMVar (ReadResult value))
+    , nonce :: !F.Nonce, deadline :: !Word64
+    , envelope :: !B.ByteLease, submission :: !(TVar Submission)
+    , cancelled :: !(TVar Bool), busy :: !(TVar Bool)
+    , failure :: !(TVar (Maybe SomeException))
+    } -> ReadOwner
 
 newRuntime :: P.Fork -> IO Runtime
 newRuntime forker = do
@@ -143,7 +162,7 @@ inspect runtime = do
   unresolved <- S.outstanding runtime.scheduler
   owners <- readTVar runtime.reads
   readWorkers <- forM owners $ \owner ->
-    (readOperation owner.handle,) <$> readTVar owner.failure
+    (owner.operation,) <$> readTVar owner.failure
   pure Report {accepting = current.accepting,
     pending = [(key, status) | (key, _, status, _) <- retained],
     closeFailures = catMaybes [fmap (key,) problem | (key, _, _, problem) <- retained],
@@ -173,7 +192,7 @@ requestClose runtime = mask_ $ do
     _ <- S.closeAdmission runtime.scheduler
     owners <- readTVar runtime.reads
     forM_ owners $ \owner -> do
-      state <- readStatus owner.handle
+      state <- S.status owner.operation
       when (state.outcome == Just S.NotDispatched) $
         publishUnavailable owner (toException ReadClosing)
     Map.elems <$> readTVar runtime.entries
@@ -251,16 +270,16 @@ shutdownPhases runtime = do
       report <- inspect runtime
       check (null report.pending && null report.readWorkers)
 
-readOperation :: PidRead -> S.Operation
-readOperation (PidRead operation _) = operation
+readOperation :: Request value -> S.Operation
+readOperation (Request operation _) = operation
 
-readStatus :: PidRead -> STM S.Status
+readStatus :: Request value -> STM S.Status
 readStatus = S.status . readOperation
 
 -- | Wait only for this read's first result. Caller cancellation changes no
 -- ownership. Use 'cancelRead' to request cancellation of the owned operation.
-awaitRead :: PidRead -> IO ReadResult
-awaitRead (PidRead _ result) = atomically (readTMVar result)
+awaitRead :: Request value -> IO (ReadResult value)
+awaitRead (Request _ result) = atomically (readTMVar result)
 
 -- | Acquire a fresh, nonce-framed PID using a one-second deadline. This fixed
 -- read is the first private logical/physical binding, not a raw command API.
@@ -270,7 +289,24 @@ readServerPid = readServerPidWith P.defaultHooks 1000000
 -- | Use existing process checkpoints and a checked 1..10000000 microsecond
 -- deadline. The same expiration governs queueing, submission and validation.
 readServerPidWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO PidRead
-readServerPidWith hooks duration runtime@Runtime {forker} client executable allocation = mask_ $ do
+readServerPidWith = startRead ReadPid
+
+-- | Observe a stable release identity through the pinned server. Use
+-- 'Version.requireSupported' separately for minimum-version admission;
+-- this observation establishes no feature capabilities.
+readServerVersion :: Runtime -> Client -> ByteString -> ReadClass -> IO VersionRead
+readServerVersion = readServerVersionWith P.defaultHooks 1000000
+
+-- | The same owned deadline and checkpoints as 'readServerPidWith'.
+readServerVersionWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO VersionRead
+readServerVersionWith = startRead ReadVersion
+
+commandFormat :: ReadCommand value -> ByteString
+commandFormat ReadPid = "#{pid}"
+commandFormat ReadVersion = "#{version}"
+
+startRead :: ReadCommand value -> P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request value)
+startRead command hooks duration runtime@Runtime {forker} client executable allocation = mask_ $ do
   let pool = clientPool client
   unless (pool.budget == runtime.budget) (throwIO ForeignClient)
   when (duration < 1 || duration > 10000000) (throwIO (InvalidReadDeadline duration))
@@ -280,7 +316,7 @@ readServerPidWith hooks duration runtime@Runtime {forker} client executable allo
         [Bytes.index hex (fromIntegral (shiftR byte 4)),
          Bytes.index hex (fromIntegral (byte .&. 15))]) (Bytes.unpack token))
   nonce <- either (throwIO . InvalidReadFrame) pure (F.parseNonce encoded)
-  let format = F.scalarFormat nonce "#{pid}"
+  let format = F.scalarFormat nonce (commandFormat command)
       spec = N.spec executable [executable, "-u", "-N", "-S", pinPath (clientPin client),
         "display-message", "-p", "-F", format]
       (lane, resourceClass) = case allocation of
@@ -290,19 +326,19 @@ readServerPidWith hooks duration runtime@Runtime {forker} client executable allo
   now <- getMonotonicTimeNSec
   let delta = fromIntegral duration * 1000
   when (now > maxBound - delta) (throwIO ReadClockOverflow)
-  owner <- atomically $ do
+  (owner, request) <- atomically $ do
     readTVar pool.closing >>= flip when (throwSTM P.PoolClosed)
     operation <- S.admit runtime.scheduler lane
     envelope <- B.acquireBytes runtime.budget resourceClass P.retainedBytes
-    readHandle <- PidRead operation <$> newEmptyTMVar
+    result <- newEmptyTMVar
     submission <- newTVar NotSubmitted
     cancelled <- newTVar False
     busy <- newTVar True
     failure <- newTVar Nothing
-    let owner = ReadOwner {handle = readHandle, nonce, deadline = now + delta, envelope,
+    let owner = ReadOwner {operation, command, result, nonce, deadline = now + delta, envelope,
           submission, cancelled, busy, failure}
     modifyTVar' runtime.reads (<> [owner])
-    pure owner
+    pure (owner, Request operation result)
   allocated <- try @SomeException $ do
     copied <- N.copySpec spec
     void (forker (\unmask -> readWorker unmask runtime owner
@@ -311,7 +347,7 @@ readServerPidWith hooks duration runtime@Runtime {forker} client executable allo
     Left problem -> do
       atomically (retireRefusal runtime owner problem)
       throwIO problem
-    Right () -> pure owner.handle
+    Right () -> pure request
 
 remaining :: ReadOwner -> IO Int
 remaining owner = do
@@ -322,11 +358,11 @@ remaining owner = do
 
 claimRead :: Runtime -> ReadOwner -> STM Bool
 claimRead runtime owner = do
-  state <- readStatus owner.handle
+  state <- S.status owner.operation
   if not state.retained then pure False else
     S.claim runtime.scheduler >>= \case
       Nothing -> pure False
-      Just selected -> check (selected == readOperation owner.handle) >> pure True
+      Just selected -> check (selected == owner.operation) >> pure True
 
 readAction :: (forall a. IO a -> IO a) -> Runtime -> ReadOwner -> P.Pool -> B.Class -> P.Hooks -> N.Spec -> IO ()
 readAction unmask runtime owner pool resourceClass hooks spec = do
@@ -367,9 +403,9 @@ readWorker unmask runtime owner action = mask_ $ do
     Right () -> pure ()
     Left problem -> do
       atomically $ do
-        state <- readStatus owner.handle
-        if state.stage == S.Queued then void (S.cancelQueued runtime.scheduler (readOperation owner.handle))
-          else void (S.markUnknown runtime.scheduler (readOperation owner.handle))
+        state <- S.status owner.operation
+        if state.stage == S.Queued then void (S.cancelQueued runtime.scheduler owner.operation)
+          else void (S.markUnknown runtime.scheduler owner.operation)
         publishUnavailable owner problem
       recoverRead unmask runtime owner
 
@@ -397,7 +433,7 @@ resumeRead runtime@Runtime {forker} owner = mask_ $ do
   claimed <- atomically $ do
     owners <- readTVar runtime.reads
     running <- readTVar owner.busy
-    if running || not (any ((== readOperation owner.handle) . readOperation . (.handle)) owners)
+    if running || not (any ((== owner.operation) . (.operation)) owners)
       then pure False else do
         writeTVar owner.busy True
         writeTVar owner.failure Nothing
@@ -420,56 +456,62 @@ submittedTicket (Submitted ticket) = Just ticket
 submittedTicket _ = Nothing
 
 finishRead :: Runtime -> ReadOwner -> P.Ticket -> Either SomeException P.Completion -> IO ()
-finishRead runtime owner ticket completed = do
+finishRead runtime owner@ReadOwner {command, result} ticket completed = do
   evidence <- atomically (tryReadTMVar ticket.launchEvidence)
   case evidence of
     Just (P.LaunchRefused problem) ->
       atomically (retireRefusal runtime owner (either id (const (toException problem)) completed))
-    _ -> case completed >>= decodePid owner.nonce of
+    _ -> case completed >>= decodeRead command owner.nonce of
       Left problem -> atomically $ do
-        void (S.markUnknown runtime.scheduler (readOperation owner.handle))
+        void (S.markUnknown runtime.scheduler owner.operation)
         publishUnavailable owner problem
         releaseRead runtime owner
-      Right pid -> do
+      Right value -> do
         left <- remaining owner
         atomically $ do
           when (left == 0) $ do
-            void (S.markUnknown runtime.scheduler (readOperation owner.handle))
+            void (S.markUnknown runtime.scheduler owner.operation)
             publishUnavailable owner (toException ReadExpired)
-          let operation = readOperation owner.handle
+          let operation = owner.operation
           S.markDispatched runtime.scheduler operation
           S.markResponseClosed runtime.scheduler operation
           void (S.finish runtime.scheduler operation S.Success)
           state <- S.status operation
           case state.outcome of
-            Just S.Succeeded -> case owner.handle of
-              PidRead _ result -> void (tryPutTMVar result (ReadValue pid))
+            Just S.Succeeded -> void (tryPutTMVar result (ReadValue value))
             _ -> pure ()
           releaseRead runtime owner
 
-decodePid :: F.Nonce -> P.Completion -> Either SomeException Integer
-decodePid nonce completed
+decodeRead :: ReadCommand value -> F.Nonce -> P.Completion -> Either SomeException value
+decodeRead command nonce completed
   | completed.exit /= Just (N.Exited 0) = Left (toException (ReadExit completed.exit))
   | not (Bytes.null completed.errors) = Left (toException (ReadStderr (Bytes.length completed.errors)))
   | otherwise = do
-      bytes <- either (Left . toException . InvalidReadFrame) Right (F.decodeScalar nonce 32 completed.output)
-      case Ascii.readInteger bytes of
-        Just (pid, "") | Bytes.length bytes <= 10 && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
-            && pid > 0 && pid <= toInteger (maxBound @CInt) -> Right $! pid
-        _ -> Left (toException InvalidServerPid)
+      let bound = case command of ReadPid -> 32; ReadVersion -> 64
+      bytes <- either (Left . toException . InvalidReadFrame) Right (F.decodeScalar nonce bound completed.output)
+      case command of
+        ReadPid -> case Ascii.readInteger bytes of
+          Just (pid, "") | Bytes.length bytes <= 10 && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
+              && pid > 0 && pid <= toInteger (maxBound @CInt) -> Right $! pid
+          _ -> Left (toException InvalidServerPid)
+        ReadVersion -> do
+          text <- either (const (Left (toException InvalidVersionEncoding))) Right (Utf8.decodeUtf8' bytes)
+          case Version.parseVersion text of
+            Left problem -> Left (toException (InvalidServerVersion problem))
+            Right version -> Right $! version
 
 publishUnavailable :: ReadOwner -> SomeException -> STM ()
-publishUnavailable owner problem = do
-  state <- readStatus owner.handle
-  case (owner.handle, state.outcome) of
-    (PidRead _ result, Just outcome) -> void (tryPutTMVar result (ReadUnavailable outcome (Just problem)))
+publishUnavailable owner@ReadOwner {result} problem = do
+  state <- S.status owner.operation
+  case state.outcome of
+    Just outcome -> void (tryPutTMVar result (ReadUnavailable outcome (Just problem)))
     _ -> pure ()
 
 retireRefusal :: Runtime -> ReadOwner -> SomeException -> STM ()
 retireRefusal runtime owner problem = do
-  state <- readStatus owner.handle
-  if state.stage == S.Queued then void (S.cancelQueued runtime.scheduler (readOperation owner.handle))
-    else void (S.refuseBeforeBirth runtime.scheduler (readOperation owner.handle))
+  state <- S.status owner.operation
+  if state.stage == S.Queued then void (S.cancelQueued runtime.scheduler owner.operation)
+    else void (S.refuseBeforeBirth runtime.scheduler owner.operation)
   publishUnavailable owner problem
   releaseRead runtime owner
 
@@ -478,15 +520,15 @@ releaseRead runtime owner = do
   writeTVar owner.submission NotSubmitted
   writeTVar owner.busy False
   B.releaseBytes owner.envelope
-  modifyTVar' runtime.reads (filter ((/= readOperation owner.handle) . readOperation . (.handle)))
+  modifyTVar' runtime.reads (filter ((/= owner.operation) . (.operation)))
 
 -- | Publish cancellation intent without claiming the external command stopped.
 -- Cancelling an ordinary 'awaitRead' waiter does not invoke this operation.
-cancelRead :: Runtime -> PidRead -> IO ()
+cancelRead :: Runtime -> Request value -> IO ()
 cancelRead runtime request = atomically $ do
   _ <- S.cancelQueued runtime.scheduler (readOperation request)
   owners <- readTVar runtime.reads
-  forM_ (filter ((== readOperation request) . readOperation . (.handle)) owners)
+  forM_ (filter ((== readOperation request) . (.operation)) owners)
     (cancelOwnerSTM runtime ReadCancelled)
 
 cancelOwner :: Runtime -> ReadError -> ReadOwner -> IO ()
@@ -494,8 +536,8 @@ cancelOwner runtime reason owner = atomically (cancelOwnerSTM runtime reason own
 
 cancelOwnerSTM :: Runtime -> ReadError -> ReadOwner -> STM ()
 cancelOwnerSTM runtime reason owner = do
-  void (S.cancelQueued runtime.scheduler (readOperation owner.handle))
-  void (S.markUnknown runtime.scheduler (readOperation owner.handle))
+  void (S.cancelQueued runtime.scheduler owner.operation)
+  void (S.markUnknown runtime.scheduler owner.operation)
   publishUnavailable owner (toException reason)
   writeTVar owner.cancelled True
   readTVar owner.submission >>= mapM_ (\ticket -> writeTVar ticket.cancelled True) . submittedTicket
