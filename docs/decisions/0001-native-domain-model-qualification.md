@@ -48,8 +48,11 @@ Sources: [tmux 3.4 output conversion][print], [3.4 dollar escapes][dollar],
 
 ## Superseded recommendations
 
-Per-field capture remains a comparison implementation with known byte and
-coherence defects. It cannot serve as an unconditional correctness oracle.
+Per-field capture remains a comparison implementation with scalar tearing
+and strict Text conversion limits. It cannot serve as an unconditional
+correctness oracle. The private scalar transport now preserves the observed
+bytes under the qualified profiles below; field-specific public values remain
+unimplemented.
 Qualify batching before choosing parallel hydration. One child does not remove
 payload, deadline or ownership limits, and one expansion does not promise a
 globally atomic snapshot. Preserve unknown logical work until a separate
@@ -61,12 +64,39 @@ Num or writable value fields. GHC compatibility expansion remains excluded.
 Existing indexed lookups and NFData forcing already address those review
 requests; the remaining issue is public consumer qualification.
 
+## Native scalar qualification, 2026-11-08
+
+The private [frame decoder](../../internal/LibTmux/Internal/Frame.hs) now
+protects literal backslashes and validates octal, C-style and dollar escapes.
+[Runtime](../../internal/LibTmux/Internal/Runtime.hs) uses it for entity
+fields and checks the decoded target receipt. Numeric topology and version
+reads retain their raw-frame decoder. Encoded stdout and decoded payload have
+separate limits; the process reservations are unchanged.
+
+The [live scalar tests](../../test/integration/FrameIntegrationTest.hs) passed
+on every required release under C and C.UTF-8 locales with explicit UTF-8
+clients. Each cell round-trips 73 fixed/seeded non-NUL values and three actual
+byte-path fixtures. These are bounded samples, not an exhaustive byte-string
+proof. Pure properties cover generated octal payloads; targeted cases reject
+malformed escapes, encoded NUL and decoded nonce collisions. The live hook
+test still rejects extra output. The test fixture observes additional pane
+exit even when its callback throws cancellation at entry.
+
+The locale matrix took 13.95 seconds including startup and cleanup. The full
+integration matrix at one and two runtime capabilities, type contracts,
+package checks, Haddock and source-archive consumer completed in 133.39
+seconds. These are verification timings under the shared resource limiter,
+not capture benchmarks. Cached executable hashes and command logs accompany
+the research evidence. Other locales and libbsd-linked builds remain
+unqualified. This result does not qualify complete record framing, a public
+capture consumer or cancellation during an accepted capture read.
+
 ## Remaining gates
 
-- Qualify the Haskell escape decoder and complete record framing on every
-  required release, with bounded input, malformed escapes, nonce collisions,
-  extra hook output, actual target receipts and non-UTF-8 paths. Record the
-  supported locale/build profile rather than extrapolating from one build.
+- Qualify complete record framing on every required release, preserving the
+  scalar byte, limit, target and hook checks above. Cover exact field order,
+  duplicate links, empty results and client acquisition. Record the supported
+  locale/build profile rather than extrapolating from one build.
 - Acquire ServerInfo and attached clients and separate private topology rows
   from hydrated records. Define repeated-link consistency, upstream field
   normalization, empty-server behavior and complete-profile coverage.

@@ -73,7 +73,12 @@ The [workflow](../.github/workflows/ci.yml) checks only the selected modern
 compiler. It runs specifications, properties, public type contracts, package
 metadata, Haddock and an isolated archive consumer. Each required tmux release
 then runs the integration subset with one and two RTS capabilities on its
-own runner. The final
+own runner under `C.UTF-8`. Scalar framing also runs under `C`: raw native
+arguments store invalid bytes and literal escape sequences in owned options,
+then compare decoded output with the original fixed and seeded values.
+The checks include tmux 3.4 dollar escaping and the Runtime's entity-field
+binding. tmux's command-input normalization remains separate from output
+decoding. The final
 `required` job fails if any planned job fails, cancels or skips.
 
 Cabal caches contain the dependency store and package index. tmux cache keys

@@ -52,6 +52,14 @@ tests = testGroup "owned tmux fixture"
   , testCase "cancellation before dispatch stops the owned daemon" (cancelDuringStartup False)
   , testCase "cancellation before pane tracking observes the original pane exit" (cancelDuringStartup True)
   , testCase "cancellation while session creation waits in its hook retires the original pane" cancelPendingCreation
+  , testCase "tracked pane teardown survives cancellation at callback entry" $
+      withFixture $ \fixture -> do
+        (code, pid, errors) <- command fixture
+          ["new-window", "-d", "-t", "fixture:1", "-P", "-F", "#{pane_pid}", "/bin/cat", "-"]
+        (code, errors) @?= (ExitSuccess, "")
+        let teardown = command fixture ["kill-window", "-t", "fixture:1"] >>= (@?= (ExitSuccess, "", ""))
+        result <- try @AsyncCancelled (withTrackedPane pid teardown (throwIO AsyncCancelled))
+        result @?= Left @AsyncCancelled @() AsyncCancelled
   ]
 
 cancelDuringStartup :: Bool -> IO ()

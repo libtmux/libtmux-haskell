@@ -1,4 +1,4 @@
-module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, command, registerPane) where
+module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, command, registerPane, withTrackedPane) where
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Exception (bracket, finally, mask_, throwIO)
@@ -100,16 +100,25 @@ registerPane tracked output = case reads (Bytes.unpack output) :: [(Integer, Str
     writeIORef tracked (Just fd)
   _ -> throwIO (userError "fixture returned an invalid pane PID")
 
+-- | Watch an additional owned pane and end it before observing exit.
+-- The release action owns window/daemon teardown, even if the body never runs.
+withTrackedPane :: ByteString -> IO () -> IO a -> IO a
+withTrackedPane receipt teardown action = do
+  observed <- newIORef False
+  bracket (newIORef Nothing) (\tracked -> teardown `finally` finishPane observed tracked) $ \tracked -> do
+    registerPane tracked receipt
+    action
+
 finishPane :: IORef Bool -> IORef (Maybe Fd) -> IO ()
 finishPane observed tracked = readIORef tracked >>= \case
   Nothing -> pure ()
   Just fd -> finally (observeExit fd) (closeFd fd)
   where
     observeExit fd = do
-      -- The daemon scope has already ended. This descriptor is never used to signal.
+      -- Window or daemon teardown precedes this wait. Never signal through a PID.
       timeout 1000000 (threadWaitRead fd) >>= \case
         Just () -> writeIORef observed True
-        Nothing -> throwIO (userError "fixture initial pane did not exit within one second")
+        Nothing -> throwIO (userError "fixture tracked pane did not exit within one second")
 
 waitReady :: Fd -> IO ()
 waitReady fd@(Fd raw) = do

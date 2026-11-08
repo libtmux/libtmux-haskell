@@ -332,14 +332,14 @@ commandFormat ReadPid = "#{pid}"
 commandFormat ReadVersion = "#{version}"
 commandFormat ReadTopology = Topology.topologyFormat
 commandFormat (ReadEntityField field) = let (_, receipt, value) = entityField field in
-  receipt <> ":" <> value
+  receipt <> ":" <> F.escapedFieldFormat value
 
 entityField :: EntityField -> (ByteString, ByteString, ByteString)
-entityField (SessionName ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident), "#{session_id}", "#{session_name}")
-entityField (WindowName ident) = (Utf8.encodeUtf8 (Id.renderWindowId ident), "#{window_id}", "#{window_name}")
-entityField (PaneTitle ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "#{pane_title}")
-entityField (PaneCommand ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "#{pane_current_command}")
-entityField (PanePath ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "#{pane_current_path}")
+entityField (SessionName ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident), "#{session_id}", "session_name")
+entityField (WindowName ident) = (Utf8.encodeUtf8 (Id.renderWindowId ident), "#{window_id}", "window_name")
+entityField (PaneTitle ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "pane_title")
+entityField (PaneCommand ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "pane_current_command")
+entityField (PanePath ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident), "#{pane_id}", "pane_current_path")
 
 commandTarget :: ReadCommand value -> [ByteString]
 commandTarget (ReadEntityField field) = let (target, _, _) = entityField field in ["-t", target]
@@ -538,7 +538,10 @@ decodeRead command nonce completed
             ReadVersion -> 64
             ReadTopology -> 1048576
             ReadEntityField _ -> 1048576
-      bytes <- either (Left . toException . InvalidReadFrame) Right (F.decodeScalar nonce bound completed.output)
+          decoder = case command of
+            ReadEntityField _ -> F.decodeEscapedScalar
+            _ -> F.decodeScalar
+      bytes <- either (Left . toException . InvalidReadFrame) Right (decoder nonce bound completed.output)
       case command of
         ReadPid -> case Ascii.readInteger bytes of
           Just (pid, "") | Bytes.length bytes <= 10 && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
