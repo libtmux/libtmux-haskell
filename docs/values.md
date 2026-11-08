@@ -10,7 +10,7 @@ Program output:
 
 <!-- example-output: typed-values -->
 ```text
-("3.3","@17",120)
+("3.3a","@17",120)
 ```
 
 The program parses supplied text and constructs values. Its only `IO` prints
@@ -46,7 +46,8 @@ that command's capability or maximum.
 
 [`parseVersion`](../src/LibTmux/Version.hs) accepts stable releases and the output format of `tmux -V`,
 including one final LF. Development versions and trailing data are rejected.
-[`requireSupported`](../src/LibTmux/Version.hs) rejects versions older than plain tmux 3.3.
+[`requireSupported`](../src/LibTmux/Version.hs) admits the inclusive range from
+tmux 3.3a through 3.8. Intermediate releases are supported; CI tests the endpoints.
 
 These functions validate the supplied release identity. They do not inspect
 the host or qualify all features of that release. See

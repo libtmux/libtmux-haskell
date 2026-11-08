@@ -35,6 +35,8 @@ extra-doc-files:
   docs/values.md
   docs/api.md
   docs/status.md
+  docs/decisions/0001-native-domain-model.md
+  docs/decisions/0001-native-domain-model-qualification.md
   docs/contracts/README.md
   docs/contracts/environment.md
   docs/contracts/observations.md
@@ -91,7 +93,7 @@ library
   import: modern
   hs-source-dirs: src internal
   exposed-modules: LibTmux.Id LibTmux.Value LibTmux.Version
-  other-modules: LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -105,6 +107,7 @@ library
     deepseq >=1.5.1 && <1.6,
     directory >=1.3.10 && <1.4,
     filepath >=1.5.4 && <1.6,
+    os-string >=2.0.8 && <2.1,
     stm >=2.5.3 && <2.6,
     text >=2.1.3 && <2.2,
     time >=1.15 && <1.16,
@@ -128,7 +131,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: SchedulerTest BudgetTest FrameTest GraphTest GraphProperties LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.Graph
+  other-modules: RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
@@ -136,6 +139,8 @@ test-suite unit
     bytestring >=0.12.2 && <0.13,
     containers >=0.8 && <0.9,
     deepseq >=1.5.1 && <1.6,
+    filepath >=1.5.4 && <1.6,
+    os-string >=2.0.8 && <2.1,
     stm >=2.5.3 && <2.6,
     tasty >=1.5.5 && <1.6,
     tasty-hunit >=0.10.2 && <0.11,
@@ -148,7 +153,7 @@ test-suite integration
   type: exitcode-stdio-1.0
   hs-source-dirs: test/integration test-support internal
   main-is: Main.hs
-  other-modules: LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: EntityCaptureTest LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: test-support/fixture-watch.c test-support/process-gate.c cbits/process.c
   include-dirs: cbits
   extra-libraries: dl
@@ -170,4 +175,5 @@ test-suite integration
     tasty-hunit >=0.10.2 && <0.11,
     text >=2.1.3 && <2.2,
     typed-process >=0.2.13 && <0.3,
+    QuickCheck >=2.19 && <2.20,
     unix >=2.8.8 && <2.9

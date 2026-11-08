@@ -1,3 +1,7 @@
+-- | Detached physical entities, contextual links and validated graph indexes.
+--
+-- Window labels use 'TmuxText'; process names and paths preserve POSIX bytes.
+-- Reading an observation or navigating the graph performs no IO.
 module LibTmux.Internal.Graph
   ( EndpointIdentity (..), Generation (..)
   , SessionRef (..), WindowRef (..), PaneRef (..)
@@ -5,6 +9,8 @@ module LibTmux.Internal.Graph
   , EntityGraph, GraphError (..), assembleEntityGraph
   , graphSessions, graphWindows, graphPanes, graphLinks, graphOccurrences
   , lookupSession, lookupWindow, lookupPane, linksForSession, panesForWindow
+  , ServerInfo (..), Client (..), ClientAttachment (..), ClientInput (..)
+  , Snapshot, serverInfo, entities, clients, assembleSnapshot
   ) where
 
 import Control.DeepSeq (NFData (rnf), deepseq)
@@ -16,9 +22,15 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
+import Foreign.C.Types (CInt)
 import GHC.Generics (Generic)
 import LibTmux.Id (PaneId, SessionId, WindowId)
+import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Value (Dimension, PaneIndex, WindowIndex)
+import LibTmux.Version qualified as Version
+import System.OsPath.Posix (PosixPath)
+import System.OsString.Posix (PosixString)
+import System.OsString.Posix qualified as Os
 
 data EndpointIdentity = EndpointIdentity !Integer !Integer
   deriving stock (Eq, Ord, Show)
@@ -55,7 +67,7 @@ instance NFData Session
 
 data Window = Window
   { ref :: !WindowRef
-  , name :: !Text
+  , name :: !TmuxText -- ^ Reported bytes, including non-text names on older tmux.
   , width :: !Dimension
   , height :: !Dimension
   }
@@ -71,8 +83,8 @@ data Pane = Pane
   , active :: !Bool
   , dead :: !Bool
   , title :: !Text
-  , currentCommand :: !Text
-  , currentPath :: !ByteString
+  , currentCommand :: !PosixString -- ^ Reported process name; tmux may normalize it.
+  , currentPath :: !PosixPath -- ^ Endpoint data, without local path interpretation.
   }
   deriving stock (Eq, Show, Generic)
 instance NFData Pane
@@ -92,6 +104,69 @@ data PaneOccurrence = PaneOccurrence
   }
   deriving stock (Eq, Show, Generic)
 instance NFData PaneOccurrence
+
+-- | Reported daemon metadata within one adopted generation. PID and start
+-- time are observations; they do not grant signal authority or durable identity.
+data ServerInfo = ServerInfo
+  { generation :: !Generation
+  , pid :: !Integer
+  , startedAt :: !Integer
+  , version :: !Version.TmuxVersion
+  , socketPath :: !PosixPath
+  }
+  deriving stock (Eq, Show)
+instance NFData ServerInfo where
+  rnf (ServerInfo generation pid startedAt version socketPath) = rnf generation
+    `seq` rnf pid `seq` rnf startedAt `seq` rnf (Version.renderVersion version) `seq` rnf socketPath
+
+-- | An attachment contains this capture's values. It never resolves a retained
+-- client name against a later capture. The pane is the session window's global
+-- active pane, not an independent client focus; its link retains session context.
+data ClientAttachment = ClientAttachment
+  { session :: !Session
+  , window :: !Window
+  , pane :: !PaneOccurrence
+  }
+  deriving stock (Eq, Show, Generic)
+instance NFData ClientAttachment
+
+-- | A detached client observation, not an operational connection or live ref.
+-- The live profile lists attached clients; an offline value may be unattached.
+data Client = Client
+  { name :: !PosixString
+  , pid :: !Integer
+  , tty :: !(Maybe PosixPath)
+  , attachment :: !(Maybe ClientAttachment)
+  }
+  deriving stock (Eq, Show, Generic)
+instance NFData Client
+
+-- Required native context from the attached-only listing, before graph lookup.
+data ClientInput = ClientInput
+  { name :: !PosixString
+  , pid :: !Integer
+  , tty :: !(Maybe PosixPath)
+  , session :: !SessionId
+  , window :: !WindowId
+  , index :: !WindowIndex
+  , pane :: !PaneId
+  }
+
+-- | The finite private profile: metadata, physical graph and attached listing.
+-- Assembly validates every join and owns all values before returning.
+data Snapshot = Snapshot !ServerInfo !EntityGraph ![Client]
+  deriving stock (Eq, Show)
+instance NFData Snapshot where
+  rnf (Snapshot info graph rows) = rnf info `seq` rnf graph `seq` rnf rows
+
+serverInfo :: Snapshot -> ServerInfo
+serverInfo (Snapshot info _ _) = info
+
+entities :: Snapshot -> EntityGraph
+entities (Snapshot _ graph _) = graph
+
+clients :: Snapshot -> [Client]
+clients (Snapshot _ _ rows) = rows
 
 data EntityGraph = EntityGraph
   { generation :: !Generation
@@ -123,6 +198,10 @@ data GraphError
   | InvalidSessionSelection !SessionRef !Int
   | InvalidPaneSelection !WindowRef !Int
   | UnlinkedWindow !WindowRef
+  | InvalidServerInfo
+  | InvalidClientMetadata
+  | MissingClientLink !SessionRef !WindowIndex
+  | ChangedClientAttachment
   deriving stock (Eq, Show)
 
 assembleEntityGraph
@@ -228,3 +307,32 @@ panesForWindow :: EntityGraph -> WindowRef -> Either GraphError [Pane]
 panesForWindow graph ref = do
   _ <- lookupWindow graph ref
   pure (Map.findWithDefault [] ref graph.windowPanes)
+
+-- | Resolve the attached listing against its captured graph. A detached Client
+-- keeps the resolved observations even after later selection or name reuse.
+-- Session attached counts and listing cardinality have different tmux rules;
+-- neither is reconstructed from the other.
+assembleSnapshot :: ServerInfo -> EntityGraph -> [ClientInput] -> Either GraphError Snapshot
+assembleSnapshot info graph inputs = do
+  unless (info.generation == graph.generation) (Left ForeignGeneration)
+  unless (positivePid info.pid && info.startedAt >= 0 && info.startedAt <= 9223372036854775807
+    && validString info.socketPath && not (Os.null info.socketPath)
+    && either (const False) (const True) (Version.requireSupported info.version)) (Left InvalidServerInfo)
+  rows <- mapM hydrate inputs
+  let snapshot = Snapshot info graph (sortOn (\row -> (row.name, row.pid)) rows)
+  snapshot `deepseq` Right snapshot
+  where
+    positivePid value = value > 0 && value <= toInteger (maxBound @CInt)
+    validString value = Os.length value <= 1048576 && not (any ((== '\NUL') . Os.toChar) (Os.unpack value))
+    hydrate input = do
+      unless (positivePid input.pid && validString input.name && not (Os.null input.name)
+        && maybe True (\path -> validString path && not (Os.null path)) input.tty) (Left InvalidClientMetadata)
+      session <- lookupSession graph (SessionRef graph.generation input.session)
+      window <- lookupWindow graph (WindowRef graph.generation input.window)
+      pane <- lookupPane graph (PaneRef graph.generation input.pane)
+      link <- maybe (Left (MissingClientLink session.ref input.index)) Right
+        (Map.lookup (session.ref, input.index) graph.links)
+      unless (link.window == window.ref && pane.window == window.ref && link.active && pane.active)
+        (Left ChangedClientAttachment)
+      let attachment = ClientAttachment session window (PaneOccurrence pane link)
+      pure (Client input.name input.pid input.tty (Just attachment))

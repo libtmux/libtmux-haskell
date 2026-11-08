@@ -5,6 +5,7 @@ import Data.Either (isLeft)
 import LibTmux.Internal.Frame
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
+import Test.Tasty.QuickCheck qualified as Q
 
 tests :: TestTree
 tests = testGroup "scalar framing"
@@ -35,6 +36,34 @@ tests = testGroup "scalar framing"
   , testCase "requires a complete lower-case hexadecimal nonce" $ do
       mapM_ (\value -> assertBool "invalid nonce admitted" (isLeft (parseNonce value)))
         [Bytes.replicate 63 97, Bytes.replicate 65 97, Bytes.replicate 64 65, Bytes.replicate 64 103]
+  , testCase "distinguishes printed octal bytes, literal escapes and tmux 3.4 dollars" $
+      withNonce $ \nonce token -> do
+        let framed value = token <> ":" <> value <> ":" <> token <> "\n"
+        decodeEscapedScalar nonce 1 (framed "\\377") @?= Right (Bytes.singleton 255)
+        decodeEscapedScalar nonce 4 (framed "\\\\377") @?= Right "\\377"
+        decodeEscapedScalar nonce 8 (framed "\\$x\\r\\n\\\\") @?= Right "$x\r\n\\"
+        decodeEscapedScalar nonce 0 (framed "\\377") @?= Left (ScalarLimitExceeded 0 1)
+        decodeEscapedScalar nonce 4 (framed "\\r\\n\\t\\s") @?= Right "\r\n\t "
+  , testCase "rejects malformed escapes, encoded NUL and decoded nonce collisions" $
+      withNonce $ \nonce token -> do
+        let framed value = token <> ":" <> value <> ":" <> token <> "\n"
+        mapM_ (\value -> decodeEscapedScalar nonce 1024 (framed value)
+          @?= Left (InvalidScalarEscape 0)) ["\\", "\\x", "\\7", "\\37", "\\400", "\\777"]
+        decodeEscapedScalar nonce 1024 (framed "\\000") @?= Left NulInScalar
+        decodeEscapedScalar nonce 1024 (framed (Bytes.concat (replicate 64 "\\141")))
+          @?= Left AmbiguousScalarFrame
+  , Q.testProperty "decodes generated octal bytes independently of wire length" $
+      Q.forAllShrink (Q.listOf (Q.chooseEnum (1, 255))) (Q.shrinkList (const [])) $ \values ->
+        case parseNonce (Bytes.replicate 64 97) of
+          Left problem -> Q.counterexample (show problem) False
+          Right nonce ->
+            let token = Bytes.replicate 64 97
+                octal byte = Bytes.pack [92, 48 + byte `div` 64,
+                  48 + (byte `div` 8) `mod` 8, 48 + byte `mod` 8]
+                payload = Bytes.pack values
+                output = token <> ":" <> Bytes.concatMap octal payload <> ":" <> token <> "\n"
+            in not (token `Bytes.isInfixOf` payload) Q.==>
+              decodeEscapedScalar nonce (length values) output Q.=== Right payload
   ]
   where
     withNonce action = case parseNonce (Bytes.replicate 64 97) of

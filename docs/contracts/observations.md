@@ -17,10 +17,12 @@ tmux, refreshes a handle or acquires a resource.
 `WindowLink.session` and `PaneOccurrence.link.session` provide session
 context. A physical window or pane has no unique session. The physical pane
 record identifies its window directly; resolving that reference to a record
-requires the same snapshot.
+uses the supplied snapshot. A reference from an earlier capture resolves to
+the supplied snapshot's observation when its connection generation matches.
+Capture provenance is separate from reference equality.
 
 References supplied to graph accessors must belong to the snapshot's endpoint
-and client generation. A missing or foreign reference is a `QueryError`, not
+and connection generation. A missing or foreign reference is a `LookupError`, not
 an empty relationship. Known empty relationships are valid values. Active
 window and pane accessors follow the validated graph; session active-pane
 access returns an occurrence carrying the active window link.
@@ -48,6 +50,58 @@ Deprecated Python `get` field helpers map to record projection. They do not
 introduce a string-keyed Haskell getter. Missing capabilities have a distinct
 representation or prevent the required capture; `Nothing` means supported
 absence. A projection never performs deferred fallible decoding.
+
+Caller-edited records do not alter snapshot indexes or certify capture
+provenance. Provide validated offline fixtures with a detached origin; their
+references cannot target a live Server. Snapshot and reference construction
+remain validated, including through reconstruction-capable instances.
+
+## Reported text and POSIX values
+
+The private [graph model](../../internal/LibTmux/Internal/Graph.hs) keeps
+session names and pane titles as strict Text. Window names use a lossless
+[TmuxText](../../internal/LibTmux/Internal/TmuxText.hs) value with byte equality
+and explicit UTF-8 conversion. Conversion failure preserves the original
+label; it does not remove an entity or fail the complete capture.
+
+Current process names use PosixString and current paths use PosixPath. These
+hold reported endpoint bytes without filesystem access, locale conversion
+or local path resolution. Capture forces the owned values before returning.
+Explicit text conversion is subsequent pure application logic, not a hidden
+field read. No replacement decoding occurs.
+
+Preserving a report does not recover upstream normalization. Supported tmux
+releases before 3.7 can report invalid UTF-8 in names and process commands.
+tmux 3.7+ can instead report an empty command after rejecting its bytes, and
+new-window name validation also changes at that boundary. Verify the reported
+value against the qualified release; do not infer the original argv from it.
+
+These are private implementation types. Their installed public ergonomics,
+query/wire profiles and complete Snapshot coverage remain qualification work.
+
+## Attached-client profile
+
+The private Snapshot profile owns server PID, start time, stable release and
+reported POSIX socket path alongside its generation and physical graph. These
+metadata values do not provide a permanent daemon identity or signal authority.
+Acquisition retains its monotonic observation interval.
+
+Client names use POSIX strings; tty paths are optional POSIX paths. An empty
+reported tty means no tty, including control clients. Names may repeat and do
+not identify a client's lifetime. Keep duplicate rows, ordered by name bytes
+then PID; do not normalize the listing into a map keyed by name.
+
+The attached listing resolves native session, window, link index and pane IDs
+against the captured graph. Its detached attachment owns the Session, Window
+and PaneOccurrence values. Foreign or inconsistent context fails acquisition.
+The pane is the session window's globally active pane, not independent client
+focus. An offline Client value may have no attachment; the attached-only live
+profile requires the complete context.
+
+Session attached counts exclude dead, suspended and exiting clients, while
+list-clients checks for a non-null session. Preserve each reported observation;
+do not require count equality. Hooks can run between the metadata/graph read
+and listing. A complete finite profile is not an atomic server transaction.
 
 ## Selection and cardinality
 

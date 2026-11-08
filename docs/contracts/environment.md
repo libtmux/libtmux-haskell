@@ -61,7 +61,7 @@ The inspected tmux 3.8 source has an environment format loop exposing name,
 value, hidden and removed fields, plus a byte-length modifier. A length-framed
 listing is a candidate backend for that capability. Its first supported
 release, escaping, limits and live behavior remain unverified. This candidate
-does not raise the library's plain-3.3 floor.
+does not raise the library's 3.3a floor.
 
 ## Required cases
 

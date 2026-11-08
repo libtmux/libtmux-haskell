@@ -1,15 +1,15 @@
--- | Parse stable tmux releases and apply the minimum-version admission check.
+-- | Parse stable tmux releases and check the supported release range.
 --
 -- These functions consume supplied text. They neither execute @tmux -V@
--- nor contact a server. Admission establishes the minimum release only;
+-- nor contact a server. Admission checks the inclusive 3.3a through 3.8 range;
 -- individual features still need capability and conformance checks.
 --
--- Use 'parseVersion' for input, 'requireSupported' for minimum-version
+-- Use 'parseVersion' for input, 'requireSupported' for supported-range
 -- admission and 'renderVersion' for canonical output.
 --
 -- >>> :set -XOverloadedStrings
--- >>> fmap renderVersion (parseVersion "tmux 3.3\n" >>= requireSupported)
--- Right "3.3"
+-- >>> fmap renderVersion (parseVersion "tmux 3.3a\n" >>= requireSupported)
+-- Right "3.3a"
 module LibTmux.Version
   ( -- * Release identity and errors
     TmuxVersion
@@ -31,10 +31,10 @@ import Text.Read (readMaybe)
 data TmuxVersion = TmuxVersion !Integer !Integer !(Maybe Char)
   deriving stock (Eq, Ord, Show)
 
--- | Invalid release syntax or a release below the supported floor.
+-- | Invalid release syntax or a release outside the supported range.
 data VersionError
   = MalformedVersion !Text -- ^ Bounded copy of input that is not a stable release.
-  | UnsupportedVersion !TmuxVersion -- ^ A stable release older than plain tmux 3.3.
+  | UnsupportedVersion !TmuxVersion -- ^ A stable release outside 3.3a through 3.8.
   deriving stock (Eq, Show)
 
 -- | Parse a stable release or the output of @tmux -V@, allowing one final LF.
@@ -73,9 +73,10 @@ renderVersion :: TmuxVersion -> Text
 renderVersion (TmuxVersion major minor suffix) =
   Text.pack (show major <> "." <> show minor <> maybe "" (: []) suffix)
 
--- | Reject releases older than plain 3.3. Individual features need their own
+-- | Admit every stable release from 3.3a through 3.8, including intermediate
+-- releases. Versions outside that range fail. Individual features need their own
 -- capability checks; passing this check does not qualify an entire release.
 requireSupported :: TmuxVersion -> Either VersionError TmuxVersion
 requireSupported version
-  | version < TmuxVersion 3 3 Nothing = Left (UnsupportedVersion version)
+  | version < TmuxVersion 3 3 (Just 'a') || version > TmuxVersion 3 8 Nothing = Left (UnsupportedVersion version)
   | otherwise = Right version

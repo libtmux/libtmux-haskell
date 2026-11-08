@@ -5,7 +5,9 @@ work, not a public client or a proof that a tmux operation completed.
 
 ## Launch and host requirements
 
-Launch uses Linux atomic pidfd creation through `pidfd_spawn`. The backend
+Launch uses Linux atomic pidfd creation through `pidfd_spawn`, introduced
+in [glibc 2.39](https://sourceware.org/pipermail/libc-announce/2024/000038.html).
+The initial stock-glibc backend requires glibc 2.39 or newer. The backend
 resolves that operation and the cwd/closefrom spawn actions dynamically.
 Missing operations and incompatible SIGCHLD policies refuse before birth.
 There is no numeric-PID signaling or post-spawn pidfd lookup fallback.
@@ -118,6 +120,28 @@ physical ownership. Other command bindings, capture and subscription consumers
 remain unimplemented. Physical shutdown does not resolve logical unknown
 outcomes or establish completion of a daemon job.
 
+## Public scope outcomes
+
+The proposed Server scopes must preserve the following outcomes before export:
+
+- Successful callback and cleanup return the callback result.
+- Successful callback with failed cleanup reports cleanup failure and retains
+  a reachable recovery owner.
+- Failed callback with successful cleanup preserves the callback exception.
+- Callback and cleanup failure preserve the callback exception as primary,
+  with secondary diagnostics and recovery responsibility still reachable.
+- Cancellation with incomplete cleanup preserves asynchronous cancellation
+  and the specified reachable owner.
+- Recovery-worker allocation failure retains existing ownership and reports
+  the failed handoff.
+
+A generally blocking uninterruptible region cannot supply bounded cleanup.
+Exception-context annotations are a candidate mechanism; the common scope
+needs integrated cancellation and double-failure tests. Correlate capture
+failure with operation ID, endpoint/generation, physical cleanup status,
+logical outcome and available recovery or explicit detachment. Batching
+alone does not establish logical completion or retire uncertainty.
+
 ## Logical admission
 
 The separate [STM scheduler](../../internal/LibTmux/Internal/Scheduler.hs)
@@ -153,7 +177,8 @@ transitions separately from the native process tests below.
 
 ## Framed server read ownership
 
-The private Runtime observes server PIDs and stable release identities through
+The private Runtime observes server PIDs, stable releases, physical graphs and
+the finite Snapshot profile through
 the adopted socket pin. An opaque `Request value` retains the decoded result's
 type. A closed GADT pairs each fixed format with that type; the owned registry
 retains the witness without a cast or an arbitrary decoder callback.
@@ -162,7 +187,7 @@ Success requires a fresh nonce frame, empty stderr and successful command-client
 exit. PID decoding retains its 32-byte bound and checked positive process-ID
 domain. Version decoding accepts at most 64 bytes, requires valid UTF-8 and
 uses the existing [version parser](../../src/LibTmux/Version.hs). Stable-version
-observation is separate from minimum-version admission and feature capability
+observation is separate from supported-range admission and feature capability
 checks. Decoded values are forced before the read envelope is released.
 Extra hook output is a protocol failure. A receipt establishes that read's
 result; it does not establish completion of arbitrary daemon work.
@@ -173,12 +198,21 @@ logical permit and protected parent/child credits. A foreign client is refused
 before reservation. A worker claims only its own oldest eligible operation;
 STM rollback leaves other operations unchanged.
 
+Tagged graph and Snapshot reads always use ordinary admission. Their registered read
+owner retains the 64 MiB graph construction allowance together with the
+existing 4 MiB read envelope. Caller cancellation cannot release that allowance
+while a worker still constructs or forces the graph. The default graph capture
+does not acquire a second copy of it. Scalar comparison capture retains its
+separate scoped allowance. These reservations bound admitted work, not RSS;
+minimal inspection reads keep their protected capacity.
+
 The process reservation transaction records its Ticket in the Runtime journal
 before the native worker can start. The interpreter masks through constructor
 return and ownership recognition. Explicit native refusal survives later worker
 failure; possible native birth is not a tmux acknowledgment.
 
-Reads have a one-second default deadline and a ten-second maximum. One absolute
+PID/version conveniences use a one-second default. Explicit read deadlines have
+a ten-second maximum; graph reads require a supplied deadline. One absolute
 monotonic expiration governs queueing, submission and validated-result
 eligibility. It is sampled before submission and immediately before the final
 publication transaction; this does not promise real-time OS scheduling. Scoped

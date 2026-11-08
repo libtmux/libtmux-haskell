@@ -15,6 +15,10 @@ signatures in the [API guide](api.md).
 The [behavior contracts](contracts/README.md) describe the implementation
 scope. They include operations that are not yet public APIs.
 
+The proposed [native domain model ADR](decisions/0001-native-domain-model.md)
+compares sibling ports and records the object graph, naming and lifecycle
+decisions awaiting expert review.
+
 Repository setup and test authoring live in
 [contributing](../.github/CONTRIBUTING.md) and
 [testing](../.github/TESTING.md).

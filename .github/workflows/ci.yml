@@ -141,9 +141,16 @@ jobs:
       - name: Owned fixture, scalar, pin and process integration tests
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
+          LC_ALL: C.UTF-8
         run: |
           cabal test integration --offline --test-show-details=direct --test-options='+RTS -N1 -RTS'
           cabal test integration --offline --test-show-details=direct --test-options='+RTS -N2 -RTS'
+      - name: Scalar and observation bytes under the C locale
+        env:
+          LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
+          LC_ALL: C
+        run: |
+          cabal test integration --offline --test-show-details=direct --test-options='--pattern=/scalar/||/lossless/||/graph/||/record/||/metadata/||/snapshot/||/control/ +RTS -N1 -RTS'
       - name: Save tested tmux build
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

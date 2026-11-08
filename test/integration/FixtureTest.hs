@@ -49,9 +49,36 @@ tests = testGroup "owned tmux fixture"
                 Nothing -> assertFailure ("unexpected worker failure: " <> show problem)
               Right () -> assertFailure "worker returned without cancellation"
             assertReleased fixture
+  , testCase "releases control clients after callback failure and cancellation" $
+      withFixture $ \fixture -> do
+        failed <- try @IOException (withAttachedClient fixture "$0" (throwIO (userError "control callback failed")))
+        case failed of
+          Left problem -> ioeGetErrorString problem @?= "control callback failed"
+          Right () -> assertFailure "control callback should have failed"
+        command fixture ["list-clients", "-F", "#{client_pid}"] >>= (@?= (ExitSuccess, "", ""))
+        ready <- newEmptyMVar
+        never <- newEmptyMVar @()
+        withAsync (withAttachedClient fixture "$0" (putMVar ready () >> takeMVar never)) $ \worker -> do
+          race (wait worker) (takeMVar ready) >>= \case
+            Left () -> assertFailure "control callback returned before cancellation"
+            Right () -> cancel worker
+          waitCatch worker >>= \case
+            Left problem -> case fromException problem of
+              Just AsyncCancelled -> pure ()
+              Nothing -> assertFailure (show problem)
+            Right () -> assertFailure "control callback returned without cancellation"
+        command fixture ["list-clients", "-F", "#{client_pid}"] >>= (@?= (ExitSuccess, "", ""))
   , testCase "cancellation before dispatch stops the owned daemon" (cancelDuringStartup False)
   , testCase "cancellation before pane tracking observes the original pane exit" (cancelDuringStartup True)
   , testCase "cancellation while session creation waits in its hook retires the original pane" cancelPendingCreation
+  , testCase "tracked pane teardown survives cancellation at callback entry" $
+      withFixture $ \fixture -> do
+        (code, pid, errors) <- command fixture
+          ["new-window", "-d", "-t", "fixture:1", "-P", "-F", "#{pane_pid}", "/bin/cat", "-"]
+        (code, errors) @?= (ExitSuccess, "")
+        let teardown = command fixture ["kill-window", "-t", "fixture:1"] >>= (@?= (ExitSuccess, "", ""))
+        result <- try @AsyncCancelled (withTrackedPane pid teardown (throwIO AsyncCancelled))
+        result @?= Left @AsyncCancelled @() AsyncCancelled
   ]
 
 cancelDuringStartup :: Bool -> IO ()

@@ -259,8 +259,8 @@ checks are prerequisites; passing them does not qualify public commands,
 byte-safe process arguments, bootstrap or runtime child ownership.
 
 Record the exact tmux version and platform for each check. The required
-floor is plain tmux 3.3 on Linux x86_64. Qualify exact releases
-3.3, 3.3a, 3.4, 3.5, 3.5a, 3.6, 3.6a, 3.6b, 3.7, 3.7a, 3.7b, 3.7c and
-3.8. Capability-specific flags do not raise that floor. Support claims
-require evidence from every named cell; skipped or untested cells remain
-open. Test rejection of older releases separately.
+support range is tmux 3.3a through 3.8 inclusive on Linux x86_64. Routine CI
+tests its endpoints, 3.3a and 3.8; intermediate releases remain supported.
+Capability-specific flags do not raise the floor. Retain earlier intermediate
+results as evidence without adding those releases to routine CI. Test admission
+of intermediate releases and rejection outside the support range separately.

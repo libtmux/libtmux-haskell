@@ -1,9 +1,10 @@
-module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, command, registerPane) where
+module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, withAttachedClient, command, registerPane, withTrackedPane) where
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Exception (bracket, finally, mask_, throwIO)
 import Control.Monad (unless)
 import Data.ByteString qualified as Strict
+import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as Bytes
@@ -17,11 +18,12 @@ import System.Directory (removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
+import System.IO (hFlush)
 import System.Posix.IO (closeFd)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
 import System.Process.Typed
-  ( Process, createPipe, getStderr, getStdout, nullStream, proc, setEnv, setStderr, setStdin, setStdout
+  ( Process, createPipe, getStderr, getStdin, getStdout, nullStream, proc, setEnv, setStderr, setStdin, setStdout
   , waitExitCode, withProcessTerm
   )
 import System.Timeout (timeout)
@@ -89,6 +91,34 @@ command fixture args = withProcessTerm config $ \client -> do
     config = setEnv fixture.environment . setStdin nullStream . setStdout createPipe . setStderr createPipe $
       proc fixture.executable (["-N", "-S", fixture.socket] <> args)
 
+-- | Own one control client through an acknowledged attachment and normal
+-- detachment. These clients qualify listing context, not terminal/PTY behavior.
+withAttachedClient :: Fixture -> String -> IO a -> IO a
+withAttachedClient fixture session action = withProcessTerm config $ \client -> do
+  let output = getStdout client
+      acknowledge = do
+        line <- Ascii.hGetLine output
+        unless ("%end " `Strict.isPrefixOf` line) acknowledge
+      drain = do
+        chunk <- Strict.hGetSome output 4096
+        unless (Strict.null chunk) drain
+      detach = do
+        Ascii.hPutStrLn (getStdin client) "detach-client"
+        hFlush (getStdin client)
+        exited <- timeout 1000000 (waitExitCode client)
+        unless (exited == Just ExitSuccess) (throwIO (userError "owned control client did not exit"))
+  ready <- timeout 1000000 acknowledge
+  unless (ready == Just ()) (throwIO (userError "owned control client did not acknowledge attachment"))
+  withAsync drain $ \out ->
+    withAsync (Strict.hGetContents (getStderr client)) $ \err -> do
+      result <- action `finally` detach
+      (_, errors) <- waitBoth out err
+      unless (Strict.null errors) (throwIO (userError ("owned control client stderr: " <> show errors)))
+      pure result
+  where
+    config = setEnv fixture.environment . setStdin createPipe . setStdout createPipe . setStderr createPipe $
+      proc fixture.executable ["-u", "-N", "-S", fixture.socket, "-C", "attach-session", "-t", session]
+
 openWatch :: FilePath -> IO Fd
 openWatch directory = withCString directory $ \path ->
   Fd <$> throwErrnoIfMinus1 "fixture inotify watch" (watchDirectory path)
@@ -100,16 +130,25 @@ registerPane tracked output = case reads (Bytes.unpack output) :: [(Integer, Str
     writeIORef tracked (Just fd)
   _ -> throwIO (userError "fixture returned an invalid pane PID")
 
+-- | Watch an additional owned pane and end it before observing exit.
+-- The release action owns window/daemon teardown, even if the body never runs.
+withTrackedPane :: ByteString -> IO () -> IO a -> IO a
+withTrackedPane receipt teardown action = do
+  observed <- newIORef False
+  bracket (newIORef Nothing) (\tracked -> teardown `finally` finishPane observed tracked) $ \tracked -> do
+    registerPane tracked receipt
+    action
+
 finishPane :: IORef Bool -> IORef (Maybe Fd) -> IO ()
 finishPane observed tracked = readIORef tracked >>= \case
   Nothing -> pure ()
   Just fd -> finally (observeExit fd) (closeFd fd)
   where
     observeExit fd = do
-      -- The daemon scope has already ended. This descriptor is never used to signal.
+      -- Window or daemon teardown precedes this wait. Never signal through a PID.
       timeout 1000000 (threadWaitRead fd) >>= \case
         Just () -> writeIORef observed True
-        Nothing -> throwIO (userError "fixture initial pane did not exit within one second")
+        Nothing -> throwIO (userError "fixture tracked pane did not exit within one second")
 
 waitReady :: Fd -> IO ()
 waitReady fd@(Fd raw) = do

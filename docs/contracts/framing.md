@@ -1,80 +1,114 @@
-# Scalar output and hooks
+# Scalar and record framing
 
-Proposed transport refinement. The owned research probe reproduces the issue
-and checks the candidate on official tmux 3.3 and 3.8. It is not a qualified
-Haskell transport or a complete capture protocol.
+The capture protocol must preserve observed field bytes across the required
+tmux releases, reject unrelated hook output and stay within declared bounds.
+The [ADR qualification record](../decisions/0001-native-domain-model-qualification.md)
+separates measured research from Haskell implementation acceptance.
 
 ## One evaluation, one envelope
 
-Removing the final LF from `display-message -p` is insufficient. Both tested
-releases append output from an `after-display-message` hook to the same stdout.
-A successful exit can therefore contain the requested scalar and extra text.
-The library must not silently store that text as part of the observation.
+For a scalar read of a closed catalogue field, generate a fresh 256-bit nonce
+in IO, encoded as 64 lowercase ASCII hexadecimal digits. Expand the field once
+between fixed prefix and suffix bytes containing that nonce. Require the prefix at
+byte zero and suffix plus command-added LF at EOF. Consume boundaries
+sequentially so they cannot overlap on an empty payload. Reject a nonce in
+the decoded payload, missing boundaries or extra bytes. Copy accepted bytes
+before releasing transport ownership.
 
-For a closed catalogue field, generate a fresh 256-bit nonce in `IO`, encoded
-as 64 lowercase ASCII hex digits. Expand the field once between fixed prefix
-and suffix bytes containing that nonce. Require the prefix at byte zero and
-the suffix plus command-added LF at EOF. Consume the two boundaries sequentially
-so they cannot overlap on an empty payload. Reject a nonce within the payload,
-missing boundaries, or any extra bytes. Copy the accepted payload before
-releasing the transport buffer. Bound the complete response, framing overhead
-and stderr separately; the scalar limit applies to the decoded payload.
+Every scalar command client uses `-u`. That flag is necessary but does not
+make every release print raw bytes. tmux 3.4, 3.5 and 3.5a pass output through
+vis escaping. An invalid byte can otherwise become indistinguishable from a
+literal backslash followed by its octal spelling. Qualify the selected
+server locale and bundled/libbsd vis implementation explicitly.
 
-Every scalar command client explicitly uses `-u`. Without that client flag,
-tmux can sanitize non-ASCII bytes according to locale before printing a
-structurally valid frame. The probe checks altered output without `-u` and
-exact preservation with it under `LC_ALL=C` on both releases.
+Protect literal backslashes before tmux prints a byte-bearing field, using
+its substitution modifier. Decode the resulting doubled backslashes and
+supported vis escapes after frame validation. tmux 3.4 also escapes certain
+dollar sequences. Raw-output releases still need doubled-backslash decoding.
+Reject malformed escapes and NUL values; never guess that an undecodable
+response is plain text. Keep the raw-frame decoder available only for
+formats proved line/escape-safe, such as numeric topology and release IDs.
 
-This preserves embedded and trailing newlines, invalid UTF-8 and other
-non-NUL bytes. Conversion to a declared text field is a later checked decode.
-An accidental nonce collision is an explicit framing failure; it must not
-trigger automatic mutation replay. The nonce comes from the library after
-earlier input, never from caller data. It is a correlation marker under the
-trusted local-daemon/configuration contract, not authentication.
+Bound encoded stdout, stderr and decoded payload separately. Escaping can
+increase wire length, so the process-output limit may reject a value smaller
+than the decoded ceiling. Do not silently raise child reservations or claim
+all maximum decoded values fit an existing envelope. Avoid retaining oversized
+backing slices. Declared Text conversion is a later field-specific decision;
+window names and current commands can require lossless values.
 
-Do not compute a length by expanding a field twice. In tmux 3.3,
-`format_find` invokes built-in table callbacks for each occurrence. OS-derived
-values can change between evaluations. The separate cache for custom format
-entries does not make every built-in field stable. A length computed from one
-evaluation need not describe a second evaluation's bytes.
+A nonce collision fails explicitly and never triggers mutation replay. The
+nonce comes from the library after earlier input, not from caller data. It is
+a correlation marker under the trusted local-daemon/configuration contract,
+not authentication.
 
-## Hooks and target context
+Do not compute length by expanding a field twice. Built-in callbacks can
+observe changing OS state between evaluations. A custom-entry cache does not
+make every built-in field stable. A length from one evaluation need not
+describe another evaluation's bytes.
 
-Leave configured hooks intact. A hook can mutate state, wait, fail or emit
-output during an otherwise observational command. Extra output fails the
-strict decoder; a hook failure remains a command failure even if a scalar
-frame was printed first. No-output hooks can still change state, so the
-result is an observation during an interval, not a transaction.
+## Hooks, context and complete captures
 
-Framing alone does not prove target identity. The final protocol must include
-and validate line-safe actual context IDs where the command permits target
-fallback. Each required field also needs a mapping and capability check;
-an unsupported format becoming an empty string is not supported absence.
-The probe uses a known live pane and a stored user option, so it does not
-qualify either of those conditions.
+Leave configured hooks intact. They can mutate, wait, fail or emit output
+during an observational command. Extra output fails strict framing; a hook
+failure remains a command failure even if a frame was printed first. A
+no-output hook can change state between commands in the same invocation.
 
-Topology listings need their own bounded, nonce-qualified record protocol,
-including empty results and unexpected hook output. Arbitrary option listings,
-binary buffer output and raw commands retain their separate contracts. This
-single-scalar candidate must not be generalized to them without evidence.
+Include and validate actual context IDs where target fallback is possible.
+Every field needs a mapping and capability check; an unsupported format
+becoming empty is not supported absence. Preserving reported bytes does not
+recover upstream sanitization, such as rejected command names on tmux 3.7+.
+
+The complete capture needs a bounded, tagged, nonce-qualified record protocol
+with an exact field sequence, empty results, client coverage and duplicate-link
+validation. Expand each byte-bearing field once in its tagged unit. Qualify
+that protocol before replacing per-field capture; scalar decoder success alone
+is insufficient. Separate coherent tmux-owned graph observations from
+OS-derived values and the tmux 3.3 client-listing fallback. Do not promise a
+globally atomic Snapshot.
+
+The private physical-graph path now uses one S/W/P expansion. Its typed row
+layouts generate and parse the same field sequence. Values protect literal
+backslashes before replacing ASCII g with an octal escape; graph and field
+markers start with g plus the nonce. Encoded values contain no literal g, so
+cannot contain a full marker. The decoder rejects unescaped g, decoded nonce
+collisions, unexpected fields, context mismatches and trailing output. The serial
+path remains a comparison implementation.
+
+The private Snapshot profile adds ServerInfo and an attached-client section in
+one owned command queue. The first command prints metadata and physical rows;
+a format-only conditional runs list-clients when sessions exist; the final
+command prints the required end boundary. An empty server still has metadata
+and explicit client-section boundaries. Arbitrary command failure cannot become
+an empty listing. The aggregate entity/link/client limit and encoded stream
+ceiling apply to the whole response.
+
+Use list-clients for this profile on every supported release. The newer L loop
+inherits the enclosing session/window/pane context, so its attachment variables
+cannot substitute for that listing directly. Preserve duplicate client names.
+The listed pane context is the session window's globally active pane; it does
+not acquire independent client focus. Session attached counts follow different
+tmux rules from the listing and are not reconstructed from its length. See
+[captured observations](observations.md#attached-client-profile).
+
+Arbitrary option listings, binary buffer output and raw commands retain their
+separate contracts. This protocol does not establish completion of a mutation
+or a configured daemon-side job.
 
 ## Evidence and supersession
 
-The research artifacts `probes/scalar-hooks.py` and
-`data/implementation/scalar-hooks.json` preserve the command bytes, binary
-digests, stdout/stderr, exit codes and observed daemon/pane exits. The candidate
-recovers a value containing embedded/trailing LF, tab, quotes, backslashes,
-format syntax, semicolon, Unicode and an invalid UTF-8 byte. It rejects appended
-hook output, overlapping boundaries and an intentionally injected nonce
-collision on both releases. The original probe/result remain as `scalar-hooks-v1`
-artifacts; they inherited locale and lacked the overlap rejection.
+Earlier endpoint probes covered tmux 3.3 and 3.8 and established hook-output
+rejection and scalar boundaries. Their raw-byte result does not generalize
+to intermediate releases. The [review reconciliation](../decisions/0001-native-domain-model-qualification.md)
+records the thirteen-release byte probe, the additional tmux 3.4 dollar case,
+scalar tearing and remaining build/locale qualifications.
 
-This refines the approved architecture's scalar-final-LF rule. The architecture
-already requires unexpected hook output to fail; the earlier decoder rule
-could not enforce it. Its approved historical digest remains intact. Final
-adoption requires independent review, Haskell decoder tests, limits, context
-receipts, command errors, cancellation and the complete compatibility matrix.
+Retain those failed assumptions as evidence. Require native decoder properties,
+real-tmux byte/path cases, limits, context receipts, hook errors and cancellation
+before promoting the transport. Batching does not remove deadlines, server-pause
+measurements or unresolved operation ownership.
 
 Sources: [3.3 scalar command](https://github.com/tmux/tmux/blob/87fe00e8b44901240fc22d7120c1b31e4331f6f5/cmd-display-message.c),
-[format lookup](https://github.com/tmux/tmux/blob/87fe00e8b44901240fc22d7120c1b31e4331f6f5/format.c),
-and [registered after-hooks](https://github.com/tmux/tmux/blob/87fe00e8b44901240fc22d7120c1b31e4331f6f5/options-table.c).
+[3.4 print conversion](https://github.com/tmux/tmux/blob/3.4/server-client.c),
+[3.4 vis wrapper](https://github.com/tmux/tmux/blob/3.4/utf8.c),
+[3.8 command-name cleaning](https://github.com/tmux/tmux/blob/3.8/names.c),
+and [Linux field callbacks](https://github.com/tmux/tmux/blob/3.8/osdep-linux.c).
