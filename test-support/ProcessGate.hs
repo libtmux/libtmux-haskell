@@ -1,17 +1,18 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 module ProcessGate where
 
-import Control.Concurrent (ThreadId, myThreadId)
+import Control.Concurrent (ThreadId, myThreadId, yield)
 import Control.Concurrent.STM
 import Control.Exception (bracket, finally, mask_, onException)
 import Control.Monad (void, when)
 import Foreign.C.Types (CInt (..))
 import Foreign.Ptr qualified
 import Foreign.Marshal.Array (allocaArray, peekArray)
-import GHC.Conc (threadWaitRead)
+import GHC.Conc (BlockReason (..), ThreadStatus (..), threadStatus, threadWaitRead)
 import LibTmux.Internal.Process.Native qualified as N
 import System.Posix.IO.ByteString qualified as Posix
 import System.Posix.Types (Fd (..))
+import System.Timeout (timeout)
 
 foreign import ccall unsafe "libtmux_test_watch_writer" cWatchWriter :: CInt -> CInt -> IO CInt
 foreign import ccall unsafe "libtmux_test_control_pipe" cPipe :: Foreign.Ptr.Ptr CInt -> IO CInt
@@ -83,3 +84,18 @@ releaseGate (Gate _ writeEnd _ _ _ released _) = mask_ $ do
 -- | Identify the native caller before its gate receipt; no return-path hook.
 gateThread :: Gate -> STM ThreadId
 gateThread (Gate _ _ _ _ _ _ identity) = readTVar identity >>= maybe retry pure
+
+-- RTS pending throwTo has no notification API; bound this diagnostic query.
+awaitPending :: ThreadId -> IO ()
+awaitPending sender = awaitBlocked sender BlockedOnException
+
+awaitBlocked :: ThreadId -> BlockReason -> IO ()
+awaitBlocked target expected = timeout 250000 loop >>= \case
+  Just () -> pure ()
+  Nothing -> fail "thread did not reach its expected blocked state"
+  where
+    loop = threadStatus target >>= \case
+      ThreadBlocked actual | actual == expected -> pure ()
+      ThreadFinished -> fail "thread returned before its blocked state was observed"
+      ThreadDied -> fail "thread died before its blocked state was observed"
+      _ -> yield >> loop

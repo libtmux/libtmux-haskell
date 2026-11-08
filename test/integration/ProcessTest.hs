@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module ProcessTest (withTests) where
 
-import Control.Concurrent (ThreadId, throwTo, yield)
+import Control.Concurrent (throwTo)
 import Control.Concurrent.Async (AsyncCancelled (..), asyncThreadId, cancel, wait, waitCatch, withAsync)
 import Control.Concurrent.STM (atomically, check, newEmptyTMVarIO, newTVarIO, putTMVar, readTMVar, readTVar, retry, writeTVar)
 import Control.Exception (bracket_, mask, onException, IOException, SomeException, bracket, finally, fromException, throwIO, try)
@@ -33,7 +33,6 @@ import System.Posix.Directory.ByteString qualified as Directory
 import System.Posix.Files.ByteString qualified as Files
 import System.Posix.IO.ByteString qualified as Posix
 import System.Timeout (timeout)
-import GHC.Conc (BlockReason (..), ThreadStatus (..), threadStatus)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
@@ -293,7 +292,7 @@ tests getChild = testGroup "private process owner"
               G.awaitGate gate
               atomically (B.usage budget) >>= (@?= B.Usage True 1 0 0)
               withAsync (throwTo (asyncThreadId worker) AsyncCancelled) $ \sender -> do
-                awaitPending (asyncThreadId sender) `finally` G.releaseGate gate
+                G.awaitPending (asyncThreadId sender) `finally` G.releaseGate gate
                 wait sender
               waitCatch worker >>= assertCancelled
             readIORef registered >>= (@?= True)
@@ -416,7 +415,7 @@ tests getChild = testGroup "private process owner"
           G.awaitGate gate
           target <- atomically (G.gateThread gate)
           withAsync (throwTo target AsyncCancelled) $ \sender -> do
-            (do awaitPending (asyncThreadId sender)
+            (do G.awaitPending (asyncThreadId sender)
                 O.requestClose pool >>= assertIncomplete
                 Files.fileExist (pinPath pin) >>= assertBool "pending interruption retains the pin")
               `finally` G.releaseGate gate
@@ -436,7 +435,7 @@ tests getChild = testGroup "private process owner"
           G.awaitGate gate
           target <- atomically (G.gateThread gate)
           withAsync (throwTo target AsyncCancelled) $ \sender -> do
-            (do awaitPending (asyncThreadId sender)
+            (do G.awaitPending (asyncThreadId sender)
                 O.requestClose pool >>= assertIncomplete
                 Files.fileExist (pinPath pin) >>= assertBool "consumed unpublished status retains the pin")
               `finally` G.releaseGate gate
@@ -792,16 +791,3 @@ assertCancelled (Right _) = assertFailure "expected cancellation"
 assertIncomplete :: O.CloseReport -> IO ()
 assertIncomplete (O.CleanupIncomplete (_ : _)) = pure ()
 assertIncomplete other = assertFailure ("expected retained cleanup: " <> show other)
-
--- The public RTS status exposes pending throwTo; there is no notification API.
--- Bound this diagnostic observation and yield instead of delaying a fixture.
-awaitPending :: ThreadId -> IO ()
-awaitPending sender = do
-  observed <- timeout 250000 loop
-  assertBool "throwTo must be pending while the native caller is gated" (isJust observed)
-  where
-    loop = threadStatus sender >>= \case
-      ThreadBlocked BlockedOnException -> pure ()
-      ThreadFinished -> assertFailure "throwTo returned before the native gate opened"
-      ThreadDied -> assertFailure "throwTo sender died before the native gate opened"
-      _ -> yield >> loop

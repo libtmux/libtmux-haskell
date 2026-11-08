@@ -113,8 +113,8 @@ attempt. Supervisor allocation failure closes admission, reports the
 exception and leaves owners available for retry. The Runtime retains only
 the current attempt's completion latch.
 
-This ownership layer is private. Logical dispatch integration, operation
-deadlines and shared accounting in future capture/subscription consumers
+This ownership layer is private. The fixed PID read below binds logical and
+physical ownership. Other command bindings, capture and subscription consumers
 remain unimplemented. Physical shutdown does not resolve logical unknown
 outcomes or establish completion of a daemon job.
 
@@ -144,12 +144,56 @@ handles for supervision. Retired handles retain metadata without retaining
 the scheduler's live-operation registry.
 
 This scheduler reserve is logical. The process budget separately protects
-physical-child and byte capacity for inspection. Runtime integration must
-map these classes, charge consumer envelopes and supervise ownership across
+physical-child and byte capacity for inspection. Each Runtime command binding
+must map these classes, charge consumer envelopes and supervise ownership across
 both layers. The scheduler performs no tmux IO, supplies no external
 completion evidence and does not implement the Runtime's shutdown phases.
 The [scheduler tests](../../test/SchedulerTest.hs) qualify these state
 transitions separately from the native process tests below.
+
+## Framed PID read ownership
+
+The private Runtime binds one fixed operation: a fresh server-PID read through
+the adopted socket pin. Success requires a fresh nonce frame, checked positive
+PID, empty stderr and successful command-client exit. Extra hook output is a
+protocol failure. This receipt establishes that read's result; it does not
+establish completion of arbitrary daemon work.
+
+Each admitted read reserves a parent byte envelope and registers its owner
+before copying or forking. The matching inspection class reserves both the
+logical permit and protected parent/child credits. A foreign client is refused
+before reservation. A worker claims only its own oldest eligible operation;
+STM rollback leaves other operations unchanged.
+
+The process reservation transaction records its Ticket in the Runtime journal
+before the native worker can start. The interpreter masks through constructor
+return and ownership recognition. Explicit native refusal survives later worker
+failure; possible native birth is not a tmux acknowledgment.
+
+Reads have a one-second default deadline and a ten-second maximum. One absolute
+monotonic expiration governs queueing, submission and validated-result
+eligibility. It is sampled before submission and immediately before the final
+publication transaction; this does not promise real-time OS scheduling. Scoped
+timers retire on early completion. Queued cancellation can prove non-dispatch.
+Active expiration or cancellation publishes uncertainty and requests physical
+cancellation, retaining outstanding responsibility.
+
+Cancelling an outcome waiter changes no ownership. Late framed proof or genuine
+pre-exec refusal may retire logical responsibility without replacing its first
+outcome. Explicit detach releases only uncertain logical metadata. Unawaited
+completed reads leave no live Runtime entry or retained Ticket.
+
+An interrupted interpreter keeps its parent envelope while its Ticket can still
+publish buffers. Recovery consumes or validates that result without resubmitting
+the command. Interrupted recovery retains a failed owner for cleanup retry;
+known allocation failure is reported before an unstarted-worker join.
+
+Reports distinguish physical pool debt, charged read workers and unresolved
+logical handles. Shutdown settles queued reads while active reads may finish
+during grace. Its empty shortcut and timed phases include unfinished read
+workers. Metadata alone does not prolong those physical phases. After
+independent worker and process cleanup, explicit inspection can still show
+uncertain logical responsibility requiring proof or detach.
 
 ## Cancellation and retirement
 

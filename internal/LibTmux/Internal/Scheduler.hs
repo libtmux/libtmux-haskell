@@ -13,7 +13,7 @@ module LibTmux.Internal.Scheduler
   ( -- * Context and admission
     Scheduler, Operation, Lane (..), newScheduler, admit, claim
     -- * Detached observations
-  , Stage (..), Outcome (..), Status (..), status, await
+  , Stage (..), Outcome (..), Status (..), status, await, outstanding
     -- * Evidence and uncertainty
   , Completion (..), markDispatched, markResponseClosed, finish, markUnknown
   , cancelQueued, refuseBeforeBirth, connectionRetired, detachResponsibility
@@ -41,6 +41,10 @@ data State = State
 -- Only its originating t'Scheduler' can advance it.
 data Operation = Operation !Unique !Word64 !Lane !(TVar Status)
   deriving stock (Eq)
+
+instance Show Operation where
+  showsPrec precedence (Operation _ key _ _) =
+    showParen (precedence > 10) (showString "Operation " . shows key)
 
 -- | Internal classification. Unknown raw commands belong to 'Waiting'.
 -- Mutations serialize until proof or explicit 'detachResponsibility'.
@@ -112,6 +116,13 @@ admit (Scheduler context variable) lane = do
 -- explicit 'detachResponsibility'. This does not inspect tmux.
 status :: Operation -> STM Status
 status (Operation _ _ _ observed) = readTVar observed
+
+-- | Observe retained metadata in admission order, including uncertain work.
+-- The opaque handles remain bound to this context for explicit detach.
+outstanding :: Scheduler -> STM [(Operation, Status)]
+outstanding (Scheduler _ variable) = do
+  current <- readTVar variable
+  mapM (\operation -> (operation,) <$> status operation) (Map.elems current.operations)
 
 -- | Wait for the first published 'Outcome'. Cancelling this transaction
 -- changes neither admission nor responsibility; see 'markUnknown'.

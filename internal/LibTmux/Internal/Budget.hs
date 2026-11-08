@@ -21,7 +21,9 @@ import Control.Exception (Exception, throwIO)
 import Control.Monad (unless, when)
 import Data.Word (Word64)
 
+-- Equality identifies the shared context, not its changing counter values.
 data Budget = Budget !Word64 !(TVar State)
+  deriving stock (Eq)
 
 data State = State
   { observed :: !Usage

@@ -172,6 +172,16 @@ an independent command checks that the owned tmux daemon remains usable.
 These cases qualify [private physical ownership](../docs/contracts/process.md#provisional-runtime-ownership),
 not logical dispatch integration, operation deadlines or daemon-job completion.
 
+The [Runtime read cases](../test/integration/RuntimeReadTest.hs) bind the fixed
+framed PID operation to logical admission and physical ownership. They cover
+foreign-context refusal, queued and active deadlines, cancelled outcome waiters,
+late native refusal, constructor handoff, interpreter recovery and cleanup-fork
+refusal. Actual PID receipts exercise inspection's protected child and parent
+credits. Contaminated framing cannot become success. Close settles queued work,
+allows graceful reads and preserves unresolved metadata after physical cleanup.
+These are [private read contracts](../docs/contracts/process.md#framed-pid-read-ownership),
+not qualification of other commands, capture or the public Client.
+
 A deliberately held signal has a 250 ms watchdog to detect premature pidfd
 retirement. Native gate observations also have bounded watchdogs. These
 checks synchronize through STM, descriptors and RTS status; they do not

@@ -52,6 +52,7 @@ data Progress = Progress {outputBytes :: !Int, errorBytes :: !Int}
 
 data Ticket = Ticket
   { key :: !Int, result :: !(TMVar (Either SomeException Completion))
+  , launchEvidence :: !(TMVar LaunchEvidence)
   , cancelled :: !(TVar Bool), exitCache :: !(TVar (Maybe N.Exit))
   , signalErrors :: !(TVar [CInt]), signalErrorCount :: !(TVar Word64), counts :: !(TVar Progress)
   , descriptors :: !(IORef Set.IntSet), child :: !(IORef (Maybe N.Child))
@@ -60,6 +61,10 @@ data Ticket = Ticket
   , cleanupFailure :: !(TVar (Maybe SomeException))
   , hooks :: !Hooks, lease :: !B.ChildLease
   }
+
+-- Native ownership is not a tmux acknowledgment. An empty cell may be in flight.
+data LaunchEvidence = LaunchRefused !N.Failure | NativeStarted
+  deriving stock (Eq, Show)
 
 data Completion = Completion
   { launchFailure :: !(Maybe N.Failure), output :: !ByteString, errors :: !ByteString
@@ -121,10 +126,15 @@ inspectionBytes = childBytes + retainedBytes
 -- Internal consumers precharge a separate parent envelope in
 -- "LibTmux.Internal.Budget" for output retained after result publication.
 submit :: B.Class -> Hooks -> Pool -> N.Spec -> ByteString -> IO Ticket
-submit allocation hooks pool spec input = mask_ $ do
+submit = submitRegistered (const (pure ()))
+
+-- | Register the consumer's binding in the native reservation transaction.
+-- A rejected STM action rolls back every binding and credit before fork.
+submitRegistered :: (Ticket -> STM ()) -> B.Class -> Hooks -> Pool -> N.Spec -> ByteString -> IO Ticket
+submitRegistered register allocation hooks pool spec input = mask_ $ do
   N.validate spec
   when (Bytes.length input > inputLimitBytes) (throwIO ResourceLimit)
-  ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
+  ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
     <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO (Progress 0 0) <*> newIORef Set.empty
     <*> newIORef Nothing <*> newMVar () <*> newTVarIO True
     <*> newTVarIO Nothing <*> newTVarIO Nothing <*> pure hooks
@@ -138,6 +148,7 @@ submit allocation hooks pool spec input = mask_ $ do
     when (key == maxBound) (throwSTM ResourceLimit)
     lease <- B.acquireChild pool.budget allocation childBytes
     let owned = (ticket lease) {key}
+    register owned
     writeTVar pool.nextKey (key + 1)
     writeTVar pool.jobs (Map.insert key owned jobs)
     pure owned
@@ -171,6 +182,9 @@ runJob ticket spec input = do
         writeIORef ticket.child (Just child)
         writeIORef ticket.descriptors (Set.fromList (filter (>= 0)
           (map fromIntegral [child.pidfd, child.input, child.output, child.errors])))
+    atomically $ putTMVar ticket.launchEvidence $ case native of
+      N.Refused problem -> LaunchRefused problem
+      N.Owned _ -> NativeStarted
     pure native
   ticket.hooks.afterStart
   case start of

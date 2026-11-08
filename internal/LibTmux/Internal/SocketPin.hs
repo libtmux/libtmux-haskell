@@ -1,5 +1,3 @@
-{-# LANGUAGE CApiFFI #-}
-
 module LibTmux.Internal.SocketPin
   ( PinOwner, SocketPin, PinError (..), PinReason (..), PinCheckpoint (..)
   , newPinOwner, acquirePin, acquirePinWith, closePin, pinPath, pinGeneration
@@ -12,25 +10,15 @@ import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Word (Word8)
-import Foreign.C.Error (throwErrnoIfMinus1)
-import Foreign.C.Types (CSize (..), CUInt (..))
-import Foreign.Marshal.Alloc (allocaBytes)
-import Foreign.Ptr (Ptr, castPtr)
+import LibTmux.Internal.Entropy qualified as Entropy
 import LibTmux.Internal.Graph (EndpointIdentity (..), Generation (..))
 import System.IO.Error (isAlreadyExistsError, isDoesNotExistError)
 import System.Posix.Directory.ByteString (removeDirectory)
 import System.Posix.Files.ByteString qualified as File
 import System.Posix.IO.ByteString qualified as Posix
 import System.Posix.Temp.ByteString (mkdtemp)
-import System.Posix.Types (CSsize (..), Fd, UserID)
+import System.Posix.Types (Fd, UserID)
 import System.Posix.User (getEffectiveUserID)
-
-foreign import capi unsafe "sys/random.h getrandom"
-  getRandom :: Ptr Word8 -> CSize -> CUInt -> IO CSsize
-
-foreign import capi "sys/random.h value GRND_NONBLOCK"
-  randomNonblocking :: CUInt
 
 data PinReason
   = InvalidPath | AliasTooLong | UntrustedDirectory | WrongSocketType
@@ -239,7 +227,4 @@ ignoreMissing action = action `catch` \problem ->
   if isDoesNotExistError problem then pure () else throwIO problem
 
 freshToken :: IO ByteString
-freshToken = allocaBytes 32 $ \buffer -> do
-  count <- throwErrnoIfMinus1 "socket pin generation entropy" (getRandom buffer 32 randomNonblocking)
-  unless (count == 32) (unavailable EntropyUnavailable)
-  Bytes.packCStringLen (castPtr buffer, 32)
+freshToken = catch Entropy.freshToken32 (\Entropy.ShortEntropy -> unavailable EntropyUnavailable)
