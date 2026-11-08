@@ -7,7 +7,7 @@ yet observe or mutate a tmux server.
 | --- | --- |
 | Entity ID parsing/rendering | Yes, through `LibTmux.Id` |
 | Checked dimensions and indices | Yes, through `LibTmux.Value` |
-| Stable-release parsing and minimum-version admission | Yes, through `LibTmux.Version` |
+| Stable-release parsing and supported-range admission | Yes, through `LibTmux.Version` |
 | Client, complete captures and generation-bound references | In progress |
 | Typed query evaluation and commands | Not implemented |
 | Control events, streams and cancellation API | Not implemented |
@@ -29,8 +29,8 @@ belong in the workspace package. MCP is outside this port's scope. See the
 CI uses GHC 9.14.1, GHC2024 and Cabal 3.18.2.0 on Linux x86_64. Its current
 integration subset exercises owned fixtures, scalar framing, private socket
 pins and process ownership with one and two RTS capabilities on exact tmux
-releases 3.3, 3.3a, 3.4, 3.5, 3.5a, 3.6, 3.6a, 3.6b, 3.7, 3.7a, 3.7b,
-3.7c and 3.8.
+releases 3.3a and 3.8. The supported range includes all intermediate releases;
+CI tests its endpoints.
 
 The [workflow](../.github/workflows/ci.yml) and
 [test guide](../.github/TESTING.md) describe those checks. This is evidence

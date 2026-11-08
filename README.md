@@ -21,6 +21,7 @@ under development.
 </div>
 
 Use GHC 9.14.1 with GHC2024 and Cabal 3.18.2.0 on Linux x86_64.
+The tmux support range is 3.3a through 3.8 inclusive; CI tests the endpoints.
 [Add the pinned source dependency](docs/installation.md) to a Cabal application,
 or run the complete example from this checkout:
 
@@ -43,7 +44,7 @@ import LibTmux.Version (parseVersion, renderVersion, requireSupported)
 main :: IO ()
 main = do
   version <- either (fail . show) pure $
-    parseVersion "tmux 3.3\n" >>= requireSupported
+    parseVersion "tmux 3.3a\n" >>= requireSupported
   window <- either (fail . show) pure (parseWindowId "@17")
   width <- either (fail . show) pure (mkDimension 120)
   print (renderVersion version, renderWindowId window, dimensionValue width)
@@ -53,7 +54,7 @@ Program output:
 
 <!-- example-output: typed-values -->
 ```text
-("3.3","@17",120)
+("3.3a","@17",120)
 ```
 
 The example parses supplied values. It does not inspect an installed tmux

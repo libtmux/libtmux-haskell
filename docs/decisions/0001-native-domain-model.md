@@ -174,7 +174,7 @@ See [framing](../contracts/framing.md) and [acquisition](../contracts/acquisitio
 A single expansion can improve consistency of tmux-owned state, but Snapshot
 promises an observation interval, not global atomicity. OS-derived callbacks
 can observe changing external state. Hooks can run between commands in one
-invocation. Qualify the tmux 3.3 client-listing fallback and repeated physical
+invocation. Qualify the tmux 3.3a client-listing fallback and repeated physical
 fields through links. Capture admission must either wait within its deadline
 or return an explicit capacity error; it cannot imply unlimited concurrency.
 Measure native capture latency and server pauses before qualifying defaults.
@@ -233,7 +233,8 @@ initial backend; any alternative launch path needs separate qualification.
 [Host contract](../contracts/process.md#launch-and-host-requirements)
 
 Keep only the selected newest stable GHC series and the required exact tmux
-3.3+ matrix. Keep MCP excluded. Workspace is a separate Cabal package using
+3.3a through 3.8 support range, with CI at its endpoints. Keep MCP excluded.
+Workspace is a separate Cabal package using
 public core APIs, with file-format and CLI dependencies outside the core.
 [Package policy](../../.github/CONTRIBUTING.md#package-and-dependency-policy) ·
 [Cabal projects][cabal-projects]
