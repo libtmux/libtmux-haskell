@@ -1,11 +1,11 @@
 -- | Exception and recovery policy for an owned Runtime scope.
 module LibTmux.Internal.Scope
   ( TmuxException (..), CleanupStatus (..), CleanupRecovery
-  , runScope, cleanupRecoveries, cleanupFailure, cleanupObservation, inspectCleanup, resumeCleanup
+  , runScope, runServerScope, cleanupRecoveries, cleanupFailure, cleanupObservation, inspectCleanup, resumeCleanup
   , awaitCleanup, detachUnresolved
   ) where
 
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (STM, atomically)
 import Control.Exception
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context qualified as Context
@@ -27,7 +27,7 @@ data TmuxException
   deriving stock (Show)
 instance Exception TmuxException
 
--- | Local observations of physical and logical cleanup responsibility.
+-- | Local observations of the selected physical and logical responsibility.
 -- Each inspection returns new metadata; it performs no tmux operation.
 data CleanupStatus = CleanupStatus
   { complete :: !Bool -- ^ All physical owners, read workers and logical responsibility have retired.
@@ -38,30 +38,45 @@ data CleanupStatus = CleanupStatus
   }
   deriving stock (Show)
 
--- | Reachable ownership after an incomplete or failed scope release. Keeping
--- this value retains the Runtime responsible for its remaining resources.
-data CleanupRecovery = CleanupRecovery !R.Runtime !CleanupStatus !(Maybe SomeException)
+data Target = RuntimeTarget !R.Runtime | ServerTarget !R.Runtime !R.ServerOwner
+
+-- | Reachable responsibility after an incomplete or failed scope release.
+-- Retaining this value keeps its selected cleanup target and Runtime reachable.
+data CleanupRecovery = CleanupRecovery !Target !CleanupStatus !(Maybe SomeException)
 instance Show CleanupRecovery where
   show _ = "CleanupRecovery"
 instance ExceptionAnnotation CleanupRecovery
 
+-- | Protect one registered owner, including its pin acquisition. Keep the
+-- registration handoff masked and restore the action with the outer restore.
+runServerScope :: R.Runtime -> R.ServerOwner -> IO a -> IO a
+runServerScope runtime owner = runTarget (ServerTarget runtime owner)
+
 runScope :: R.Runtime -> IO a -> IO a
-runScope runtime action = mask $ \restore -> do
+runScope runtime = runTarget (RuntimeTarget runtime)
+
+runTarget :: Target -> IO a -> IO a
+runTarget target action = mask $ \restore -> do
+  case target of
+    RuntimeTarget _ -> pure ()
+    ServerTarget runtime owner -> do
+      _ <- atomically (R.inspectServerOwner runtime owner)
+      pure ()
   body <- tryWithContext @SomeException (restore action)
-  cleanup <- tryWithContext @SomeException (R.shutdown runtime)
+  cleanup <- tryWithContext @SomeException (shutdownTarget target)
   case cleanup of
     Right report -> do
       let status = observed report
       if status.complete then either rethrowIO pure body else do
-        let !recovery = CleanupRecovery runtime status Nothing
+        let !recovery = CleanupRecovery target status Nothing
         case body of
           Left primary -> rethrowIO (annotated recovery primary)
           Right _ -> rethrowIO (annotated recovery
             (ExceptionWithContext mempty (toException (CleanupFailed status Nothing))))
     Left problem -> do
-      status <- observed <$> atomically (R.inspect runtime)
+      status <- observed <$> atomically (inspectTarget target)
       let ExceptionWithContext _ cause = problem
-          !recovery = CleanupRecovery runtime status (Just cause)
+          !recovery = CleanupRecovery target status (Just cause)
       case body of
         Left primary -> rethrowIO (annotated recovery primary)
         Right _ -> throwCleanup recovery problem
@@ -80,24 +95,27 @@ cleanupObservation (CleanupRecovery _ status _) = status
 
 -- | Inspect current owned cleanup and logical uncertainty without tmux IO.
 inspectCleanup :: CleanupRecovery -> IO CleanupStatus
-inspectCleanup (CleanupRecovery runtime _ _) = observed <$> atomically (R.inspect runtime)
+inspectCleanup (CleanupRecovery target _ _) = observed <$> atomically (inspectTarget target)
 
 -- | Retry bounded owned cleanup. An incomplete result retains this owner;
 -- the operation does not retry a tmux command or release logical uncertainty.
 resumeCleanup :: CleanupRecovery -> IO CleanupStatus
-resumeCleanup recovery@(CleanupRecovery runtime _ _) =
-  recoverCleanup recovery (R.shutdown runtime)
+resumeCleanup recovery@(CleanupRecovery target _ _) =
+  recoverCleanup recovery (shutdownTarget target)
 
--- | Wait for physical cleanup without a deadline, then inspect logical debt.
+-- | Wait for this target's physical cleanup, then inspect its logical debt.
+-- The wait has no deadline.
 -- Cancellation or failure preserves an annotated cleanup owner. Use
 -- 'resumeCleanup' when the caller requires a bounded attempt.
 awaitCleanup :: CleanupRecovery -> IO CleanupStatus
-awaitCleanup recovery@(CleanupRecovery runtime _ _) = recoverCleanup recovery $ do
-  R.awaitCleanup runtime
-  atomically (R.inspect runtime)
+awaitCleanup recovery@(CleanupRecovery target _ _) = recoverCleanup recovery $ do
+  awaitTarget target
+  atomically (inspectTarget target)
 
 detachUnresolved :: CleanupRecovery -> S.Operation -> IO Bool
-detachUnresolved (CleanupRecovery runtime _ _) operation = atomically (R.detachOperation runtime operation)
+detachUnresolved (CleanupRecovery target _ _) operation = atomically $ case target of
+  RuntimeTarget runtime -> R.detachOperation runtime operation
+  ServerTarget runtime owner -> R.detachServerOwnerOperation runtime owner operation
 
 annotated :: CleanupRecovery -> ExceptionWithContext SomeException -> ExceptionWithContext SomeException
 annotated recovery (ExceptionWithContext context problem) =
@@ -111,11 +129,23 @@ throwCleanup recovery problem@(ExceptionWithContext context cause) =
       (toException (CleanupFailed (cleanupObservation recovery) (Just cause)))))
 
 recoverCleanup :: CleanupRecovery -> IO R.Report -> IO CleanupStatus
-recoverCleanup (CleanupRecovery runtime _ _) action =
+recoverCleanup (CleanupRecovery target _ _) action =
   catchNoPropagate (observed <$> action) $ \problem@(ExceptionWithContext _ (cause :: SomeException)) -> do
-    status <- observed <$> atomically (R.inspect runtime)
-    let !recovery = CleanupRecovery runtime status (Just cause)
+    status <- observed <$> atomically (inspectTarget target)
+    let !recovery = CleanupRecovery target status (Just cause)
     throwCleanup recovery problem
+
+inspectTarget :: Target -> STM R.Report
+inspectTarget (RuntimeTarget runtime) = R.inspect runtime
+inspectTarget (ServerTarget runtime owner) = R.inspectServerOwner runtime owner
+
+shutdownTarget :: Target -> IO R.Report
+shutdownTarget (RuntimeTarget runtime) = R.shutdown runtime
+shutdownTarget (ServerTarget runtime owner) = R.shutdownServerOwner runtime owner
+
+awaitTarget :: Target -> IO ()
+awaitTarget (RuntimeTarget runtime) = R.awaitCleanup runtime
+awaitTarget (ServerTarget runtime owner) = R.awaitServerOwnerCleanup runtime owner
 
 observed :: R.Report -> CleanupStatus
 observed report =

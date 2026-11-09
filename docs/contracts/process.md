@@ -78,20 +78,26 @@ through decoding, then transfer that charge or release it on external delivery.
 
 ## Provisional Runtime ownership
 
-The private [Runtime](../../internal/LibTmux/Internal/Runtime.hs) constructs a
-fresh pin owner and reserves its pool's client credit in the same STM
+The private [Runtime](../../internal/LibTmux/Internal/Runtime.hs) creates a
+fresh pin journal, then reserves its pool's client credit in the same STM
 transaction that registers cleanup responsibility. Socket adoption starts
 after that registration. Exhausted or closed admission therefore refuses
 before creating a private socket alias. Only successful adoption on an open
-pool can return a client.
+pool can return a handle.
 
 Failed and cancelled adoption retain their pool and pin journal. Cleanup
 failure keeps the registry entry and client credit until a successful retry.
 The original adoption exception remains primary, including cancellation.
 Closing shared admission observes every registered owner; it cannot miss a
 pool between reservation and registration. Reports and later admission
-remove only entries whose cleanup has completed, so retired clients do not
+remove only entries whose cleanup has completed, so retired handles do not
 accumulate in the registry.
+
+The private `ServerOwner` identifies that registered responsibility before a
+socket pin exists. `ServerHandle` still requires a complete pin. Separating
+registration from acquisition lets an owner-specific exception policy cover
+failed or cancelled adoption without requiring a returned handle. Origin and
+admission checks precede filesystem acquisition and repeat before publication.
 
 Runtime close requests cleanup for all registered pools and reports ordinary
 request failures. Waiting propagates a failed cleanup restart before awaiting
@@ -129,6 +135,19 @@ decoder retirement cannot erase uncertain logical responsibility. Admission
 requires both the Runtime and selected pool to remain open. Global and scoped
 shutdown may overlap; completed owners release their credits once. A foreign
 Runtime/handle pair is rejected before either context changes.
+
+Private `runServerScope` preserves the common exception policy for one
+`ServerOwner`. Registration and policy installation stay masked; the caller's
+outer restore applies to acquisition and application work inside that policy.
+Recovery retains the selected target through callback failure, cleanup failure
+and cancellation. A provisional adoption can therefore retain a recovery owner
+before it publishes a Server handle, while other handles remain usable under
+the shared limits.
+
+Inspection, retry and explicit cleanup waiting use the same selected target.
+The explicit wait has no deadline; cancellation keeps a reachable owner.
+Logical detachment validates the operation's Runtime and group before changing
+responsibility. It releases no physical ownership.
 
 This ownership layer is private. The fixed server reads below bind logical and
 physical ownership. Public captures use the Server scope; mutation and

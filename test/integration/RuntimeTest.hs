@@ -14,6 +14,7 @@ import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
+import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin
 import ProcessGate qualified as G
 import System.Exit (ExitCode (..))
@@ -26,7 +27,70 @@ import Test.Tasty.HUnit
 
 tests :: TestTree
 tests = testGroup "provisional Runtime ownership"
-  [ testCase "client quota is reserved before endpoint adoption" $
+  [ testGroup "provisional owner acquisition"
+      [ testCase "foreign ownership refuses before creating any pin path" $
+          withRuntime $ \runtime fixture ->
+            bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \foreignRuntime -> do
+              owner <- R.newServerOwner foreignRuntime
+              checkpoints <- newIORef (0 :: Int)
+              let observe _ _ = modifyIORef' checkpoints (+ 1)
+              try @R.ReadError (R.adoptServerOwnerWith observe runtime owner
+                (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)) >>= \case
+                  Left R.ForeignServer -> pure ()
+                  _ -> assertFailure "foreign provisional owner was admitted"
+              readIORef checkpoints >>= (@?= 0)
+              touched <- newIORef False
+              try @R.ReadError (Scope.runServerScope runtime owner (writeIORef touched True)) >>= \case
+                Left R.ForeignServer -> pure ()
+                _ -> assertFailure "foreign owner scope was admitted"
+              readIORef touched >>= (@?= False)
+              atomically (R.usage runtime) >>= (@?= B.Usage True 0 0 0)
+              atomically (R.usage foreignRuntime) >>= (@?= B.Usage True 1 0 0)
+
+      , testCase "closed ownership refuses before attempting to reuse the pin" $
+          withRuntime $ \runtime fixture -> do
+            owner <- R.newServerOwner runtime
+            _ <- R.shutdownServerOwner runtime owner
+            checkpoints <- newIORef (0 :: Int)
+            let observe _ _ = modifyIORef' checkpoints (+ 1)
+            try @P.OwnerError (R.adoptServerOwnerWith observe runtime owner
+              (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)) >>= \case
+                Left P.PoolClosed -> pure ()
+                _ -> assertFailure "closed provisional owner was admitted"
+            readIORef checkpoints >>= (@?= 0)
+            atomically (R.usage runtime) >>= (@?= B.Usage True 0 0 0)
+
+      -- Pin acquisition holds its owner while both cleanup phases expire.
+      , testCase "selected closure during pin acquisition refuses publication while peers remain open" $
+          withRuntime $ \runtime fixture -> do
+            healthy <- adopt runtime fixture
+            owner <- R.newServerOwner runtime
+            ready <- newEmptyTMVarIO
+            release <- newEmptyTMVarIO
+            let checkpoint point directory = when (point == BeforePublish) $ do
+                  atomically (putTMVar ready directory)
+                  atomically (readTMVar release)
+            withAsync (R.adoptServerOwnerWith checkpoint runtime owner
+              (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)) $ \worker ->
+                flip finally (atomically (tryPutTMVar release ()) >> pure ()) $ do
+                  directory <- atomically (readTMVar ready)
+                  report <- R.shutdownServerOwner runtime owner
+                  length report.pending @?= 1
+                  atomically (R.usage runtime) >>= (@?= B.Usage True 2 0 0)
+                  request <- R.readServerPid runtime healthy (Ascii.pack fixture.executable) R.ScalarRead
+                  R.awaitRead request >>= \case
+                    R.ReadValue pid -> assertBool "neighbor returned an invalid PID" (pid > 0)
+                    other -> assertFailure ("neighbor was unavailable: " <> show other)
+                  atomically (putTMVar release ())
+                  waitCatch worker >>= \case
+                    Left problem -> fromException problem @?= Just P.PoolClosed
+                    Right _ -> assertFailure "closed provisional owner published a handle"
+                  _ <- R.shutdownServerOwner runtime owner
+                  Files.fileExist directory >>= (@?= False)
+                  atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+      ]
+
+  , testCase "client quota is reserved before endpoint adoption" $
       withRuntime $ \runtime fixture -> do
         clients <- replicateM 8 (adopt runtime fixture)
         checkpoints <- newIORef (0 :: Int)
@@ -35,6 +99,15 @@ tests = testGroup "provisional Runtime ownership"
           Left actual -> actual @?= B.Exhausted B.Clients 1 8 8
           Right _ -> assertFailure "ninth client was admitted"
         readIORef checkpoints >>= (@?= 0)
+        atomically (R.usage runtime) >>= (@?= B.Usage True 8 0 0)
+        beforeRegistration <- try @SomeException $ mask $ \restore -> do
+          owner <- R.newServerOwner runtime
+          Scope.runServerScope runtime owner (restore (throwIO (userError "registration unexpectedly succeeded")))
+        case beforeRegistration of
+          Left problem -> do
+            fromException problem @?= Just (B.Exhausted B.Clients 1 8 8)
+            length (Scope.cleanupRecoveries problem) @?= 0
+          Right (_ :: ()) -> assertFailure "exhausted registration installed a scope"
         atomically (R.usage runtime) >>= (@?= B.Usage True 8 0 0)
         _ <- R.requestClose runtime
         R.awaitCleanup runtime

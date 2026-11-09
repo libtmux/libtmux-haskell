@@ -9,7 +9,9 @@
 -- reads bind logical admission and deadlines to native ownership. The common
 -- Server scope is public; shared scopes and other command bindings remain open.
 module LibTmux.Internal.Runtime
-  ( Runtime, ServerHandle, Report (..), newRuntime, adopt, adoptWith
+  ( Runtime, ServerHandle, ServerOwner, Report (..), newRuntime, adopt, adoptWith
+  , newServerOwner, adoptServerOwnerWith, inspectServerOwner, shutdownServerOwner
+  , awaitServerOwnerCleanup, detachServerOwnerOperation
   , serverPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
   , inspectServerHandle, shutdownServerHandle
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
@@ -55,17 +57,17 @@ import System.Timeout (timeout)
 
 data Runtime = Runtime
   { identity :: !Unique
-  , budget :: !B.Budget, entries :: !(TVar (Map.IntMap Entry)), nextKey :: !(TVar Int)
+  , budget :: !B.Budget, entries :: !(TVar (Map.IntMap ServerOwner)), nextKey :: !(TVar Int)
   , forker :: P.Fork
   , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
   , scheduler :: !S.Scheduler, reads :: !(TVar [ReadOwner])
   }
-data Entry = Entry
+data ServerOwner = ServerOwner
   { key :: !Int, group :: !S.Group, pool :: !P.Pool
   , closeFailure :: !(TVar (Maybe SomeException))
   , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
   }
-data ServerHandle = ServerHandle !Entry !SocketPin
+data ServerHandle = ServerHandle !ServerOwner !SocketPin
 
 -- | Physical cleanup, owned read workers and logical uncertainty are separate.
 -- An empty 'pending' list alone does not establish complete Runtime cleanup.
@@ -168,28 +170,46 @@ adopt = adoptWith (\_ _ -> pure ())
 
 -- | Adoption with the socket pin's existing deterministic checkpoints.
 adoptWith :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ByteString -> ByteString -> IO ServerHandle
-adoptWith checkpoint runtime@Runtime {forker} source parent = mask $ \restore -> do
+adoptWith checkpoint runtime source parent = mask $ \restore -> do
+  entry <- newServerOwner runtime
+  let abandon = void (try @SomeException (closeEntry entry))
+  restore (adoptServerOwnerWith checkpoint runtime entry source parent) `onException` abandon
+
+-- | Reserve and register one provisional owner before acquiring filesystem
+-- resources. A caller installing its own scope policy must mask the handoff.
+newServerOwner :: Runtime -> IO ServerOwner
+newServerOwner runtime@Runtime {forker} = mask_ $ do
   owner <- newPinOwner
   group <- S.newGroup
-  entry <- atomically $ do
+  atomically $ do
     _ <- inspect runtime
     key <- readTVar runtime.nextKey
     when (key == maxBound) (throwSTM P.ResourceLimit)
     pool <- P.newPoolSTM runtime.budget forker owner 16
     closeFailure <- newTVar Nothing
     shutdownRun <- newTVar Nothing
-    let entry = Entry {key, group, pool, closeFailure, shutdownRun}
+    let entry = ServerOwner {key, group, pool, closeFailure, shutdownRun}
     writeTVar runtime.nextKey (key + 1)
     modifyTVar' runtime.entries (Map.insert key entry)
     pure entry
-  let abandon = void (try @SomeException (closeEntry entry))
-  (do
-    pin <- restore (acquirePinWith checkpoint owner source parent)
-    atomically $ do
-      current <- usage runtime
-      closed <- readTVar entry.pool.closing
-      when (not current.accepting || closed) (throwSTM P.PoolClosed)
-    pure (ServerHandle entry pin)) `onException` abandon
+
+-- | Acquire a complete handle for an already registered owner. Its caller
+-- retains responsibility for cleanup when acquisition fails or is cancelled.
+-- Foreign or closed ownership refuses before filesystem acquisition; admission
+-- is checked again before publishing the handle.
+adoptServerOwnerWith
+  :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ServerOwner
+  -> ByteString -> ByteString -> IO ServerHandle
+adoptServerOwnerWith checkpoint runtime entry source parent = mask $ \restore -> do
+  let requireOpen = atomically $ do
+        validateEntry runtime entry
+        current <- usage runtime
+        closed <- readTVar entry.pool.closing
+        when (not current.accepting || closed) (throwSTM P.PoolClosed)
+  requireOpen
+  pin <- restore (acquirePinWith checkpoint entry.pool.pinOwner source parent)
+  requireOpen
+  pure (ServerHandle entry pin)
 
 serverPool :: ServerHandle -> P.Pool
 serverPool (ServerHandle entry _) = entry.pool
@@ -227,10 +247,10 @@ inspect runtime = do
 -- | Observe only this handle's physical owners and logical group. Membership
 -- survives either kind of retirement; a foreign handle changes no state.
 inspectServerHandle :: Runtime -> ServerHandle -> STM Report
-inspectServerHandle runtime (ServerHandle entry _) = inspectEntry runtime entry
+inspectServerHandle runtime (ServerHandle entry _) = inspectServerOwner runtime entry
 
-inspectEntry :: Runtime -> Entry -> STM Report
-inspectEntry runtime entry = do
+inspectServerOwner :: Runtime -> ServerOwner -> STM Report
+inspectServerOwner runtime entry = do
   validateEntry runtime entry
   status <- P.report entry.pool
   failure <- readTVar entry.closeFailure
@@ -246,11 +266,11 @@ inspectEntry runtime entry = do
     , unresolved, readWorkers
     }
 
-validateEntry :: Runtime -> Entry -> STM ()
+validateEntry :: Runtime -> ServerOwner -> STM ()
 validateEntry runtime entry =
   unless (entry.pool.budget == runtime.budget) (throwSTM ForeignServer)
 
-serverReads :: Runtime -> Entry -> STM [ReadOwner]
+serverReads :: Runtime -> ServerOwner -> STM [ReadOwner]
 serverReads runtime entry =
   filter (S.memberOf entry.group . (.operation)) <$> readTVar runtime.reads
 
@@ -259,7 +279,7 @@ workerStatus ReadOwner {operation, failure} = (operation,) <$> readTVar failure
 
 -- | Close one handle and settle its queued reads in the same STM cut.
 -- Other groups keep their admission, lane permits and first outcomes.
-closeServerAdmission :: Runtime -> Entry -> STM ()
+closeServerAdmission :: Runtime -> ServerOwner -> STM ()
 closeServerAdmission runtime entry = do
   validateEntry runtime entry
   writeTVar entry.pool.closing True
@@ -268,26 +288,52 @@ closeServerAdmission runtime entry = do
     cancelled <- S.cancelQueued runtime.scheduler owner.operation
     when cancelled (publishUnavailable owner (toException ReadClosing))
 
-requestServerClose :: Runtime -> Entry -> IO Report
+requestServerClose :: Runtime -> ServerOwner -> IO Report
 requestServerClose runtime entry = mask_ $ do
   atomically (closeServerAdmission runtime entry)
   _ <- closeEntry entry
   atomically (serverReads runtime entry) >>= mapM_ (resumeRead runtime)
-  atomically (inspectEntry runtime entry)
+  atomically (inspectServerOwner runtime entry)
 
 -- | Bound one handle's physical cleanup under the Runtime's shared limits.
 -- Concurrent callers join its owned attempt; cancelling a waiter leaves it
 -- running. Logical uncertainty remains in the scoped and global reports.
 shutdownServerHandle :: Runtime -> ServerHandle -> IO Report
-shutdownServerHandle runtime@Runtime {forker} (ServerHandle entry _) =
+shutdownServerHandle runtime (ServerHandle entry _) = shutdownServerOwner runtime entry
+
+shutdownServerOwner :: Runtime -> ServerOwner -> IO Report
+shutdownServerOwner runtime@Runtime {forker} entry =
   runShutdown forker entry.shutdownRun
-    (closeServerAdmission runtime entry) (inspectEntry runtime entry)
+    (closeServerAdmission runtime entry) (inspectServerOwner runtime entry)
     (shutdownServerPhases runtime entry)
+
+-- | Join only the selected owner's physical cleanup. Logical uncertainty is
+-- still explicit; cancellation leaves the registered owner available.
+awaitServerOwnerCleanup :: Runtime -> ServerOwner -> IO ()
+awaitServerOwnerCleanup runtime entry = do
+  report <- requestServerClose runtime entry
+  case report.closeFailures of
+    (_, problem) : _ -> throwIO problem
+    [] -> pure ()
+  atomically $ do
+    owners <- serverReads runtime entry
+    forM_ owners $ \owner -> readTVar owner.failure >>= mapM_ throwSTM
+    check (null owners)
+  P.awaitCleanup entry.pool
+  void (atomically (inspectServerOwner runtime entry))
+
+-- | Relinquish only this owner's logical debt, including after pool cleanup.
+-- Runtime and immutable group checks precede any operation-state change.
+detachServerOwnerOperation :: Runtime -> ServerOwner -> S.Operation -> STM Bool
+detachServerOwnerOperation runtime entry operation = do
+  validateEntry runtime entry
+  unless (S.memberOf entry.group operation) (throwSTM ForeignServer)
+  detachOperation runtime operation
 
 closeServerHandle :: ServerHandle -> IO P.CloseReport
 closeServerHandle (ServerHandle entry _) = closeEntry entry >>= either throwIO pure
 
-closeEntry :: Entry -> IO (Either SomeException P.CloseReport)
+closeEntry :: ServerOwner -> IO (Either SomeException P.CloseReport)
 closeEntry entry = mask_ $ do
   outcome <- try @SomeException (P.requestClose entry.pool)
   case outcome of
@@ -385,17 +431,17 @@ shutdownPhases runtime = do
       _ <- requestClose runtime
       void (observeCleanup (inspect runtime))
 
-shutdownServerPhases :: Runtime -> Entry -> IO ()
+shutdownServerPhases :: Runtime -> ServerOwner -> IO ()
 shutdownServerPhases runtime entry = do
   _ <- requestServerClose runtime entry
-  graceful <- observeCleanup (inspectEntry runtime entry)
+  graceful <- observeCleanup (inspectServerOwner runtime entry)
   case graceful of
     Just () -> pure ()
     Nothing -> do
       atomically (serverReads runtime entry) >>= mapM_ (cancelOwner runtime ReadClosing)
       P.abortAll entry.pool
       _ <- requestServerClose runtime entry
-      void (observeCleanup (inspectEntry runtime entry))
+      void (observeCleanup (inspectServerOwner runtime entry))
 
 observeCleanup :: STM Report -> IO (Maybe ())
 observeCleanup inspectTarget = timeout 250000 $ atomically $ do
