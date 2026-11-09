@@ -110,6 +110,15 @@ replace the integration checks required by the aggregate job.
 These checks qualify the existing implementation subset. The complete
 capture/runtime/workspace and release gates remain separate work.
 
+The native documentation step runs the
+[preparation regressions](../scripts/test_prepare_haddock.py), then prepares
+a separate HTML copy from the configured Cabal library. It checks owner and
+instance destinations, source-name collisions, native indexes and search
+snippets. Unexpected missing targets fail the job. The `native-docs` artifact
+contains the copy and per-file raw/prepared digests; the existing checks
+artifact retains Cabal's raw output. Neither artifact establishes publication
+or external dependency-link availability.
+
 ## Executable documentation
 
 The [catalogue](../examples/catalogue.json) is the source of runnable program

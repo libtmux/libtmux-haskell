@@ -156,6 +156,22 @@ $ cabal build all --enable-documentation --only-dependencies
 $ cabal haddock lib:libtmux-haskell --offline
 ```
 
+Prepare the separate native browser copy and its local-link/digest report.
+The output directory must be new:
+
+```console
+$ python3 scripts/prepare_haddock.py \
+    dist-newstyle/haddock-prepared \
+    --build-plan dist-newstyle/cache/plan.json
+```
+
+The [API guide](../docs/api.md) explains the navigation corrections and
+qualification limits. Run the fast artifact regression suite:
+
+```console
+$ python3 -B scripts/test_prepare_haddock.py
+```
+
 Create the source archive for isolated consumer verification:
 
 ```console

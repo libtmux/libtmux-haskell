@@ -7,6 +7,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from html.parser import HTMLParser
+import subprocess
+import sys
 
 SCRIPT = Path(__file__).with_name("prepare_haddock.py")
 PAGE = "LibTmux-Snapshot.html"
@@ -241,6 +243,52 @@ class PrepareHaddockTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'separate'):
                 tool.prepare(raw, alias / 'nested-copy', manifest)
             self.assertFalse((raw / 'nested-copy').exists())
+
+    def test_build_plan_selects_only_the_local_public_library(self):
+        tool = self.tool()
+        with tempfile.TemporaryDirectory(prefix='libtmux-haskell-docs-test-') as directory:
+            root = Path(directory)
+            library = {'type': 'configured', 'style': 'local', 'pkg-name': 'libtmux-haskell',
+                       'component-name': 'lib', 'dist-dir': str(root / 'configured-lib'),
+                       'pkg-src': {'type': 'local', 'path': str(root)}}
+            plan = root / 'plan.json'
+            plan.write_text(json.dumps({'compiler-id': 'ghc-9.14.1', 'install-plan': [
+                dict(library, **{'component-name': 'test:unit', 'dist-dir': str(root / 'unit')}),
+                library]}))
+            self.assertEqual(tool.from_plan(plan, root / 'library.cabal'),
+                             root / 'configured-lib/doc/html/libtmux-haskell')
+            for invalid in [
+                    {'compiler-id': 'ghc-9.12.4', 'install-plan': [library]},
+                    {'compiler-id': 'ghc-9.14.1', 'install-plan': [library, library]},
+                    {'compiler-id': 'ghc-9.14.1', 'install-plan': [
+                        dict(library, **{'pkg-src': {'type': 'local', 'path': str(root / 'other')}})]}]:
+                plan.write_text(json.dumps(invalid))
+                with self.subTest(plan=invalid):
+                    with self.assertRaisesRegex(ValueError, 'compiler|library|source'):
+                        tool.from_plan(plan, root / 'library.cabal')
+
+    def test_command_prepares_the_plan_selected_artifact(self):
+        with tempfile.TemporaryDirectory(prefix='libtmux-haskell-docs-test-') as directory:
+            root = Path(directory)
+            raw = root / 'configured-lib/doc/html/libtmux-haskell'
+            raw.mkdir(parents=True)
+            (raw / PAGE).write_text(page(record('Session') + record('Window')))
+            manifest = root / 'library.cabal'
+            manifest.write_text('library\n  exposed-modules: LibTmux.Snapshot\n'
+                                '  other-modules: LibTmux.Internal.Graph\n')
+            plan = root / 'plan.json'
+            plan.write_text(json.dumps({'compiler-id': 'ghc-9.14.1', 'install-plan': [
+                {'type': 'configured', 'style': 'local', 'pkg-name': 'libtmux-haskell',
+                 'component-name': 'lib', 'dist-dir': str(root / 'configured-lib'),
+                 'pkg-src': {'type': 'local', 'path': str(root)}}]}))
+            output = root / 'prepared'
+            result = subprocess.run([sys.executable, '-B', str(SCRIPT), str(output),
+                                     '--build-plan', str(plan), '--manifest', str(manifest)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((output / 'index.html').exists() or (output / PAGE).exists())
+            self.assertTrue((output / 'navigation.json').exists())
+            self.assertEqual(result.stderr, '')
 
 
 if __name__ == '__main__':

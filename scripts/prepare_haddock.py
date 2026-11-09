@@ -135,7 +135,8 @@ def _insert_choices(document, entries, heading):
                 footer[0].start if len(footer) == 1 else _one(body, "body").end_start)
     rendered = '<section class="subs"><h2>' + escape(heading) + '</h2><dl>'
     for anchor, links in entries:
-        rendered += f'<dt id="{escape(anchor, quote=True)}"><code>{escape(anchor)}</code></dt><dd>'
+        label = anchor.removeprefix('v:')
+        rendered += f'<dt id="{escape(anchor, quote=True)}"><code>{escape(label)}</code></dt><dd>'
         rendered += ', '.join(f'<a href="#{escape(target, quote=True)}">{escape(label)}</a>'
                               for target, label in links)
         rendered += '</dd>'
@@ -411,14 +412,35 @@ def prepare(raw, output, manifest):
     return evidence
 
 
+def from_plan(plan, manifest):
+    """Find the one local library artifact configured for this source tree."""
+    plan = json.loads(Path(plan).read_text())
+    if plan.get('compiler-id') != 'ghc-9.14.1':
+        raise ValueError('Unqualified Cabal plan compiler')
+    library = _one([entry for entry in plan.get('install-plan', [])
+                    if entry.get('type') == 'configured' and entry.get('style') == 'local'
+                    and entry.get('pkg-name') == 'libtmux-haskell'
+                    and entry.get('component-name') == 'lib'], 'configured local library')
+    source = library.get('pkg-src', {})
+    if source.get('type') != 'local' or Path(source.get('path', '')).resolve() != Path(manifest).resolve().parent:
+        raise ValueError('Configured library source differs from the selected manifest')
+    directory = Path(library.get('dist-dir', ''))
+    if not directory.is_absolute():
+        raise ValueError('Configured library needs an absolute dist-dir')
+    return directory / 'doc/html/libtmux-haskell'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('raw', type=Path, help='Fresh Cabal Haddock HTML directory')
     parser.add_argument('output', type=Path, help='New, separate artifact directory')
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument('--raw', type=Path, help='Fresh Cabal Haddock HTML directory')
+    inputs.add_argument('--build-plan', type=Path, help='Cabal plan for the local library')
     parser.add_argument('--manifest', type=Path, default=Path(__file__).resolve().parents[1] / 'libtmux-haskell.cabal')
     args = parser.parse_args()
     try:
-        evidence = prepare(args.raw, args.output, args.manifest)
+        raw = args.raw if args.raw is not None else from_plan(args.build_plan, args.manifest)
+        evidence = prepare(raw, args.output, args.manifest)
     except (OSError, ValueError) as error:
         parser.exit(1, f'Haddock preparation failed: {error}\n')
     print(json.dumps(evidence['counts'], sort_keys=True))
