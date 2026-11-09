@@ -21,8 +21,9 @@ from urllib.parse import unquote, urlsplit
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr"}
 RESPONSIVE_CSS = b"""
-/* Keep wide native tables within narrow viewports. */
+/* Contain long headings and wide native tables on narrow viewports. */
 @media screen and (max-width: 999px) {
+  #module-header .caption { overflow-wrap: anywhere; }
   #interface .subs,
   #index { overflow-x: auto; }
 }
