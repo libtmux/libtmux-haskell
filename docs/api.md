@@ -28,6 +28,9 @@ Record fields use
 the library does not generate
 top-level selector functions. Detached record constructors support patterns
 and local updates. Snapshot assembly and targeting references remain opaque.
+For an ambiguous record update, qualify the field through its defining module.
+For example, import `LibTmux.Server` as `Server` and update `Server.socketPath`;
+this identifies the field owner without deprecated type-directed disambiguation.
 
 Haddock 2.33.0 has native output limitations: some derived-instance method
 self-links lack targets, hidden-module instance attribution links have no
@@ -35,7 +38,8 @@ page, and repeated record labels share field anchors within a module. Use
 the enclosing record declaration and source links for those fields. Native
 declaration coverage does not establish that every generated link works.
 
-The complete [capture example](../examples/capture-graph/Main.hs) and
+The complete [capture example](../examples/capture-graph/Main.hs),
+[shared Runtime example](../examples/shared-runtime/Main.hs) and
 [typed-value example](../examples/typed-values/Main.hs) use only public
 exports. Their source and output are checked against the source archive by
 the [consumer check](../scripts/check_sdist.py).

@@ -118,11 +118,17 @@ rejects unregistered programs and Haskell fences, including nested guides.
 Its regression cases introduce missing examples, stale snippets and invalid
 catalogue entries in disposable copies.
 
-CI runs each literal checkout command and then builds all three public programs
+CI runs each literal checkout command and then builds every declared public program
 from the source archive in an independent application. Both check exit
 status, exact stdout and empty stderr. The archive consumer also executes
 the `>>>` examples from the public module documentation. Keep all these
 routes passing when changing an example, manifest or public signature.
+
+The shared Runtime program reuses the capture fixture with its declared
+executable and expected output. The catalogue checks both bindings, and the
+archive consumer executes the installed program with an independent fixture.
+It checks generation separation, selected closure, continued capture and
+detached navigation.
 
 The capture runner owns a foreground daemon before session creation. Its
 critical failure cases independently observe pidfds after setup failure,

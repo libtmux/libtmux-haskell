@@ -90,12 +90,12 @@ Use [validated offline fixtures](fixtures.md) to exercise application graph
 logic without tmux. Their references belong to a separate offline origin.
 
 The [capture baseline](performance.md) covers controlled graph sizes. The
-advanced shared-Runtime API and broader performance cases remain qualification
-work for the public observation milestone. The
+[shared Runtime guide](shared-runtime.md) covers independent handle lifetimes.
+Broader performance cases remain qualification work for the public observation
+milestone. The
 [status page](status.md) records the broader implementation scope.
 
 The example fixture verifies daemon exit after setup failure before session
 dispatch, and both daemon and pane exit after callback failure or cancellation.
-Interruption during session creation before its pane receipt remains
-unqualified; it raises an explicit cleanup diagnostic rather than claiming
-complete teardown.
+The runner joins interrupted session clients. When creation was dispatched but
+the pane receipt is unavailable, it reports that incomplete ownership explicitly.

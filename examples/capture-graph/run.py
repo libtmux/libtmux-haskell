@@ -150,11 +150,12 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None):
                 primary.add_note(f"owned fixture cleanup: {cleanup}")
 
 
-def run(program, binary):
+def run(program, binary, expected_output=None):
+    expected_path = Path(expected_output) if expected_output is not None else Path(__file__).with_name("expected.stdout")
+    expected = expected_path.read_bytes()
     with fixture(binary) as (socket, environment):
         result = subprocess.run([program, socket, binary], env=environment,
                                 capture_output=True, check=True, timeout=3)
-        expected = Path(__file__).with_name("expected.stdout").read_bytes()
         if result.stdout != expected or result.stderr:
             raise RuntimeError(f"unexpected example output: {result.stdout!r}; {result.stderr!r}")
         sys.stdout.buffer.write(result.stdout)
@@ -163,6 +164,8 @@ def run(program, binary):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--program", help="already-built public consumer executable")
+    parser.add_argument("--executable", default="capture-graph", help="Cabal executable to build in this checkout")
+    parser.add_argument("--expected-output", type=Path, help="asserted stdout for a shared fixture consumer")
     args = parser.parse_args()
     binary = shutil.which(os.environ.get("LIBTMUX_TEST_TMUX", "tmux"))
     if binary is None:
@@ -170,12 +173,12 @@ def main():
     program = args.program
     if program is None:
         directory = Path(__file__).resolve().parents[2]
-        subprocess.run(["cabal", "build", "exe:capture-graph", "--offline", "-v0"],
+        subprocess.run(["cabal", "build", "exe:" + args.executable, "--offline", "-v0"],
                        cwd=directory, capture_output=True, check=True)
         program = subprocess.check_output(
-            ["cabal", "list-bin", "exe:capture-graph", "--offline", "-v0"],
+            ["cabal", "list-bin", "exe:" + args.executable, "--offline", "-v0"],
             cwd=directory, text=True).strip()
-    run(program, binary)
+    run(program, binary, args.expected_output)
 
 
 if __name__ == "__main__":

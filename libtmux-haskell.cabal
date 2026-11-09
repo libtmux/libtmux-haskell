@@ -18,6 +18,7 @@ build-type: Simple
 tested-with: GHC ==9.14.1
 extra-doc-files:
   docs/capture.md
+  docs/shared-runtime.md
   docs/fixtures.md
   docs/performance.md
   README.md
@@ -84,6 +85,11 @@ extra-source-files:
   examples/offline-graph/libtmux-offline-graph.cabal
   examples/offline-graph/cabal.project
   examples/offline-graph/cabal.project.vcs
+  examples/shared-runtime/Main.hs
+  examples/shared-runtime/expected.stdout
+  examples/shared-runtime/libtmux-shared-runtime.cabal
+  examples/shared-runtime/cabal.project
+  examples/shared-runtime/cabal.project.vcs
   scripts/ci_tmux.py
   scripts/test_ci_tmux.py
   .github/tmux-releases.json

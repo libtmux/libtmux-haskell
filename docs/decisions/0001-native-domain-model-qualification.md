@@ -11,7 +11,7 @@ public status is below and in the [implementation guide](../status.md).
 `LibTmux.Server`, `LibTmux.Snapshot` and `LibTmux.Snapshot.Fixture` are public.
 Installed consumers exercise capture, detached navigation and validated
 offline construction. The [source-archive checker](../../scripts/check_sdist.py)
-executes all three declared programs and the scalar Haddock examples.
+executes every declared program and the scalar Haddock examples.
 
 The common Server scope has cases for callback/cleanup double failure,
 accepted-read cancellation, failed cleanup-worker allocation and correlated
@@ -24,10 +24,29 @@ passes at `81ea041` on tmux 3.3a and 3.8, the routine support endpoints.
 
 The [capture baseline](../performance.md) measures three graph sizes on both
 endpoints. It does not establish allocation, concurrent-caller or cancellation
-latency guarantees. Shared Runtime scopes, typed queries, commands, events,
-workspace tooling and complete adoption qualification remain open. Native
+latency guarantees. Typed queries, commands, events, workspace tooling and
+complete adoption qualification remain open. Native
 Haddock anchor and hidden-origin limitations are documented in the
 [API documentation guide](../api.md).
+
+## Shared Runtime qualification, 2026-11-09
+
+`withRuntime` and `withServerIn` expose the caller-owned scope from the
+accepted ADR. The [installed program](../shared-runtime.md) keeps one handle
+usable after another closes, checks generation separation and uses detached
+values after the Runtime closes.
+
+Public integration cases cover original callback masking state, application
+IOError preservation, failed adoption, selected recovery, nested annotations
+and Runtime closure while an application callback is still active. Private
+cases additionally exercise cancelled provisional adoption, retained native
+owners, refused supervisors and read-worker failure propagation. The actual
+public handoff uses the registered owner and its selected exception policy.
+
+The routine [CI workflow](../../.github/workflows/ci.yml) exercises tmux 3.3a
+and 3.8 with both RTS capability settings. Hosted evidence must match the
+reviewed source; local qualification does not establish a release or published
+package. Native Haddock navigation and broader measurement gates remain open.
 
 ## Review reconciliation, 2026-11-08
 
@@ -220,8 +239,6 @@ consumer still exercises scalar exports, not a public Snapshot API.
 
 ## Remaining gates
 
-- Qualify caller-owned Runtime scopes, including per-handle shutdown, failed
-  adoption correlation and recovery while other handles remain usable.
 - Implement typed queries and cardinality before mutation. Combine operational,
   query and cardinality errors in an installed application example.
 - Extend capture measurements to allocations, concurrent admission, active

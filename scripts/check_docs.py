@@ -53,9 +53,15 @@ def check():
         if Path(entry["source"]).parts != ("examples", entry["id"], "Main.hs"):
             raise ValueError("An example must have one Main.hs in its own directory")
         if "runner" in entry:
-            if Path(entry["runner"]).parts != ("examples", entry["id"], "run.py"):
-                raise ValueError("An example runner must belong to its example directory")
-            if entry["command"] != ["python3", entry["runner"]]:
+            runner = Path(entry["runner"]).parts
+            if (len(runner) != 3 or runner[0] != "examples" or runner[2] != "run.py"
+                    or not any(owner["id"] == runner[1] and owner.get("runner") == entry["runner"]
+                               for owner in entries)):
+                raise ValueError("An example runner must belong to a declared example directory")
+            command = ["python3", entry["runner"]]
+            if runner[1] != entry["id"]:
+                command += ["--executable", entry["executable"], "--expected-output", entry["stdout"]]
+            if entry["command"] != command:
                 raise ValueError("An example command must execute its declared runner")
         examples[entry["id"]] = entry
         proof = entry["verification"]

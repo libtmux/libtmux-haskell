@@ -97,11 +97,14 @@ demo:4 -> @0 panes=%0
 graph. Every list comprehension and relationship lookup above uses detached
 values after the scope has closed. Closing the handle leaves the daemon running.
 Operational exceptions retain their recovery context; see [capture and recovery](docs/capture.md).
+For independent handle lifetimes under one resource budget, use the tested
+[shared Runtime program](docs/shared-runtime.md).
 
 | Task | Start here |
 | --- | --- |
 | Install in an application | [Cabal source dependency](docs/installation.md) |
 | Capture, filter and navigate linked windows | [Observations and recovery](docs/capture.md) |
+| Share ownership across independent Server scopes | [Shared Runtime](docs/shared-runtime.md) |
 | Understand IDs, indices and validation errors | [Typed values](docs/values.md) |
 | Test graph predicates without tmux | [Validated offline fixtures](docs/fixtures.md) |
 | Reproduce capture measurements | [Performance](docs/performance.md) |

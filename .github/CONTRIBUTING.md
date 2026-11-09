@@ -1,7 +1,7 @@
 # Contributing
 
-The native Haskell implementation is in progress. The public Server scope,
-detached observations, typed values and owned tmux fixtures have tests and
+The native Haskell implementation is in progress. The public Server and shared
+Runtime scopes, detached observations, typed values and owned tmux fixtures have tests and
 source-archive consumers. Queries, commands, events, workspace tooling and
 complete adoption qualification remain open.
 
