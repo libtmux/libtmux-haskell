@@ -56,7 +56,9 @@ $ cabal run --verbose=0 capture-graph -- /tmp/tmux-1000/default /usr/bin/tmux
 
 The [capture guide](capture.md) explains the object graph, pure lookups and
 scope cleanup. Its owned fixture creates a repeatable server for the
-[README example](../README.md). Enable `OverloadedRecordDot` in application
+[README example](../README.md). Enable
+[`OverloadedRecordDot`](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/overloaded_record_dot.html)
+in application
 modules using observation fields. No optics or effect framework is required.
 
 The package has no Hackage release yet. The development source provides the

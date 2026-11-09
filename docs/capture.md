@@ -57,7 +57,8 @@ in the supplied snapshot; it does not restore an earlier targeting guarantee.
 Record updates create local values. They do not update the snapshot's indexes,
 validate a caller-edited graph or send a tmux command. Use
 `dimensionValue pane.width` for numeric comparisons; checked dimensions have
-no `Num` instance. Paths and current process names preserve POSIX bytes;
+no [`Num`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Prelude.html#t:Num)
+instance. Paths and current process names preserve POSIX bytes;
 window labels use `TmuxText` with explicit, fallible text conversion.
 
 ## Errors and recovery
@@ -72,8 +73,10 @@ If bounded cleanup remains incomplete, its exception context retains a
 `CleanupRecovery`. After a successful callback, incomplete cleanup raises
 `CleanupFailed` instead of returning success.
 
-Use `tryTmux` to catch library failures with their `ExceptionWithContext`,
-or `Control.Exception.tryWithContext` when handling application exceptions and
+Use `tryTmux` to catch library failures with their
+[`ExceptionWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#t:ExceptionWithContext),
+or [`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext)
+when handling application exceptions and
 cancellation too. Ordinary typed `try` loses this context when returning the
 concrete exception. Keep the context while recovering ownership.
 

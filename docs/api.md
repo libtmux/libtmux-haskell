@@ -23,7 +23,9 @@ types; declaration documentation specifies input domains, results and
 errors. The project enables declaration-to-source links, interactive symbol
 search and a Hoogle index for this package. Acquisition and recovery are
 explicit `IO`; field access, list processing, parsers and navigation are pure.
-Record fields use `OverloadedRecordDot`; the library does not generate
+Record fields use
+[`OverloadedRecordDot`](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/overloaded_record_dot.html);
+the library does not generate
 top-level selector functions. Detached record constructors support patterns
 and local updates. Snapshot assembly and targeting references remain opaque.
 
