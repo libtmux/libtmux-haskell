@@ -118,7 +118,7 @@ rejects unregistered programs and Haskell fences, including nested guides.
 Its regression cases introduce missing examples, stale snippets and invalid
 catalogue entries in disposable copies.
 
-CI runs each literal checkout command and then builds both public programs
+CI runs each literal checkout command and then builds all three public programs
 from the source archive in an independent application. Both check exit
 status, exact stdout and empty stderr. The archive consumer also executes
 the `>>>` examples from the public module documentation. Keep all these

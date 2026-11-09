@@ -1,8 +1,10 @@
 # Captured values and local selection
 
-Proposed contract; these APIs are not implemented. Acquisition remains an
-explicit `capture` or `fetch` operation. None of the operations below reads
-tmux, refreshes a handle or acquires a resource.
+[LibTmux.Server](../../src/LibTmux/Server.hs) implements explicit acquisition
+through `capture`. [LibTmux.Snapshot](../../src/LibTmux/Snapshot.hs) exposes
+detached observations, ordered lists and indexed navigation. Those projections
+read owned values without contacting tmux. Typed queries, `fetch` and
+cardinality helpers below describe the planned extension.
 
 ## Sources and context
 
@@ -24,8 +26,8 @@ Capture provenance is separate from reference equality.
 References supplied to graph accessors must belong to the snapshot's endpoint
 and connection generation. A missing or foreign reference is a `LookupError`, not
 an empty relationship. Known empty relationships are valid values. Active
-window and pane accessors follow the validated graph; session active-pane
-access returns an occurrence carrying the active window link.
+window links and panes are selected through their `active` fields. Session
+pane selection must retain the window-link context in a `PaneOccurrence`.
 
 An observed client's attached session, window link and pane occurrence are
 stored detached values from that capture. Their projections take only the
@@ -52,9 +54,10 @@ representation or prevent the required capture; `Nothing` means supported
 absence. A projection never performs deferred fallible decoding.
 
 Caller-edited records do not alter snapshot indexes or certify capture
-provenance. Provide validated offline fixtures with a detached origin; their
-references cannot target a live Server. Snapshot and reference construction
-remain validated, including through reconstruction-capable instances.
+provenance. [LibTmux.Snapshot.Fixture](../../src/LibTmux/Snapshot/Fixture.hs)
+validates offline descriptions under a detached origin; their references
+cannot target a live Server. Snapshot and reference construction remain
+controlled, including through reconstruction-capable instances.
 
 ## Reported text and POSIX values
 
@@ -76,12 +79,13 @@ tmux 3.7+ can instead report an empty command after rejecting its bytes, and
 new-window name validation also changes at that boundary. Verify the reported
 value against the qualified release; do not infer the original argv from it.
 
-These are private implementation types. Their installed public ergonomics,
-query/wire profiles and complete Snapshot coverage remain qualification work.
+The public Snapshot modules expose these observations. Installed record and
+offline-fixture examples exercise their access and validation. Query and
+wire-profile extensions remain planned.
 
 ## Attached-client profile
 
-The private Snapshot profile owns server PID, start time, stable release and
+The complete Snapshot profile owns server PID, start time, stable release and
 reported POSIX socket path alongside its generation and physical graph. These
 metadata values do not provide a permanent daemon identity or signal authority.
 Acquisition retains its monotonic observation interval.
@@ -111,16 +115,17 @@ lookup aliases map to these operations or to an explicitly typed query.
 They do not require duplicate wrapper functions in the public API.
 
 Python's `search_*` methods also accept arbitrary tmux `-f` format strings
-and perform acquisition. The native pure replacement deliberately changes
-that input/effect boundary: arbitrary tmux formats use the explicit low-level
-`IO` command path. They are not silently translated into a closed query or
-evaluated as pure functions.
+and perform acquisition. A future raw-format command path must expose that
+effect in `IO`. The current public API has no raw-format entry point; it does
+not silently translate such strings into pure predicates.
 
 The former `items` operation becomes an ordinary list of `(key, row)` pairs
 using an explicit key projection. Preserve duplicate keys and source order;
 converting to a map would change its behavior.
 
-Typed queries validate every field, relationship and evaluator requirement
+### Planned query and cardinality APIs
+
+Typed queries will validate every field, relationship and evaluator requirement
 against the snapshot before evaluating any branch. The result is
 `Either QueryError [row]`. Filtering preserves source order and multiplicity;
 sorting and limits are explicit and follow membership evaluation.
@@ -136,7 +141,7 @@ against later tmux changes.
 
 ## Required cases
 
-Retain a snapshot after client closure and evaluate all these operations.
+Retain a snapshot after Server closure and evaluate all implemented operations.
 Verify no external operation occurs; compare identical references with
 different observed contents; preserve two links to one window in a session;
 check occurrence multiplicity and deterministic ordering; reject foreign

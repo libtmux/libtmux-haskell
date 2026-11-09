@@ -1,8 +1,33 @@
 # ADR 0001 qualification
 
 This record separates the accepted architecture from implementation evidence.
-The [decision](0001-native-domain-model.md) governs new work. Public graph,
-Server and query APIs remain unqualified.
+The [decision](0001-native-domain-model.md) governs new work. Sections from
+Review reconciliation through Private Snapshot profile record the historical
+2026-11-08 milestones, including their then-open public API gates. The current
+public status is below and in the [implementation guide](../status.md).
+
+## Public observation qualification, 2026-11-09
+
+`LibTmux.Server`, `LibTmux.Snapshot` and `LibTmux.Snapshot.Fixture` are public.
+Installed consumers exercise capture, detached navigation and validated
+offline construction. The [source-archive checker](../../scripts/check_sdist.py)
+executes all three declared programs and the scalar Haddock examples.
+
+The common Server scope has cases for callback/cleanup double failure,
+accepted-read cancellation, failed cleanup-worker allocation and correlated
+recovery. Repeated malformed captures can be explicitly recovered before a
+later successful capture in the same Runtime. The capture example's runner
+tests cover interruption before the pane receipt and preserve the
+incomplete-ownership diagnostic.
+[Exact-source CI](https://github.com/libtmux/libtmux-haskell/actions/runs/42571332817)
+passes at `81ea041` on tmux 3.3a and 3.8, the routine support endpoints.
+
+The [capture baseline](../performance.md) measures three graph sizes on both
+endpoints. It does not establish allocation, concurrent-caller or cancellation
+latency guarantees. Shared Runtime scopes, typed queries, commands, events,
+workspace tooling and complete adoption qualification remain open. Native
+Haddock anchor and hidden-origin limitations are documented in the
+[API documentation guide](../api.md).
 
 ## Review reconciliation, 2026-11-08
 
@@ -48,11 +73,10 @@ Sources: [tmux 3.4 output conversion][print], [3.4 dollar escapes][dollar],
 
 ## Superseded recommendations
 
-Per-field capture remains a comparison implementation with scalar tearing
-and incomplete observation coverage. It cannot serve as an unconditional
-correctness oracle. The private scalar transport now preserves the observed
-bytes under the qualified profiles below; field-specific public values remain
-unimplemented.
+The reviewed per-field capture had scalar tearing and incomplete observation
+coverage. It could not serve as an unconditional correctness oracle. The
+private scalar transport preserved the observed bytes under the profiles
+below; field-specific public values were not yet implemented at that review.
 Qualify batching before choosing parallel hydration. One child does not remove
 payload, deadline or ownership limits, and one expansion does not promise a
 globally atomic snapshot. Preserve unknown logical work until a separate
@@ -61,8 +85,8 @@ completion or explicit-detachment rule applies.
 Use lossless field representations where tmux permits non-text data. Keep one
 graph hierarchy and explicit conversion. Preserve checked dimensions without
 Num or writable value fields. GHC compatibility expansion remains excluded.
-Existing indexed lookups and NFData forcing already address those review
-requests; the remaining issue is public consumer qualification.
+Indexed lookups and NFData forcing addressed those review requests; public
+consumer qualification remained open at that review.
 
 ## Native scalar qualification, 2026-11-08
 
@@ -196,31 +220,17 @@ consumer still exercises scalar exports, not a public Snapshot API.
 
 ## Remaining gates
 
-- Qualify the complete record profile on every required release, preserving the
-  scalar byte, limit, target and hook checks above. Cover exact field order,
-  duplicate links, empty results and client acquisition. Record the supported
-  locale/build profile rather than extrapolating from one build.
-- Verify installed public ServerInfo, attached-client and graph access with
-  the declared finite profile, detached values and upstream normalization.
-- Qualify the common Server scope under callback/cleanup double failure,
-  accepted-read cancellation and recovery-worker allocation failure. Capture
-  failures must identify their recovery operation. Repeated malformed results
-  must be recoverable before a later successful capture on the same Runtime.
-- Define concurrent capture admission. The prototype reserves 64 MiB per
-  capture against 125,566,976 ordinary bytes after inspection reserve, so it
-  admits at most one full capture envelope. That reservation is not RSS.
-  The serial comparison also includes selection and geometry; the tagged path
-  rejects conflicting repeated observations. Document both acquisition policies.
-- Provide validated offline fixtures whose references cannot target tmux.
-  Qualify reference equality across captures, missing/foreign lookup,
-  reconstruction instances, roles and installed record import/update behavior.
-- Execute installed programs for capture/navigation after closure, query and
-  cardinality before mutation, and accepted-read cancellation/recovery. Combine
-  operational, query and cardinality errors in a complete application example.
-- Measure small, medium, large and repeatedly linked native captures, including
-  active selection/resize, invalid bytes, full forcing, concurrent admission,
-  cancellation and maximum server pause. Research shell timings do not qualify
-  native defaults.
+- Qualify caller-owned Runtime scopes, including per-handle shutdown, failed
+  adoption correlation and recovery while other handles remain usable.
+- Implement typed queries and cardinality before mutation. Combine operational,
+  query and cardinality errors in an installed application example.
+- Extend capture measurements to allocations, concurrent admission, active
+  selection/resize, long fields, cancellation and maximum server pause. The
+  existing 64 MiB capture reservation admits one full envelope; it is not RSS.
+- Resolve native Haddock anchor/origin defects and complete shared-site
+  rendering, reference and publication qualification.
+- Implement the command, filter-interchange, event and workspace contracts,
+  then qualify their installed consumers and complete the adoption review.
 
 ## Delivery and review
 
