@@ -45,10 +45,11 @@ compileMutation mutation
          Utf8.encodeUtf8 text, Field.fieldKey Field.PaneTitle)
     minimumCost = sum (map ((+ 1) . toInteger . Bytes.length) prefix)
       + toInteger (Bytes.length value) + 1
-    expansionCost = toInteger (Bytes.count 35 value) + if endsSeparator value then 1 else 0
+    expansionCost = 6 * toInteger (Bytes.count 35 value) + if endsSeparator value then 1 else 0
 
 protectFormat :: ByteString -> ByteString
-protectFormat = Bytes.concatMap (\byte -> if byte == 35 then "##" else Bytes.singleton byte)
+-- tmux preserves hash runs before '['; character expansion avoids that branch.
+protectFormat = Bytes.concatMap (\byte -> if byte == 35 then "#{a:35}" else Bytes.singleton byte)
 
 protectSeparator :: ByteString -> ByteString
 protectSeparator value

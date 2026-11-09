@@ -13,9 +13,13 @@ tests = testGroup "typed mutation arguments"
   [ testCase "literal formats and final separators stay inside one operand" $ do
       window <- require (Id.parseWindowId "@7")
       C.compileMutation (C.RenameWindow window "#{pid};") @?=
-        Right ["rename-window", "-t", "@7", "--", "##{pid}\\;"]
+        Right ["rename-window", "-t", "@7", "--", "#{a:35}{pid}\\;"]
       C.compileMutation (C.RenameWindow window "#(not-a-command)") @?=
-        Right ["rename-window", "-t", "@7", "--", "##(not-a-command)"]
+        Right ["rename-window", "-t", "@7", "--", "#{a:35}(not-a-command)"]
+      C.compileMutation (C.RenameWindow window "#[#{pid}];") @?=
+        Right ["rename-window", "-t", "@7", "--", "#{a:35}[#{a:35}{pid}]\\;"]
+      C.compileMutation (C.RenameWindow window "###[") @?=
+        Right ["rename-window", "-t", "@7", "--", "#{a:35}#{a:35}#{a:35}["]
   , testCase "a trailing semicolon preserves every preceding backslash" $ do
       window <- require (Id.parseWindowId "@7")
       forM_ [(";", "\\;"), ("\\;", "\\\\;"), ("\\\\;", "\\\\\\;")] $ \(input, expected) ->
@@ -49,13 +53,15 @@ tests = testGroup "typed mutation arguments"
       C.compileMutation (C.RenameSession session "x\NULy") @?= Left (C.NulOperand "session.name")
       C.compileMutation (C.RenameWindow window (Label.fromBytes "x\NULy")) @?= Left (C.NulOperand "window.name")
       C.compileMutation (C.SetPaneTitle pane "x\NULy") @?= Left (C.NulOperand "pane.title")
-  , testCase "the encoded limit counts terminators, doubled hashes and the final escape" $ do
+  , testCase "the encoded limit counts terminators, hash expansions and the final escape" $ do
       window <- require (Id.parseWindowId "@7")
       let compile bytes = C.compileMutation (C.RenameWindow window (Label.fromBytes bytes))
       fmap (map Bytes.length) (compile (Bytes.replicate 65512 120)) @?= Right [13, 2, 2, 2, 65512]
       compile (Bytes.replicate 65513 120) @?= Left (C.EncodedCommandTooLarge "window.name")
-      fmap (map Bytes.length) (compile (Bytes.replicate 32756 35)) @?= Right [13, 2, 2, 2, 65512]
-      compile (Bytes.replicate 32757 35) @?= Left (C.EncodedCommandTooLarge "window.name")
+      fmap (map Bytes.length) (compile (Bytes.replicate 9358 35)) @?= Right [13, 2, 2, 2, 65506]
+      compile (Bytes.replicate 9359 35) @?= Left (C.EncodedCommandTooLarge "window.name")
+      fmap (map Bytes.length) (compile (Bytes.replicate 9358 35 <> "xxxx;")) @?= Right [13, 2, 2, 2, 65512]
+      compile (Bytes.replicate 9358 35 <> "xxxxx;") @?= Left (C.EncodedCommandTooLarge "window.name")
       compile (Bytes.replicate 65511 120 <> ";") @?= Left (C.EncodedCommandTooLarge "window.name")
   ]
 

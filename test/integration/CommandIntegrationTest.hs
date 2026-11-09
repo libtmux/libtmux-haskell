@@ -32,7 +32,9 @@ tests = testGroup "native mutation lowering"
               (result.exit, result.errors) @?= (Just (N.Exited 0), "")
               pure result.output
             values = ["#{pid};", "#{?pane_active,a,b}", "-t", "", "a\\b;",
-                      "a\nb\t", "name.with:punctuation", Bytes.pack [206, 187], Bytes.singleton 255]
+                      "a\nb\t", "name.with:punctuation", Bytes.pack [206, 187], Bytes.singleton 255,
+                      "#[fg=red]", "##[fg=red]", "###[", "#[", "#[#{pid}]",
+                      "#[fg=red]#{pid};", "#[#(not-a-command)]"]
         forM_ values $ \value -> do
           let text = either (const []) pure (Utf8.decodeUtf8' value)
               requests = (C.RenameWindow window (Label.fromBytes value), "@0", "window_name") :
