@@ -11,6 +11,7 @@
 module LibTmux.Internal.Runtime
   ( Runtime, ServerHandle, Report (..), newRuntime, adopt, adoptWith
   , serverPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
+  , inspectServerHandle, shutdownServerHandle
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
   , readServerVersion, readServerVersionWith
@@ -59,7 +60,11 @@ data Runtime = Runtime
   , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
   , scheduler :: !S.Scheduler, reads :: !(TVar [ReadOwner])
   }
-data Entry = Entry {pool :: !P.Pool, closeFailure :: !(TVar (Maybe SomeException))}
+data Entry = Entry
+  { key :: !Int, group :: !S.Group, pool :: !P.Pool
+  , closeFailure :: !(TVar (Maybe SomeException))
+  , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
+  }
 data ServerHandle = ServerHandle !Entry !SocketPin
 
 -- | Physical cleanup, owned read workers and logical uncertainty are separate.
@@ -165,12 +170,15 @@ adopt = adoptWith (\_ _ -> pure ())
 adoptWith :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ByteString -> ByteString -> IO ServerHandle
 adoptWith checkpoint runtime@Runtime {forker} source parent = mask $ \restore -> do
   owner <- newPinOwner
+  group <- S.newGroup
   entry <- atomically $ do
     _ <- inspect runtime
     key <- readTVar runtime.nextKey
     when (key == maxBound) (throwSTM P.ResourceLimit)
     pool <- P.newPoolSTM runtime.budget forker owner 16
-    entry <- Entry pool <$> newTVar Nothing
+    closeFailure <- newTVar Nothing
+    shutdownRun <- newTVar Nothing
+    let entry = Entry {key, group, pool, closeFailure, shutdownRun}
     writeTVar runtime.nextKey (key + 1)
     modifyTVar' runtime.entries (Map.insert key entry)
     pure entry
@@ -207,8 +215,7 @@ inspect runtime = do
   current <- usage runtime
   unresolved <- S.outstanding runtime.scheduler
   owners <- readTVar runtime.reads
-  readWorkers <- forM owners $ \owner ->
-    (owner.operation,) <$> readTVar owner.failure
+  readWorkers <- mapM workerStatus owners
   pure Report {accepting = current.accepting,
     pending = [(key, status) | (key, _, status, _) <- retained],
     closeFailures = catMaybes [fmap (key,) problem | (key, _, _, problem) <- retained],
@@ -216,6 +223,66 @@ inspect runtime = do
   where
     complete P.CleanupComplete = True
     complete _ = False
+
+-- | Observe only this handle's physical owners and logical group. Membership
+-- survives either kind of retirement; a foreign handle changes no state.
+inspectServerHandle :: Runtime -> ServerHandle -> STM Report
+inspectServerHandle runtime (ServerHandle entry _) = inspectEntry runtime entry
+
+inspectEntry :: Runtime -> Entry -> STM Report
+inspectEntry runtime entry = do
+  validateEntry runtime entry
+  status <- P.report entry.pool
+  failure <- readTVar entry.closeFailure
+  current <- usage runtime
+  closed <- readTVar entry.pool.closing
+  unresolved <- S.outstandingIn runtime.scheduler entry.group
+  readWorkers <- serverReads runtime entry >>= mapM workerStatus
+  let finished = case status of P.CleanupComplete -> True; _ -> False
+  pure Report
+    { accepting = current.accepting && not closed
+    , pending = [(entry.key, status) | not finished]
+    , closeFailures = [(entry.key, problem) | not finished, Just problem <- [failure]]
+    , unresolved, readWorkers
+    }
+
+validateEntry :: Runtime -> Entry -> STM ()
+validateEntry runtime entry =
+  unless (entry.pool.budget == runtime.budget) (throwSTM ForeignServer)
+
+serverReads :: Runtime -> Entry -> STM [ReadOwner]
+serverReads runtime entry =
+  filter (S.memberOf entry.group . (.operation)) <$> readTVar runtime.reads
+
+workerStatus :: ReadOwner -> STM (S.Operation, Maybe SomeException)
+workerStatus ReadOwner {operation, failure} = (operation,) <$> readTVar failure
+
+-- | Close one handle and settle its queued reads in the same STM cut.
+-- Other groups keep their admission, lane permits and first outcomes.
+closeServerAdmission :: Runtime -> Entry -> STM ()
+closeServerAdmission runtime entry = do
+  validateEntry runtime entry
+  writeTVar entry.pool.closing True
+  owners <- serverReads runtime entry
+  forM_ owners $ \owner -> do
+    cancelled <- S.cancelQueued runtime.scheduler owner.operation
+    when cancelled (publishUnavailable owner (toException ReadClosing))
+
+requestServerClose :: Runtime -> Entry -> IO Report
+requestServerClose runtime entry = mask_ $ do
+  atomically (closeServerAdmission runtime entry)
+  _ <- closeEntry entry
+  atomically (serverReads runtime entry) >>= mapM_ (resumeRead runtime)
+  atomically (inspectEntry runtime entry)
+
+-- | Bound one handle's physical cleanup under the Runtime's shared limits.
+-- Concurrent callers join its owned attempt; cancelling a waiter leaves it
+-- running. Logical uncertainty remains in the scoped and global reports.
+shutdownServerHandle :: Runtime -> ServerHandle -> IO Report
+shutdownServerHandle runtime@Runtime {forker} (ServerHandle entry _) =
+  runShutdown forker entry.shutdownRun
+    (closeServerAdmission runtime entry) (inspectEntry runtime entry)
+    (shutdownServerPhases runtime entry)
 
 closeServerHandle :: ServerHandle -> IO P.CloseReport
 closeServerHandle (ServerHandle entry _) = closeEntry entry >>= either throwIO pure
@@ -275,18 +342,24 @@ awaitCleanup runtime = do
 -- with pending cleanup. Supervisor allocation failure throws without losing
 -- its registered owners. Cleanup-request failures remain in 'closeFailures'.
 shutdown :: Runtime -> IO Report
-shutdown runtime@Runtime {forker} = mask $ \restore -> do
+shutdown runtime@Runtime {forker} = runShutdown forker runtime.shutdownRun
+  (B.closeAdmission runtime.budget) (inspect runtime) (shutdownPhases runtime)
+
+runShutdown
+  :: P.Fork -> TVar (Maybe (TMVar (Either SomeException ())))
+  -> STM () -> STM Report -> IO () -> IO Report
+runShutdown forker attempt closeAdmission inspectTarget phases = mask $ \restore -> do
   (start, selected) <- atomically $ do
-    B.closeAdmission runtime.budget
-    previous <- readTVar runtime.shutdownRun
+    closeAdmission
+    previous <- readTVar attempt
     running <- case previous of
       Nothing -> pure False
       Just run -> isEmptyTMVar run
     if running then pure (False, previous) else do
-      report <- inspect runtime
+      report <- inspectTarget
       if null report.pending && null report.readWorkers then pure (False, Nothing) else do
         run <- newEmptyTMVar
-        writeTVar runtime.shutdownRun (Just run)
+        writeTVar attempt (Just run)
         pure (True, Just run)
   forM_ selected $ \run -> do
     when start $ do
@@ -294,15 +367,15 @@ shutdown runtime@Runtime {forker} = mask $ \restore -> do
             atomically (putTMVar run (Left problem))
             throwIO problem
       void (forker (\unmask -> do
-        result <- try @SomeException (unmask (shutdownPhases runtime))
+        result <- try @SomeException (unmask phases)
         atomically (putTMVar run result))) `catch` failed
     restore (atomically (readTMVar run)) >>= either throwIO pure
-  atomically (inspect runtime)
+  atomically inspectTarget
 
 shutdownPhases :: Runtime -> IO ()
 shutdownPhases runtime = do
   _ <- requestClose runtime
-  graceful <- observe
+  graceful <- observeCleanup (inspect runtime)
   case graceful of
     Just () -> pure ()
     Nothing -> do
@@ -310,11 +383,24 @@ shutdownPhases runtime = do
       entries <- atomically (Map.elems <$> readTVar runtime.entries)
       forM_ entries (P.abortAll . (.pool))
       _ <- requestClose runtime
-      void observe
-  where
-    observe = timeout 250000 $ atomically $ do
-      report <- inspect runtime
-      check (null report.pending && null report.readWorkers)
+      void (observeCleanup (inspect runtime))
+
+shutdownServerPhases :: Runtime -> Entry -> IO ()
+shutdownServerPhases runtime entry = do
+  _ <- requestServerClose runtime entry
+  graceful <- observeCleanup (inspectEntry runtime entry)
+  case graceful of
+    Just () -> pure ()
+    Nothing -> do
+      atomically (serverReads runtime entry) >>= mapM_ (cancelOwner runtime ReadClosing)
+      P.abortAll entry.pool
+      _ <- requestServerClose runtime entry
+      void (observeCleanup (inspectEntry runtime entry))
+
+observeCleanup :: STM Report -> IO (Maybe ())
+observeCleanup inspectTarget = timeout 250000 $ atomically $ do
+  report <- inspectTarget
+  check (null report.pending && null report.readWorkers)
 
 readOperation :: Request value -> S.Operation
 readOperation (Request (ReadReceipt _ _ operation _) _) = operation
@@ -466,7 +552,7 @@ commandTarget (ReadEntityField field) = let (target, _, _) = entityField field i
 commandTarget _ = []
 
 startRead :: ReadCommand value -> P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request value)
-startRead command hooks duration runtime@Runtime {forker} client executable allocation = mask_ $ do
+startRead command hooks duration runtime@Runtime {forker} client@(ServerHandle entry _) executable allocation = mask_ $ do
   let pool = serverPool client
   unless (pool.budget == runtime.budget) (throwIO ForeignServer)
   when (duration < 1 || duration > 10000000) (throwIO (InvalidReadDeadline duration))
@@ -487,7 +573,7 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
   when (now > maxBound - delta) (throwIO ReadClockOverflow)
   (owner, request) <- atomically $ do
     readTVar pool.closing >>= flip when (throwSTM P.PoolClosed)
-    operation <- S.admit runtime.scheduler lane
+    operation <- S.admitIn runtime.scheduler entry.group lane
     let parentBytes = case command of
           -- The caller may stop waiting while the worker still constructs the
           -- graph. Keep the former capture lease with that registered owner.

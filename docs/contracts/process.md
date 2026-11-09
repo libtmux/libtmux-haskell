@@ -115,6 +115,21 @@ attempt. Supervisor allocation failure closes admission, reports the
 exception and leaves owners available for retry. The Runtime retains only
 the current attempt's completion latch.
 
+Private `shutdownServerHandle` applies the same phase limits to one adopted
+handle. Its first STM transaction validates the Runtime, closes only that
+pool's admission and publishes `NotDispatched` for its queued reads. This cut
+precedes supervisor allocation, so an allocation failure still leaves the
+selected handle closed and its queued results available. Concurrent callers
+join that handle's owned attempt; cancellation stops only the caller's wait.
+Other handles retain admission under the unchanged global resource limits.
+
+Private `inspectServerHandle` reports that pool, its read workers and its
+logical operation group. Logical detachment cannot hide a physical owner;
+decoder retirement cannot erase uncertain logical responsibility. Admission
+requires both the Runtime and selected pool to remain open. Global and scoped
+shutdown may overlap; completed owners release their credits once. A foreign
+Runtime/handle pair is rejected before either context changes.
+
 This ownership layer is private. The fixed server reads below bind logical and
 physical ownership. Public captures use the Server scope; mutation and
 subscription bindings remain unimplemented. Physical shutdown does not resolve
