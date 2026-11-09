@@ -250,17 +250,23 @@ class PrepareHaddockTest(unittest.TestCase):
             browser_files(raw, '')
             original = page(record('Session') + record('Window')).encode()
             (raw / PAGE).write_bytes(original)
+            original_style = (raw / 'linuwial.css').read_bytes()
             (raw / 'interface.haddock').write_bytes(b'unchanged compiled interface\x00')
             manifest = root / 'library.cabal'
             manifest.write_text('library\n  exposed-modules: LibTmux.Snapshot\n'
                                 '  other-modules: LibTmux.Internal.Graph\n')
             tool.prepare(raw, output, manifest)
             self.assertEqual((raw / PAGE).read_bytes(), original)
+            self.assertEqual((raw / 'linuwial.css').read_bytes(), original_style)
+            self.assertTrue((output / 'linuwial.css').read_bytes().startswith(original_style))
             self.assertEqual((output / 'interface.haddock').read_bytes(), b'unchanged compiled interface\x00')
             evidence = json.loads((output / 'navigation.json').read_text())
             entry = next(item for item in evidence['files'] if item['path'] == PAGE)
             self.assertEqual(entry['rawSha256'], hashlib.sha256(original).hexdigest())
             self.assertNotEqual(entry['rawSha256'], entry['preparedSha256'])
+            style = next(item for item in evidence['files'] if item['path'] == 'linuwial.css')
+            self.assertEqual(style['rawSha256'], hashlib.sha256(original_style).hexdigest())
+            self.assertEqual(style['preparedSha256'], hashlib.sha256((output / 'linuwial.css').read_bytes()).hexdigest())
             with self.assertRaisesRegex(ValueError, 'exist'):
                 tool.prepare(raw, output, manifest)
             broken = raw / 'broken.html'

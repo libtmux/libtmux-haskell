@@ -57,6 +57,8 @@ distinct owner-qualified anchors, and instance methods have local targets.
 A name-only field link offers its record owners; a source identifier on
 several lines offers those lines. Missing hidden-module instance attributions
 retain their text and valid Source links. No private API page is added.
+In the default theme, wide constructor, instance and symbol-index sections
+scroll within the page on narrow screens.
 
 `navigation.json` records raw and prepared file digests and edit counts.
 The check rejects missing local targets, browser assets and unexpected duplicate

@@ -1,7 +1,7 @@
 """Prepare a separate, link-checked copy of Haddock 2.33.0 HTML.
 
-Raw artifacts remain authoritative. This compatibility step changes only
-navigation tags and adds explicit destinations for ambiguous native names.
+Raw artifacts remain authoritative. This compatibility step repairs
+navigation and contains wide native sections within the default theme.
 It neither changes the compiled interface nor establishes source freshness.
 """
 
@@ -20,6 +20,13 @@ from urllib.parse import unquote, urlsplit
 
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr"}
+RESPONSIVE_CSS = b"""
+/* Keep wide native tables within narrow viewports. */
+@media screen and (max-width: 999px) {
+  #interface .subs,
+  #index { overflow-x: auto; }
+}
+"""
 
 
 class Node:
@@ -474,6 +481,9 @@ def prepare(raw, output, manifest):
     counts['checkedLocalResources'] = resources
     changed = {name: prepared[name].encode('utf-8') if name in prepared else data
                for name, data in files.items()}
+    if 'linuwial.css' in changed:
+        changed['linuwial.css'] += RESPONSIVE_CSS
+        counts['responsiveStyleEdits'] = 1
     evidence = {'schema': 'libtmux.haddock-navigation/1', 'haddock': '2.33.0',
                 'limits': ['Raw output retained; no source freshness or external URL qualification'],
                 'counts': counts,
