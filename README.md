@@ -103,6 +103,7 @@ Operational exceptions retain their recovery context; see [capture and recovery]
 | Install in an application | [Cabal source dependency](docs/installation.md) |
 | Capture, filter and navigate linked windows | [Observations and recovery](docs/capture.md) |
 | Understand IDs, indices and validation errors | [Typed values](docs/values.md) |
+| Test graph predicates without tmux | [Validated offline fixtures](docs/fixtures.md) |
 | Browse declarations and module documentation | [API guide](docs/api.md) |
 | Evaluate the implemented scope and compatibility evidence | [Status](docs/status.md) |
 

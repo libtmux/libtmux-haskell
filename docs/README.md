@@ -8,6 +8,7 @@ Haskell. Start with the complete [capture program](../README.md), then read
 | --- | --- |
 | Add the source package to a Cabal application | [Installation](installation.md) |
 | Capture, filter and traverse the object graph | [Observations and recovery](capture.md) |
+| Test application predicates without tmux | [Validated offline fixtures](fixtures.md) |
 | Parse IDs, validate geometry and admit a release | [Typed values](values.md) |
 | Browse modules, declarations and source | [API documentation](api.md) |
 | Decide whether the current package meets your needs | [Implementation status](status.md) |

@@ -7,6 +7,7 @@ The public modules are:
 | [LibTmux](../src/LibTmux.hs) | Common entry point re-exporting the public modules |
 | [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, configuration, capture, failures and recovery |
 | [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
+| [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
 | [LibTmux.Id](../src/LibTmux/Id.hs) | Distinct entity IDs, canonical parsing, rendering and `IdError` |
 | [LibTmux.Value](../src/LibTmux/Value.hs) | Checked dimensions/indices, numeric access and `ValueError` |
 | [LibTmux.Version](../src/LibTmux/Version.hs) | Stable-release identity, admission and `VersionError` |

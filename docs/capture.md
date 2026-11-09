@@ -83,7 +83,10 @@ detach logical uncertainty. Resuming never dispatches a second capture;
 detachment does not terminate native resources or prove daemon-side completion.
 The [process contract](contracts/process.md) defines these outcomes in detail.
 
-The advanced shared-Runtime API, offline fixtures and capture measurements
+Use [validated offline fixtures](fixtures.md) to exercise application graph
+logic without tmux. Their references belong to a separate offline origin.
+
+The advanced shared-Runtime API and capture measurements
 remain qualification work for the public observation milestone. The
 [status page](status.md) records the broader implementation scope.
 

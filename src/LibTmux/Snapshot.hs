@@ -16,9 +16,11 @@
 --
 -- Observation fields are exported for record dot and local updates. Editing
 -- a record does not change a snapshot's indexes or establish provenance.
+-- "LibTmux.Snapshot.Fixture" constructs validated offline snapshots;
+-- 'snapshotOrigin' distinguishes them from observations acquired through IO.
 module LibTmux.Snapshot
   ( -- * Complete observations
-    Snapshot, ServerInfo (..)
+    Snapshot, ServerInfo (..), SnapshotOrigin (..), snapshotOrigin
   , serverInfo, captureInterval, CaptureInterval (..)
     -- * Physical and contextual values
   , Session (..), Window (..), Pane (..), WindowLink (..), PaneOccurrence (..)
@@ -49,6 +51,20 @@ import LibTmux.Internal.Graph
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Internal.TmuxText qualified as Label
+
+-- | Where the validated values were obtained. A server capture does not
+-- establish current liveness. Offline namespaces carry no targeting authority.
+data SnapshotOrigin
+  = AcquiredFromTmux -- ^ Acquired through an operational Server handle.
+  | DefinedOffline !Text -- ^ Constructed and validated in a named fixture namespace.
+  deriving stock (Eq, Ord, Show)
+
+-- | Inspect provenance without contacting tmux. See
+-- "LibTmux.Snapshot.Fixture" for validated offline construction.
+snapshotOrigin :: Snapshot -> SnapshotOrigin
+snapshotOrigin snapshot = case (G.serverInfo snapshot).generation of
+  G.Generation {} -> AcquiredFromTmux
+  G.FixtureGeneration name -> DefinedOffline name
 
 -- | Native session ID, without the reference's generation guarantee.
 sessionId :: SessionRef -> SessionId

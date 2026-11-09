@@ -39,12 +39,14 @@ data EndpointIdentity = EndpointIdentity !Integer !Integer
 instance NFData EndpointIdentity where
   rnf (EndpointIdentity device inode) = rnf device `seq` rnf inode
 
--- | Opaque identity of one endpoint adoption. Independent Server handles
--- receive distinct generations, including when they observe the same daemon.
+-- | Opaque connection or offline-fixture identity. Independent Server handles
+-- receive distinct tokens; named fixtures never equal an adopted endpoint.
 data Generation = Generation !EndpointIdentity !ByteString
+  | FixtureGeneration !Text
   deriving stock (Eq, Ord, Show)
 instance NFData Generation where
   rnf (Generation endpoint token) = rnf endpoint `seq` rnf token
+  rnf (FixtureGeneration name) = rnf name
 
 -- | Session targeting identity within a t'Generation'. Compare observations
 -- separately when their captured field values matter.
@@ -265,8 +267,11 @@ assembleEntityGraph
   :: Generation -> [Session] -> [Window] -> [Pane] -> [WindowLink]
   -> Either GraphError EntityGraph
 assembleEntityGraph generation sessionRows windowRows paneRows linkRows = do
-  let Generation (EndpointIdentity device inode) token = generation
-  unless (device >= 0 && inode >= 0 && Bytes.length token == 32) (Left InvalidGeneration)
+  let valid = case generation of
+        Generation (EndpointIdentity device inode) token ->
+          device >= 0 && inode >= 0 && Bytes.length token == 32
+        FixtureGeneration _ -> True
+  unless valid (Left InvalidGeneration)
   mapM_ checkSession sessionRows
   mapM_ (checkWindowRef . (.ref)) windowRows
   mapM_ checkPane paneRows

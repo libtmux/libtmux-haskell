@@ -10,7 +10,8 @@ The package is unpublished. Public mutation commands are not implemented.
 | Stable-release parsing and supported-range admission | Yes, through `LibTmux.Version` |
 | Server, complete captures and generation-bound references | Implemented through `LibTmux.Server` and `LibTmux.Snapshot` |
 | Bounded scope cleanup and correlated recovery | Implemented; keep exception context when catching failures |
-| Shared Runtime ownership, validated offline fixtures | In progress |
+| Validated offline fixtures | Implemented through `LibTmux.Snapshot.Fixture` |
+| Shared Runtime ownership | In progress |
 | Typed query evaluation and commands | Not implemented |
 | Control events, streams and cancellation API | Not implemented |
 | Workspace library/CLI | Planned as a separate Cabal package using the core |

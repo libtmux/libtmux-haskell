@@ -50,6 +50,24 @@
         "command": ["python3", "scripts/check_sdist.py"],
         "checks": ["exit-status", "stdout", "stderr-empty", "archive-consumer"]
       }
+    },
+    {
+      "id": "offline-graph",
+      "source": "examples/offline-graph/Main.hs",
+      "package": "examples/offline-graph/libtmux-offline-graph.cabal",
+      "project": "examples/offline-graph/cabal.project",
+      "vcs_project": "examples/offline-graph/cabal.project.vcs",
+      "stdout": "examples/offline-graph/expected.stdout",
+      "executable": "offline-graph",
+      "capability": null,
+      "command": ["cabal", "run", "--verbose=0", "offline-graph"],
+      "verification": {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "checks",
+        "step": "Isolated source-archive consumer",
+        "command": ["python3", "scripts/check_sdist.py"],
+        "checks": ["exit-status", "stdout", "stderr-empty", "archive-consumer"]
+      }
     }
   ]
 }

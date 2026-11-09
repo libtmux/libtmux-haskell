@@ -36,4 +36,5 @@ reject() {
 reject test/compile-fail/DimensionLiteral.hs 39999 'Num Dimension'
 reject test/compile-fail/MixedIndices.hs 83865 'Expected: PaneIndex -> WindowIndex'
 reject test/compile-fail/MixedIds.hs 83865 'Expected: PaneId -> WindowId'
-printf 'PASS: public API (2 positive and 3 intended negative compilation cases)\n'
+reject test/compile-fail/FixtureOriginCoercion.hs 18872 'LibTmux.Snapshot.Fixture.FixtureOrigin'
+printf 'PASS: public API (2 positive and 4 intended negative compilation cases)\n'

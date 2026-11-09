@@ -7,6 +7,7 @@ import Data.IORef
 import Data.List (isPrefixOf)
 import Fixture qualified
 import LibTmux qualified as Tmux
+import LibTmux.Snapshot.Fixture qualified as F
 import System.Exit (ExitCode (..))
 import System.Directory qualified as Directory
 import System.FilePath ((</>))
@@ -28,6 +29,7 @@ tests = testGroup "public Server API"
           Tmux.serverGeneration server @?= (Tmux.serverInfo snapshot).generation
           pure (server, snapshot)
         length (Tmux.sessions snapshot) @?= 1
+        Tmux.snapshotOrigin snapshot @?= Tmux.AcquiredFromTmux
         length (Tmux.windows snapshot) @?= 1
         length (Tmux.panes snapshot) @?= 1
         case Tmux.panes snapshot of
@@ -35,6 +37,9 @@ tests = testGroup "public Server API"
             window <- either (fail . show) pure (Tmux.lookupWindow snapshot pane.window)
             Tmux.panesForWindow snapshot window.ref @?= Right [pane]
             Tmux.lookupPaneId snapshot (Tmux.paneId pane.ref) @?= Right pane
+            let offline = F.paneRef (F.fixtureOrigin "unit") (Tmux.paneId pane.ref)
+            assertBool "offline reference equalled a Server target" (offline /= pane.ref)
+            Tmux.lookupPane snapshot offline @?= Left Tmux.ForeignGeneration
             pane.title @?= "public-api"
           _ -> assertFailure "owned fixture has an unexpected pane graph"
         case Tmux.captureInterval snapshot of
