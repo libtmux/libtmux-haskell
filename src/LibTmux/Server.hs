@@ -4,6 +4,8 @@
 -- socket pin, native command clients and cleanup workers. Closing this scope
 -- releases those resources; it does not send @kill-server@. The tmux noun
 -- @Client@ refers to detached observations in "LibTmux.Snapshot".
+-- 'withRuntime' and 'withServerIn' give several handles shared resource limits
+-- and independent Server scopes.
 --
 -- 'capture' returns fully decoded, validated values. Field access and graph
 -- navigation are pure. Captures use an observation interval, not an atomic
@@ -16,6 +18,8 @@
 module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration
+    -- * Shared ownership
+  , Runtime, withRuntime, withServerIn
     -- * Operational failures
   , TmuxException (..), tryTmux
     -- * Scope cleanup
@@ -31,7 +35,7 @@ import Control.Concurrent.STM (atomically, readTVar)
 import Control.DeepSeq (force)
 import Control.Exception
   ( ExceptionWithContext (..), IOException, SomeAsyncException, SomeException
-  , catchNoPropagate, evaluate, fromException, rethrowIO, throwIO, tryWithContext
+  , catchNoPropagate, evaluate, fromException, mask, rethrowIO, throwIO, tryWithContext
   )
 import Control.Exception.Context (ExceptionContext)
 import Control.Exception.Context qualified as Context
@@ -66,10 +70,51 @@ import System.OsString qualified as Platform
 import System.OsString.Posix qualified as Os
 
 -- | One pinned endpoint and connection generation. The constructor is hidden.
--- Retaining this value after 'withServer' does not keep admission open.
+-- Retaining this value after 'withServer' or 'withServerIn' keeps no admission open.
 data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int
 
--- | Pure configuration, checked when 'withServer' opens the handle.
+-- | Shared resource limits and cleanup ownership for Server handles. Create
+-- one with 'withRuntime', then adopt endpoints through 'withServerIn'.
+-- Detached t'Snapshot' values retain no Runtime.
+newtype Runtime = Runtime R.Runtime
+
+-- | Own a Runtime for the callback and perform bounded cleanup afterward.
+-- Closing it retires every adopted handle; application-owned threads remain
+-- the application's responsibility. Late adoption fails with 'RuntimeClosed'.
+-- The daemon remains running.
+--
+-- Callback failures and cancellation keep their original exception class.
+-- Incomplete cleanup retains a t'CleanupRecovery' in the exception context;
+-- use 'tryTmux' and 'cleanupRecoveries' to keep that responsibility reachable.
+withRuntime :: (Runtime -> IO a) -> IO a
+withRuntime action = do
+  runtime <- R.newRuntime P.normalFork
+  Scope.runScope runtime (action (Runtime runtime))
+
+-- | Adopt one endpoint within an existing Runtime and close only that handle
+-- after the callback. Other handles remain admitted under the shared limits;
+-- each adoption has its own 'serverGeneration'. Use 'withServer' for one handle.
+--
+-- Failed adoption can retain a t'CleanupRecovery' before a t'Server' exists.
+-- Inspection, retry and waiting through that owner stay scoped to the failed
+-- adoption. Cleanup preserves application exceptions, incoming masking state
+-- and cancellation; known acquisition failures use t'TmuxException'.
+withServerIn :: Runtime -> ServerConfig -> (Server -> IO a) -> IO a
+withServerIn (Runtime runtime) config action = mask $ \restore -> do
+  current <- atomically (R.usage runtime)
+  when (not current.accepting) (throwIO RuntimeClosed)
+  (executable, duration) <- restore (checkedConfiguration config)
+  owner <- operational $
+    catchNoPropagate (R.newServerOwner runtime) $
+      \original@(ExceptionWithContext context (problem :: B.LimitError)) -> case problem of
+        B.AdmissionClosed -> rethrowIO (ExceptionWithContext context RuntimeClosed)
+        _ -> rethrowIO original
+  Scope.runServerScope runtime owner $ restore $ do
+    handle <- operational (R.adoptServerOwnerWith (\_ _ -> pure ()) runtime owner
+      (posixBytes config.socketPath) (posixBytes config.pinDirectory))
+    action (Server runtime handle executable duration)
+
+-- | Pure configuration, checked when 'withServer' or 'withServerIn' opens the handle.
 -- Paths retain POSIX bytes; no text decoding or shell interpretation occurs.
 data ServerConfig = ServerConfig
   { socketPath :: !PosixPath -- ^ Existing tmux socket, with an absolute trusted path.
@@ -81,7 +126,7 @@ data ServerConfig = ServerConfig
 
 -- | Configure an existing socket, resolving @tmux@ through PATH when opened.
 -- The private pin uses the socket's parent directory. The capture timeout is
--- two seconds; callers can change it before 'withServer'.
+-- two seconds; callers can change it before opening a Server scope.
 serverConfig :: PosixPath -> ServerConfig
 serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeDirectory socket) 2
 
@@ -91,14 +136,19 @@ serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeD
 -- with a reachable t'CleanupRecovery'. No daemon shutdown is requested.
 withServer :: ServerConfig -> (Server -> IO a) -> IO a
 withServer config action = do
+  (executable, duration) <- checkedConfiguration config
+  runtime <- R.newRuntime P.normalFork
+  Scope.runScope runtime $ do
+    handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
+    action (Server runtime handle executable duration)
+
+checkedConfiguration :: ServerConfig -> IO (ByteString, Int)
+checkedConfiguration config = do
   let seconds = toRational config.captureTimeout
   when (seconds <= 0 || seconds > 10) $
     throwIO (InvalidConfiguration "captureTimeout must be greater than zero and at most ten seconds")
   executable <- operational (resolveExecutable config.executable)
-  runtime <- R.newRuntime P.normalFork
-  Scope.runScope runtime $ do
-    handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
-    action (Server runtime handle executable (fromInteger (ceiling (seconds * 1000000))))
+  pure (executable, fromInteger (ceiling (seconds * 1000000)))
 
 -- | Acquire the complete baseline graph, metadata and attached clients.
 -- Returned values own their data and remain usable after 'withServer' exits.
@@ -124,6 +174,8 @@ tryTmux = tryWithContext
 
 -- | Cleanup owners retained by a failed or cancelled scope. The context
 -- comes from 'tryTmux' or 'tryWithContext'. Inspection performs no tmux IO.
+-- Nested scopes can contribute overlapping owners; inspect and resume each
+-- retained responsibility through 'inspectCleanup' and 'resumeCleanup'.
 cleanupRecoveries :: ExceptionContext -> [CleanupRecovery]
 cleanupRecoveries = Context.getExceptionAnnotations
 

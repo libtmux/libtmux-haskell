@@ -20,6 +20,7 @@ import LibTmux.Internal.Scheduler qualified as S
 -- its class when the callback itself failed.
 data TmuxException
   = ServerClosed -- ^ Admission through the retained Server handle has closed.
+  | RuntimeClosed -- ^ Admission through the retained Runtime has closed.
   | InvalidConfiguration !Text -- ^ Configuration failed before acquisition.
   | InvalidObservation !Text -- ^ Acquired metadata failed final validation.
   | OperationFailed !SomeException -- ^ Known backend failure with its original cause.
