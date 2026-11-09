@@ -49,8 +49,8 @@ tests = testGroup "real scalar framing"
         let executable = Bytes.pack fixture.executable
             raw args = do
               let spec = N.spec executable
-                    ([executable, "-u", "-N", "-S", pinPath (R.clientPin client)] <> args)
-              result <- P.submit B.Ordinary P.defaultHooks (R.clientPool client) spec "" >>= P.await
+                    ([executable, "-u", "-N", "-S", pinPath (R.serverPin client)] <> args)
+              result <- P.submit B.Ordinary P.defaultHooks (R.serverPool client) spec "" >>= P.await
               (result.exit, result.errors) @?= (Just (N.Exited 0), "")
               pure result.output
             generated = map Raw.pack $ unGen

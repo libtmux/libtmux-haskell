@@ -2,9 +2,9 @@
 --
 -- 'captureSnapshot' includes daemon metadata and attached clients; 'captureGraph'
 -- acquires only physical entities and links. Read failures and cancellation
--- can leave logical uncertainty. 'CaptureRecovery' in the exception context
+-- can leave logical uncertainty. t'CaptureRecovery' in the exception context
 -- retains the exact read and its recovery owner, without retaining its result.
--- Public Server scope policies remain unfinished.
+-- "LibTmux.Server" owns the public scope and cleanup policy.
 module LibTmux.Internal.Capture
   ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
   , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
@@ -46,7 +46,7 @@ instance Exception CaptureError
 
 -- | A reachable owner for one failed or cancelled capture. The receipt holds
 -- metadata only; the Runtime retains any remaining native and logical owners.
-data CaptureRecovery = CaptureRecovery !R.Runtime !R.Client !R.ReadReceipt
+data CaptureRecovery = CaptureRecovery !R.Runtime !R.ServerHandle !R.ReadReceipt
 instance Show CaptureRecovery where
   showsPrec precedence (CaptureRecovery _ _ receipt) =
     showParen (precedence > 10) (showString "CaptureRecovery " . shows receipt)
@@ -70,28 +70,28 @@ resumeRecovery (CaptureRecovery runtime client receipt) = R.resumeReceipt runtim
 detachRecovery :: CaptureRecovery -> STM Bool
 detachRecovery (CaptureRecovery runtime client receipt) = R.detachReceipt runtime client receipt
 
-captureGraph :: R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedGraph
+captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
   left <- remaining deadline
   owned runtime receipt (R.readGraphWith P.defaultHooks left runtime client executable)
 
-captureSnapshot :: R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedSnapshot
+captureSnapshot :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedSnapshot
 captureSnapshot = captureSnapshotWith P.defaultHooks
 
 -- | Use the native process checkpoints while retaining capture correlation
 -- across worker handoff, cancellation and conversion of a deadline failure.
-captureSnapshotWith :: P.Hooks -> R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedSnapshot
+captureSnapshotWith :: P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedSnapshot
 captureSnapshotWith hooks runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
   left <- remaining deadline
   owned runtime receipt (R.readSnapshotWith hooks left runtime client executable)
 
 -- | Serial comparison path with a checkpoint before its final topology read.
 -- The tagged default above does not use these scalar hydration boundaries.
-captureGraphWith :: IO () -> R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedGraph
+captureGraphWith :: IO () -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraphWith checkpoint runtime client executable duration =
   withinDeadline runtime client duration (\receipt deadline -> R.withCaptureBudget runtime (attempt receipt deadline 2))
   where
-    generation = pinGeneration (R.clientPin client)
+    generation = pinGeneration (R.serverPin client)
     attempt :: IORef (Maybe R.ReadReceipt) -> Word64 -> Int -> IO G.EntityGraph
     attempt receipt deadline tries = oneAttempt receipt deadline `catches`
       [ Handler $ \problem -> case problem of
@@ -153,7 +153,7 @@ captureGraphWith checkpoint runtime client executable duration =
         (G.assembleEntityGraph generation sessions windows panes (G.graphLinks before))
       evaluate (force graph)
 
-withinDeadline :: NFData value => R.Runtime -> R.Client -> Int
+withinDeadline :: NFData value => R.Runtime -> R.ServerHandle -> Int
   -> (IORef (Maybe R.ReadReceipt) -> Word64 -> IO value) -> IO (Word64, Word64, value)
 withinDeadline runtime client duration action = mask $ \restore -> do
   when (duration < 1 || duration > 10000000) (throwIO (InvalidCaptureDeadline duration))

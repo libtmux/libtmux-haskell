@@ -6,16 +6,16 @@
 -- cleanup owned here. 'inspect' retires only successfully cleaned entries;
 -- 'awaitCleanup' may wait without a deadline. 'shutdown' bounds its two
 -- observation phases while retaining incomplete cleanup. Typed framed server
--- reads bind logical admission and deadlines to native ownership. Other
--- command bindings and the public Server scope remain unfinished.
+-- reads bind logical admission and deadlines to native ownership. The common
+-- Server scope is public; shared scopes and other command bindings remain open.
 module LibTmux.Internal.Runtime
-  ( Runtime, Client, Report (..), newRuntime, adopt, adoptWith
-  , clientPool, clientPin, usage, inspect, closeClient, requestClose, awaitCleanup, shutdown
+  ( Runtime, ServerHandle, Report (..), newRuntime, adopt, adoptWith
+  , serverPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
   , readServerVersion, readServerVersionWith
   , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, readSnapshotWith, withCaptureBudget
-  , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, inspectReceipt, resumeReceipt
+  , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, receiptOperation, inspectReceipt, resumeReceipt
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
   ) where
@@ -60,7 +60,7 @@ data Runtime = Runtime
   , scheduler :: !S.Scheduler, reads :: !(TVar [ReadOwner])
   }
 data Entry = Entry {pool :: !P.Pool, closeFailure :: !(TVar (Maybe SomeException))}
-data Client = Client !Entry !SocketPin
+data ServerHandle = ServerHandle !Entry !SocketPin
 
 -- | Physical cleanup, owned read workers and logical uncertainty are separate.
 -- An empty 'pending' list alone does not establish complete Runtime cleanup.
@@ -75,7 +75,7 @@ data Report = Report
 data ReadClass = InspectionRead | ScalarRead
   deriving stock (Eq, Show)
 
--- | A typed observation handle with no reference to its t'Runtime', t'Client',
+-- | A typed observation handle with no reference to its t'Runtime', t'ServerHandle',
 -- native ticket or input buffers. 'awaitRead' also works after cleanup.
 data Request value = Request !ReadReceipt !(TMVar (ReadResult value))
 
@@ -91,9 +91,11 @@ instance ExceptionAnnotation ReadReceipt
 -- | Logical responsibility and this read's physical owners, observed together.
 -- A released native child does not establish a daemon-side command outcome.
 data ReadRecovery = ReadRecovery
-  { logical :: !S.Status
-  , workerOwned :: !Bool, workerFailure :: !(Maybe SomeException)
-  , nativeOwned :: !Bool, nativeFailure :: !(Maybe SomeException)
+  { logical :: !S.Status -- ^ Logical progress, original result and retained responsibility.
+  , workerOwned :: !Bool -- ^ A decoder or recovery worker still owns this read.
+  , workerFailure :: !(Maybe SomeException) -- ^ Retained decoder or recovery failure.
+  , nativeOwned :: !Bool -- ^ A native child or its cleanup remains owned.
+  , nativeFailure :: !(Maybe SomeException) -- ^ Retained native cleanup failure.
   } deriving stock (Show)
 -- | A checked positive server PID, observed by 'readServerPid'.
 type PidRead = Request Integer
@@ -119,7 +121,7 @@ data EntityField
   deriving stock (Eq, Show)
 
 data ReadError
-  = ForeignClient | InvalidReadDeadline !Int | ReadClockOverflow
+  = ForeignServer | InvalidReadDeadline !Int | ReadClockOverflow
   | ReadExpired | ReadCancelled | ReadClosing
   | InvalidReadFrame !F.FrameError | InvalidServerPid
   | InvalidRecordFrame !Record.RecordError
@@ -156,11 +158,11 @@ newRuntime forker = do
 -- | Adopt one endpoint through a private socket pin. Reserve a client credit
 -- before filesystem acquisition. Cancellation preserves its original exception
 -- while the Runtime retains cleanup; use 'requestClose' and 'awaitCleanup'.
-adopt :: Runtime -> ByteString -> ByteString -> IO Client
+adopt :: Runtime -> ByteString -> ByteString -> IO ServerHandle
 adopt = adoptWith (\_ _ -> pure ())
 
 -- | Adoption with the socket pin's existing deterministic checkpoints.
-adoptWith :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ByteString -> ByteString -> IO Client
+adoptWith :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ByteString -> ByteString -> IO ServerHandle
 adoptWith checkpoint runtime@Runtime {forker} source parent = mask $ \restore -> do
   owner <- newPinOwner
   entry <- atomically $ do
@@ -179,13 +181,13 @@ adoptWith checkpoint runtime@Runtime {forker} source parent = mask $ \restore ->
       current <- usage runtime
       closed <- readTVar entry.pool.closing
       when (not current.accepting || closed) (throwSTM P.PoolClosed)
-    pure (Client entry pin)) `onException` abandon
+    pure (ServerHandle entry pin)) `onException` abandon
 
-clientPool :: Client -> P.Pool
-clientPool (Client entry _) = entry.pool
+serverPool :: ServerHandle -> P.Pool
+serverPool (ServerHandle entry _) = entry.pool
 
-clientPin :: Client -> SocketPin
-clientPin (Client _ pin) = pin
+serverPin :: ServerHandle -> SocketPin
+serverPin (ServerHandle _ pin) = pin
 
 usage :: Runtime -> STM B.Usage
 usage runtime = B.usage runtime.budget
@@ -215,8 +217,8 @@ inspect runtime = do
     complete P.CleanupComplete = True
     complete _ = False
 
-closeClient :: Client -> IO P.CloseReport
-closeClient (Client entry _) = closeEntry entry >>= either throwIO pure
+closeServerHandle :: ServerHandle -> IO P.CloseReport
+closeServerHandle (ServerHandle entry _) = closeEntry entry >>= either throwIO pure
 
 closeEntry :: Entry -> IO (Either SomeException P.CloseReport)
 closeEntry entry = mask_ $ do
@@ -323,14 +325,17 @@ readReceipt (Request receipt _) = receipt
 receiptGeneration :: ReadReceipt -> Graph.Generation
 receiptGeneration (ReadReceipt _ generation _ _) = generation
 
-validateReceipt :: Runtime -> Client -> ReadReceipt -> STM ()
+receiptOperation :: ReadReceipt -> S.Operation
+receiptOperation (ReadReceipt _ _ operation _) = operation
+
+validateReceipt :: Runtime -> ServerHandle -> ReadReceipt -> STM ()
 validateReceipt runtime client (ReadReceipt identity generation _ _) =
-  unless (identity == runtime.identity && (clientPool client).budget == runtime.budget
-    && generation == pinGeneration (clientPin client)) (throwSTM ForeignClient)
+  unless (identity == runtime.identity && (serverPool client).budget == runtime.budget
+    && generation == pinGeneration (serverPin client)) (throwSTM ForeignServer)
 
 -- | Inspect only the originating operation, even after its decoder retires.
 -- Another handle to the same endpoint cannot inspect or detach this receipt.
-inspectReceipt :: Runtime -> Client -> ReadReceipt -> STM ReadRecovery
+inspectReceipt :: Runtime -> ServerHandle -> ReadReceipt -> STM ReadRecovery
 inspectReceipt runtime client receipt@(ReadReceipt _ _ operation key) = do
   validateReceipt runtime client receipt
   logical <- S.status operation
@@ -340,7 +345,7 @@ inspectReceipt runtime client receipt@(ReadReceipt _ _ operation key) = do
     owner : _ -> readTVar owner.failure
     [] -> pure Nothing
   selected <- readTVar key
-  jobs <- readTVar (clientPool client).jobs
+  jobs <- readTVar (serverPool client).jobs
   let ticket = selected >>= (`Map.lookup` jobs)
   nativeFailure <- maybe (pure Nothing) (readTVar . (.cleanupFailure)) ticket
   pure ReadRecovery {logical, workerOwned = not (null matching), workerFailure,
@@ -348,28 +353,28 @@ inspectReceipt runtime client receipt@(ReadReceipt _ _ operation key) = do
 
 -- | Retry existing cleanup and decoder ownership without redispatching tmux.
 -- This leaves admission open. Allocation failure retains the original owners.
-resumeReceipt :: Runtime -> Client -> ReadReceipt -> IO ()
+resumeReceipt :: Runtime -> ServerHandle -> ReadReceipt -> IO ()
 resumeReceipt runtime client receipt@(ReadReceipt _ _ operation key) = mask_ $ do
   (ticket, owners) <- atomically $ do
     validateReceipt runtime client receipt
     selected <- readTVar key
-    jobs <- readTVar (clientPool client).jobs
+    jobs <- readTVar (serverPool client).jobs
     owners <- filter ((== operation) . (.operation)) <$> readTVar runtime.reads
     pure (selected >>= (`Map.lookup` jobs), owners)
-  mapM_ (P.resumeCleanup (clientPool client)) ticket
+  mapM_ (P.resumeCleanup (serverPool client)) ticket
   mapM_ (resumeRead runtime) owners
   observed <- atomically (inspectReceipt runtime client receipt)
   mapM_ throwIO observed.workerFailure
 
 -- | Request cancellation of the correlated read, retaining unresolved debt.
-cancelReceipt :: Runtime -> Client -> ReadReceipt -> IO ()
+cancelReceipt :: Runtime -> ServerHandle -> ReadReceipt -> IO ()
 cancelReceipt runtime client receipt@(ReadReceipt _ _ operation _) = atomically $ do
   validateReceipt runtime client receipt
   cancelOperation runtime operation
 
 -- | Relinquish only this receipt's logical responsibility. Native cleanup and
 -- decoder ownership remain registered until their own completion.
-detachReceipt :: Runtime -> Client -> ReadReceipt -> STM Bool
+detachReceipt :: Runtime -> ServerHandle -> ReadReceipt -> STM Bool
 detachReceipt runtime client receipt@(ReadReceipt _ _ operation _) = do
   validateReceipt runtime client receipt
   detachOperation runtime operation
@@ -384,42 +389,42 @@ awaitRead (Request _ result) = atomically (readTMVar result)
 
 -- | Acquire a fresh, nonce-framed PID using a one-second deadline. This fixed
 -- read is the first private logical/physical binding, not a raw command API.
-readServerPid :: Runtime -> Client -> ByteString -> ReadClass -> IO PidRead
+readServerPid :: Runtime -> ServerHandle -> ByteString -> ReadClass -> IO PidRead
 readServerPid = readServerPidWith P.defaultHooks 1000000
 
 -- | Use existing process checkpoints and a checked 1..10000000 microsecond
 -- deadline. The same expiration governs queueing, submission and validation.
-readServerPidWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO PidRead
+readServerPidWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO PidRead
 readServerPidWith = startRead ReadPid
 
 -- | Observe a stable release identity through the pinned server. Use
 -- 'Version.requireSupported' separately for minimum-version admission;
 -- this observation establishes no feature capabilities.
-readServerVersion :: Runtime -> Client -> ByteString -> ReadClass -> IO VersionRead
+readServerVersion :: Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
 readServerVersion = readServerVersionWith P.defaultHooks 1000000
 
 -- | The same owned deadline and checkpoints as 'readServerPidWith'.
-readServerVersionWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO VersionRead
+readServerVersionWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
 readServerVersionWith = startRead ReadVersion
 
-readTopologyWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request ByteString)
+readTopologyWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request ByteString)
 readTopologyWith = startRead ReadTopology
 
-readEntityFieldWith :: EntityField -> P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request ByteString)
+readEntityFieldWith :: EntityField -> P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request ByteString)
 readEntityFieldWith field = startRead (ReadEntityField field)
 
 -- | Read the physical/link profile in one tagged format expansion. Its
 -- registered owner retains the capture reservation through decoding and
 -- forcing, including after caller cancellation. This does not acquire clients.
-readGraphWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> IO (Request Graph.EntityGraph)
+readGraphWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> IO (Request Graph.EntityGraph)
 readGraphWith hooks duration runtime client executable =
-  startRead (ReadGraph (pinGeneration (clientPin client))) hooks duration runtime client executable ScalarRead
+  startRead (ReadGraph (pinGeneration (serverPin client))) hooks duration runtime client executable ScalarRead
 
 -- | Acquire the finite metadata, physical and attached-client profile in one
 -- owned command queue. It retains ordinary graph credit through publication.
-readSnapshotWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> IO (Request Graph.Snapshot)
+readSnapshotWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> IO (Request Graph.Snapshot)
 readSnapshotWith hooks duration runtime client executable =
-  startRead (ReadSnapshot (pinGeneration (clientPin client))) hooks duration runtime client executable ScalarRead
+  startRead (ReadSnapshot (pinGeneration (serverPin client))) hooks duration runtime client executable ScalarRead
 
 -- | Retain the complete capture envelope while fields and graphs accumulate.
 -- Native requests keep their independent child/parent reservations.
@@ -460,10 +465,10 @@ commandTarget :: ReadCommand value -> [ByteString]
 commandTarget (ReadEntityField field) = let (target, _, _) = entityField field in ["-t", target]
 commandTarget _ = []
 
-startRead :: ReadCommand value -> P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request value)
+startRead :: ReadCommand value -> P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request value)
 startRead command hooks duration runtime@Runtime {forker} client executable allocation = mask_ $ do
-  let pool = clientPool client
-  unless (pool.budget == runtime.budget) (throwIO ForeignClient)
+  let pool = serverPool client
+  unless (pool.budget == runtime.budget) (throwIO ForeignServer)
   when (duration < 1 || duration > 10000000) (throwIO (InvalidReadDeadline duration))
   token <- Entropy.freshToken32
   let hex = "0123456789abcdef" :: ByteString
@@ -471,7 +476,7 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
         [Bytes.index hex (fromIntegral (shiftR byte 4)),
          Bytes.index hex (fromIntegral (byte .&. 15))]) (Bytes.unpack token))
   nonce <- either (throwIO . InvalidReadFrame) pure (F.parseNonce encoded)
-  let spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (clientPin client)]
+  let spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (serverPin client)]
         <> commandArguments nonce command)
       (lane, resourceClass) = case allocation of
         InspectionRead -> (S.Inspection, B.Inspection)
@@ -496,7 +501,7 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
     busy <- newTVar True
     failure <- newTVar Nothing
     key <- newTVar Nothing
-    let receipt = ReadReceipt runtime.identity (pinGeneration (clientPin client)) operation key
+    let receipt = ReadReceipt runtime.identity (pinGeneration (serverPin client)) operation key
         owner = ReadOwner {operation, receipt, command, result, nonce, deadline = now + delta, envelope,
           submission, cancelled, busy, failure}
     modifyTVar' runtime.reads (<> [owner])

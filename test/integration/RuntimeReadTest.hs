@@ -69,7 +69,7 @@ tests = testGroup "owned Runtime reads"
             tracked action = modifyIORef' forks (+ 1) >> P.normalFork action
         bracket (R.newRuntime tracked) R.awaitCleanup $ \other -> do
           try @R.ReadError (start other client fixture R.InspectionRead) >>= \case
-            Left R.ForeignClient -> pure ()
+            Left R.ForeignServer -> pure ()
             _ -> assertFailure "foreign client crossed Runtime budgets"
           readIORef forks >>= (@?= 0)
           atomically (R.usage other) >>= (@?= B.Usage True 0 0 0)
@@ -150,16 +150,16 @@ tests = testGroup "owned Runtime reads"
         let receipt = R.readReceipt request
             rejected selected other = do
               try @R.ReadError (atomically (R.inspectReceipt selected other receipt)) >>= \case
-                Left R.ForeignClient -> pure ()
+                Left R.ForeignServer -> pure ()
                 _ -> assertFailure "foreign receipt was inspected"
               try @R.ReadError (R.resumeReceipt selected other receipt) >>= \case
-                Left R.ForeignClient -> pure ()
+                Left R.ForeignServer -> pure ()
                 _ -> assertFailure "foreign receipt resumed cleanup"
               try @R.ReadError (R.cancelReceipt selected other receipt) >>= \case
-                Left R.ForeignClient -> pure ()
+                Left R.ForeignServer -> pure ()
                 _ -> assertFailure "foreign receipt requested cancellation"
               try @R.ReadError (atomically (R.detachReceipt selected other receipt)) >>= \case
-                Left R.ForeignClient -> pure ()
+                Left R.ForeignServer -> pure ()
                 _ -> assertFailure "foreign receipt detached responsibility"
         other <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
         rejected runtime other
@@ -206,7 +206,7 @@ tests = testGroup "owned Runtime reads"
           expectUnavailable S.OutcomeUnknown request
           atomically (R.readStatus request) >>= \status -> status.retained @?= True
           atomically (R.usage runtime) >>= (@?= B.Usage True 1 1 (P.childBytes + P.retainedBytes))
-          atomically (readTVar (R.clientPool client).jobs) >>= \jobs -> do
+          atomically (readTVar (R.serverPool client).jobs) >>= \jobs -> do
             Map.size jobs @?= 1
             forM_ (Map.elems jobs) $ \ticket -> atomically (readTVar ticket.cancelled) >>= (@?= True)
         waitWorkers runtime
@@ -335,7 +335,7 @@ tests = testGroup "owned Runtime reads"
 
   , testCase "an inspection executes using protected physical and parent credits" $
       withRuntime P.normalFork $ \runtime client fixture -> do
-        let budget = (R.clientPool client).budget
+        let budget = (R.serverPool client).budget
         expected <- serverPid fixture
         bracket (atomically (replicateM 15 (B.acquireChild budget B.Ordinary 0)))
           (atomically . mapM_ B.releaseChild) $ \_ ->
@@ -406,7 +406,7 @@ tests = testGroup "owned Runtime reads"
 
 cancelledProfile
   :: Show value => String
-  -> (P.Hooks -> Int -> R.Runtime -> R.Client -> Bytes.ByteString -> IO (R.Request value))
+  -> (P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> Bytes.ByteString -> IO (R.Request value))
   -> (value -> Assertion) -> TestTree
 cancelledProfile label readProfile verifyValue =
   testCase ("cancelled " <> label <> " reads retain their envelope and leave inspection usable") $
@@ -435,16 +435,16 @@ cancelledProfile label readProfile verifyValue =
         R.ReadValue value -> verifyValue value
         other -> assertFailure (show other)
 
-withRuntime :: P.Fork -> (R.Runtime -> R.Client -> Fixture.Fixture -> IO a) -> IO a
+withRuntime :: P.Fork -> (R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO a) -> IO a
 withRuntime fork action = Fixture.withFixture $ \fixture ->
   bracket (R.newRuntime fork) R.awaitCleanup $ \runtime -> do
     client <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
     action runtime client fixture
 
-start :: R.Runtime -> R.Client -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
+start :: R.Runtime -> R.ServerHandle -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
 start runtime client fixture = R.readServerPid runtime client (Bytes.pack fixture.executable)
 
-startWith :: P.Hooks -> Int -> R.Runtime -> R.Client -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
+startWith :: P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
 startWith hooks duration runtime client fixture =
   R.readServerPidWith hooks duration runtime client (Bytes.pack fixture.executable)
 

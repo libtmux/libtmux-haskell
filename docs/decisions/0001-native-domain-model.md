@@ -5,8 +5,10 @@
 Accepted for implementation after the four external reviews and their
 [source and probe reconciliation](0001-native-domain-model-qualification.md).
 Public API acceptance remains conditional on the qualification work below.
-The current exported modules are `LibTmux.Id`, `LibTmux.Value` and
-`LibTmux.Version`; [PR #2][capture-pr] contains the private implementation.
+The public observation work adds `LibTmux`, `LibTmux.Server` and
+`LibTmux.Snapshot` to the scalar modules. [PR #2][capture-pr] contains the
+earlier private capture foundation. Installed consumers and native API
+documentation remain acceptance gates for the new public surface.
 
 ## Context
 
@@ -82,8 +84,13 @@ Caller-created or edited observation records are local values: they do not
 rewrite snapshot indexes, prove provenance or certify graph validity. Commands
 take a Server and an opaque reference. Provide validated offline fixture
 descriptions with a detached origin whose references cannot target a live
-Server. Decide observation constructor exports through an installed consumer
-covering imports, patterns, projections and local updates.
+Server. Export detached observation constructors for ordinary record patterns
+and native Haddock field documentation. GHC 9.14.1 and Haddock 2.33 omit field
+rows when these constructors are hidden, despite exporting their labels.
+Installed consumers qualify imports, patterns, projections and local updates.
+This makes adding a required observation field a public versioning change.
+Keep Snapshot assembly, targeting references and checked-value constructors
+controlled; a locally constructed record does not establish graph provenance.
 
 Do not expose reconstruction-capable `Read`, `Generic`, codecs or coercions
 that bypass checked-value, reference or Snapshot invariants. `NFData` does not
@@ -117,7 +124,9 @@ These signatures describe proposed interfaces, not runnable examples:
 
 ```text
 withServerIn :: Runtime -> ServerConfig -> (Server -> IO a) -> IO a
+withServer   :: ServerConfig -> (Server -> IO a) -> IO a
 capture      :: Server -> IO Snapshot
+tryTmux      :: IO a -> IO (Either (ExceptionWithContext TmuxException) a)
 sessions     :: Snapshot -> [Session]
 windows      :: Snapshot -> [Window]
 panes        :: Snapshot -> [Pane]
@@ -197,9 +206,15 @@ Avoid generally blocking uninterruptible cleanup. Exception-context mechanisms
 need integrated accepted-read cancellation and double-failure tests.
 
 Operational failures use concrete `TmuxException`; parsing, lookup, query and
-cardinality use their respective `Either` results. `tryTmux` catches only
-library operational failures. Workers have an explicit wait, link or supervised
-failure channel. [Exceptions][exceptions] · [Scoped concurrency][async]
+cardinality use their respective `Either` results. `tryTmux` specializes
+`tryWithContext` to library operational failures and retains the standard
+`ExceptionWithContext` result. Recovery functions consume its context so
+ownership survives handling a typed library error. Ordinary typed `try`
+discards that context. Keep the context when translating into application
+errors. Callback and cancellation failures preserve their original class;
+callers can retain those contexts with `tryWithContext` as well. Workers have
+an explicit wait, link or supervised failure channel.
+[Context-preserving catches][context-catches] · [Scoped concurrency][async]
 
 ### Keep queries optional and validate before evaluation
 
@@ -271,6 +286,7 @@ release readiness.
 [record-rules]: https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/duplicate_record_fields.html
 [map-strict]: https://hackage-content.haskell.org/package/containers-0.8/docs/Data-Map-Strict.html
 [exceptions]: https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html
+[context-catches]: https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext
 [async]: https://hackage-content.haskell.org/package/async-2.2.6/docs/Control-Concurrent-Async.html
 [beam]: https://haskell-beam.github.io/beam/user-guide/queries/basic/
 [cabal-projects]: https://cabal.readthedocs.io/en/stable/cabal-project-description-file.html#specifying-the-local-packages

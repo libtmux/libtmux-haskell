@@ -6,6 +6,29 @@
 $ cabal run --verbose=0 typed-values
 ```
 
+The complete program uses only pure domain constructors before printing:
+
+<!-- example: typed-values -->
+```haskell
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Construct tmux domain values without starting a process
+-- or contacting a server.
+module Main (main) where
+
+import LibTmux.Id (parseWindowId, renderWindowId)
+import LibTmux.Value (dimensionValue, mkDimension)
+import LibTmux.Version (parseVersion, renderVersion, requireSupported)
+
+main :: IO ()
+main = do
+  version <- either (fail . show) pure $
+    parseVersion "tmux 3.3a\n" >>= requireSupported
+  window <- either (fail . show) pure (parseWindowId "@17")
+  width <- either (fail . show) pure (mkDimension 120)
+  print (renderVersion version, renderWindowId window, dimensionValue width)
+```
+
 Program output:
 
 <!-- example-output: typed-values -->
@@ -24,8 +47,8 @@ native unsigned 32-bit range. Leading zeroes and whitespace are rejected.
 Use the rendering functions when producing external target text.
 
 An ID alone carries no endpoint or server lifetime. Parsing `@17` does not
-prove that a window exists. The ID API does not yet provide generation-bound
-references for external operations.
+prove that a window exists. Generation-bound references come from a validated
+[snapshot](capture.md), where lookups retain the Server adoption's identity.
 
 [`WindowIndex`](../src/LibTmux/Value.hs) identifies a window link's position within a session.
 [`PaneIndex`](../src/LibTmux/Value.hs) identifies a pane's position within its window. Neither is an

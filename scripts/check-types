@@ -14,6 +14,7 @@ compile() {
 }
 
 compile test/compile-pass/ValueApi.hs
+compile test/compile-pass/ObservationApi.hs
 
 reject() {
     local source=$1 code=$2 expected=$3
@@ -35,4 +36,4 @@ reject() {
 reject test/compile-fail/DimensionLiteral.hs 39999 'Num Dimension'
 reject test/compile-fail/MixedIndices.hs 83865 'Expected: PaneIndex -> WindowIndex'
 reject test/compile-fail/MixedIds.hs 83865 'Expected: PaneId -> WindowId'
-printf 'PASS: value API (1 positive and 3 intended negative compilation cases)\n'
+printf 'PASS: public API (2 positive and 3 intended negative compilation cases)\n'

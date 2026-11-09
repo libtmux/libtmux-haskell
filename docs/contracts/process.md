@@ -116,13 +116,13 @@ exception and leaves owners available for retry. The Runtime retains only
 the current attempt's completion latch.
 
 This ownership layer is private. The fixed server reads below bind logical and
-physical ownership. Other command bindings, capture and subscription consumers
-remain unimplemented. Physical shutdown does not resolve logical unknown
-outcomes or establish completion of a daemon job.
+physical ownership. Public captures use the Server scope; mutation and
+subscription bindings remain unimplemented. Physical shutdown does not resolve
+logical unknown outcomes or establish completion of a daemon job.
 
 ## Public scope outcomes
 
-The proposed Server scopes must preserve the following outcomes before export:
+The common Server scope preserves these outcomes:
 
 - Successful callback and cleanup return the callback result.
 - Successful callback with failed cleanup reports cleanup failure and retains
@@ -136,8 +136,19 @@ The proposed Server scopes must preserve the following outcomes before export:
   the failed handoff.
 
 A generally blocking uninterruptible region cannot supply bounded cleanup.
-Exception-context annotations are a candidate mechanism; the common scope
-needs integrated cancellation and double-failure tests. Correlate capture
+Exception-context annotations retain recovery owners. Integrated scope tests
+cover cancellation, double failure and failed worker allocation. The public
+`tryTmux` specializes base's `tryWithContext`, returning the typed failure together
+with its exception context. Retain that context when converting errors;
+`cleanupRecoveries` and `captureRecoveries` read their owners from it.
+An ordinary typed `try` discards those annotations. The GHC 9.14.1 probe and
+the public cleanup-failure integration case qualify the chosen catch boundary.
+[base exception API](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext).
+
+The advanced caller-owned Runtime scope remains unimplemented; the common
+`withServer` scope creates and owns its Runtime.
+
+Correlate capture
 failure with operation ID, endpoint/generation, physical cleanup status,
 logical outcome and available recovery or explicit detachment. Batching
 alone does not establish logical completion or retire uncertainty.

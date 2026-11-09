@@ -37,8 +37,8 @@ data State = State
   , operations :: !(Map Word64 Operation)
   }
 
--- | Metadata-only handle, readable with 'status' after responsibility retires.
--- Only its originating t'Scheduler' can advance it.
+-- | Metadata-only operation identity, readable after responsibility retires.
+-- Its owning scope controls advancement and explicit detachment.
 data Operation = Operation !Unique !Word64 !Lane !(TVar Status)
   deriving stock (Eq)
 
@@ -57,16 +57,21 @@ data Stage = Queued | Dispatching | Dispatched | ResponseClosed | OperationCompl
   deriving stock (Eq, Show)
 
 -- | First caller result. Later evidence can retire responsibility without
--- rewriting 'OutcomeUnknown' or 'ConnectionRetired'; see 'finish'.
-data Outcome = Succeeded | Failed | NotDispatched | OutcomeUnknown | ConnectionRetired
+-- rewriting 'OutcomeUnknown' or 'ConnectionRetired'.
+data Outcome
+  = Succeeded -- ^ Validated successful response and completion proof.
+  | Failed -- ^ Validated command failure.
+  | NotDispatched -- ^ Proof that the operation was never dispatched.
+  | OutcomeUnknown -- ^ Dispatch may have happened; completion remains uncertain.
+  | ConnectionRetired -- ^ The connection retired while responsibility remained.
   deriving stock (Eq, Show)
 
 -- | Progress, published result and responsibility are independent observations.
 -- A retained uncertain operation still consumes admission and its lane permit.
 data Status = Status
-  { stage :: !Stage
-  , outcome :: !(Maybe Outcome)
-  , retained :: !Bool
+  { stage :: !Stage -- ^ Last proven progress.
+  , outcome :: !(Maybe Outcome) -- ^ First published caller result, when available.
+  , retained :: !Bool -- ^ Whether the scope still retains logical responsibility.
   }
   deriving stock (Eq, Show)
 

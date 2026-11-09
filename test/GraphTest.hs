@@ -34,8 +34,8 @@ tests = testGroup "detached entity graph"
           @?= Left (ConflictingPane pane.ref)
   , testCase "rejects dangling edges and duplicate contextual slots" $
       fixture $ \generation session window pane first _ -> do
-        assembleEntityGraph generation [] [window] [pane] [first] @?= Left (MissingSession session.ref)
-        assembleEntityGraph generation [session] [] [pane] [first] @?= Left (MissingWindow window.ref)
+        assembleEntityGraph generation [] [window] [pane] [first] @?= Left (InvalidReference (MissingSession session.ref))
+        assembleEntityGraph generation [session] [] [pane] [first] @?= Left (InvalidReference (MissingWindow window.ref))
         assembleEntityGraph generation [session] [window] [pane] [first, first]
           @?= Left (DuplicateWindowSlot session.ref first.index)
   , testCase "rejects foreign generations at acquisition and lookup" $
@@ -107,12 +107,23 @@ tests = testGroup "detached entity graph"
             PaneRef _ paneId = pane.ref
             client = ClientInput (Os.fromBytestring "client") 2 Nothing sessionId windowId first.index paneId
             otherGeneration = Generation (EndpointIdentity 7 11) (Bytes.replicate 32 2)
-        assembleSnapshot (info {Info.generation = otherGeneration}) graph [] @?= Left ForeignGeneration
+        assembleSnapshot (info {Info.generation = otherGeneration}) graph [] @?= Left (InvalidReference ForeignGeneration)
         assembleSnapshot (info {Info.pid = 0}) graph [] @?= Left InvalidServerInfo
         assembleSnapshot info graph [client {Input.pid = 0}] @?= Left InvalidClientMetadata
         assembleSnapshot info graph [client {Input.index = second.index}] @?= Left ChangedClientAttachment
         missing <- require (mkWindowIndex 9)
         assembleSnapshot info graph [client {Input.index = missing}] @?= Left (MissingClientLink session.ref missing)
+  , testCase "capture intervals belong to the snapshot and reject reversed time" $
+      fixture $ \generation session window pane first _ -> do
+        graph <- require (assembleEntityGraph generation [session] [window] [pane] [first])
+        version <- require (Version.parseVersion "3.3a")
+        let info = ServerInfo generation 100 0 version (Os.fromBytestring "/tmp/socket")
+        decoded <- require (assembleSnapshot info graph [])
+        captureInterval decoded @?= Nothing
+        stamped <- require (stampSnapshot 10 20 decoded)
+        captureInterval stamped @?= Just (CaptureInterval 10 20)
+        entities stamped @?= graph
+        stampSnapshot 20 10 decoded @?= Left InvalidCaptureInterval
   ]
 
 require :: Show e => Either e a -> IO a

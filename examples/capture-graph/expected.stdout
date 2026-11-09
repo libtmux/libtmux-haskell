@@ -1,0 +1,5 @@
+physical entities (sessions, windows, panes): (1,1,1)
+contextual appearances (links, panes): (2,2)
+active panes at least 120 cells wide: 1
+demo:0 -> @0 panes=%0
+demo:4 -> @0 panes=%0

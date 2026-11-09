@@ -16,7 +16,8 @@ import Data.Text.Encoding qualified as Utf8
 import Data.Text.Encoding.Error (UnicodeException)
 
 -- | A lossless reported label. Equality and ordering compare bytes.
--- String literals use UTF-8; 'fromBytes' also admits non-text data.
+-- String literals use UTF-8; byte constructors also admit non-text data.
+-- Conversion functions are exposed in "LibTmux.Snapshot".
 newtype TmuxText = TmuxText ShortByteString
   deriving stock (Eq, Ord, Show)
 

@@ -37,11 +37,14 @@ def main():
             doctests = []
             for path in ["src/LibTmux/Id.hs", "src/LibTmux/Value.hs", "src/LibTmux/Version.hs"]:
                 doctests.extend(haddock_examples(source.extractfile(prefix + path).read().decode()))
-            for entry in examples:
+            for index, entry in enumerate(examples):
                 consumer = directory / entry["id"]
                 consumer.mkdir()
                 for field in ["source", "package"]:
                     (consumer / Path(entry[field]).name).write_bytes(source.extractfile(prefix + entry[field]).read())
+                if "runner" in entry:
+                    for field in ["runner", "stdout"]:
+                        (consumer / Path(entry[field]).name).write_bytes(source.extractfile(prefix + entry[field]).read())
                 expected = source.extractfile(prefix + entry["stdout"]).read()
                 (consumer / "cabal.project").write_text(
                     f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n")
@@ -49,10 +52,13 @@ def main():
                 run(["cabal", "build", target, "--offline"], consumer)
                 executable = subprocess.check_output(
                     ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True).strip()
-                result = subprocess.run([executable], cwd=directory, check=True, capture_output=True)
+                command = (["python3", str(consumer / Path(entry["runner"]).name), "--program", executable]
+                           if "runner" in entry else [executable])
+                result = subprocess.run(command, cwd=directory, check=True, capture_output=True)
                 if result.stdout != expected or result.stderr:
                     raise ValueError("Archive example produced unexpected output")
-                check_haddock_examples(consumer, doctests)
+                if index == 0:
+                    check_haddock_examples(consumer, doctests)
         print("PASS: archive members, documented public example and Haddock examples")
 
 

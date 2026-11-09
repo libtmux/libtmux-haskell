@@ -92,7 +92,7 @@ tests = testGroup "entity capture"
               (started, ended, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
               assertBool "reversed Snapshot interval" (started <= ended)
               let info = G.serverInfo snapshot
-              info.generation @?= pinGeneration (R.clientPin client)
+              info.generation @?= pinGeneration (R.serverPin client)
               info.socketPath @?= Os.fromBytestring (Bytes.pack fixture.socket)
               reported <- rawCommand client fixture ["display-message", "-p", "-F", "#{pid} #{start_time} #{version}"]
               reported @?= Bytes.pack (show info.pid <> " " <> show info.startedAt <> " ")
@@ -140,7 +140,7 @@ tests = testGroup "entity capture"
                   (_, _, graph) <- capture runtime client fixture
                   length (G.graphPanes graph) @?= 2
                   ident <- either (fail . show) pure (Id.parsePaneId (Utf8.decodeUtf8 paneId))
-                  pane <- either (fail . show) pure (G.lookupPane graph (G.PaneRef (pinGeneration (R.clientPin client)) ident))
+                  pane <- either (fail . show) pure (G.lookupPane graph (G.PaneRef (pinGeneration (R.serverPin client)) ident))
                   label <- if release >= cleanedNames then pure Nothing else do
                     named <- raw ["new-window", "-d", "-n", rawWindowName, "-P", "-F",
                       "#{window_id} #{pane_pid}", "/bin/cat", "-"]
@@ -150,7 +150,7 @@ tests = testGroup "entity capture"
                           (_, _, namedGraph) <- capture runtime client fixture
                           windowIdent <- either (fail . show) pure (Id.parseWindowId (Utf8.decodeUtf8 namedWindow))
                           window <- either (fail . show) pure (G.lookupWindow namedGraph
-                            (G.WindowRef (pinGeneration (R.clientPin client)) windowIdent))
+                            (G.WindowRef (pinGeneration (R.serverPin client)) windowIdent))
                           pure (Just window.name)
                       other -> assertFailure ("invalid named-window receipt: " <> show other) >> pure Nothing
                   pure (pane, if release < cleanedNames then processName else "", path, label)
@@ -212,7 +212,7 @@ tests = testGroup "entity capture"
                 observed.logical.retained @?= True
                 observed.nativeOwned @?= False
                 observed.workerOwned @?= False
-                R.receiptGeneration (C.recoveryReceipt recovery) @?= pinGeneration (R.clientPin client)
+                R.receiptGeneration (C.recoveryReceipt recovery) @?= pinGeneration (R.serverPin client)
                 atomically (C.detachRecovery recovery) >>= (@?= True)
               Right _ -> assertFailure "malformed complete capture succeeded"
         (_, _, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
@@ -327,13 +327,13 @@ awaitCaptureReady ready worker = race ready (waitCatch worker) >>= \case
   Right (Left problem) -> assertFailure ("capture failed before its checkpoint: " <> show problem)
   Right (Right _) -> assertFailure "capture completed before its checkpoint"
 
-capture :: R.Runtime -> R.Client -> Fixture.Fixture -> IO C.CapturedGraph
+capture :: R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO C.CapturedGraph
 capture runtime client fixture = C.captureGraph runtime client (Bytes.pack fixture.executable) 2000000
 
-withRuntime :: (R.Runtime -> R.Client -> Fixture.Fixture -> IO a) -> IO a
+withRuntime :: (R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO a) -> IO a
 withRuntime = withRuntimeUsing P.normalFork
 
-withRuntimeUsing :: P.Fork -> (R.Runtime -> R.Client -> Fixture.Fixture -> IO a) -> IO a
+withRuntimeUsing :: P.Fork -> (R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO a) -> IO a
 withRuntimeUsing fork action = Fixture.withFixture $ \fixture ->
   bracket (R.newRuntime fork) R.awaitCleanup $ \runtime -> do
     client <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
@@ -344,10 +344,10 @@ command fixture args = do
   (code, _, errors) <- Fixture.command fixture args
   assertEqual (show errors) ExitSuccess code
 
-rawCommand :: R.Client -> Fixture.Fixture -> [Bytes.ByteString] -> IO Bytes.ByteString
+rawCommand :: R.ServerHandle -> Fixture.Fixture -> [Bytes.ByteString] -> IO Bytes.ByteString
 rawCommand client fixture args = do
   let executable = Bytes.pack fixture.executable
-      spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.clientPin client)] <> args)
-  result <- P.submit B.Ordinary P.defaultHooks (R.clientPool client) spec "" >>= P.await
+      spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.serverPin client)] <> args)
+  result <- P.submit B.Ordinary P.defaultHooks (R.serverPool client) spec "" >>= P.await
   (result.exit, result.errors) @?= (Just (N.Exited 0), "")
   pure result.output

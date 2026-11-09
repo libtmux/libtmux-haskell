@@ -44,14 +44,19 @@ def check():
     paths = {"source", "package", "project", "vcs_project", "stdout"}
     fields = paths | {"id", "executable", "capability", "command", "verification"}
     for entry in entries:
-        if set(entry) != fields or entry["id"] in examples:
+        if set(entry) not in [fields, fields | {"runner"}] or entry["id"] in examples:
             raise ValueError("Invalid or duplicate example entry")
-        for key in paths:
+        for key in paths | ({"runner"} if "runner" in entry else set()):
             path = Path(entry[key])
             if path.is_absolute() or ".." in path.parts or not (ROOT / path).is_file():
                 raise ValueError(f"Missing or invalid {key} for {entry['id']}")
         if Path(entry["source"]).parts != ("examples", entry["id"], "Main.hs"):
             raise ValueError("An example must have one Main.hs in its own directory")
+        if "runner" in entry:
+            if Path(entry["runner"]).parts != ("examples", entry["id"], "run.py"):
+                raise ValueError("An example runner must belong to its example directory")
+            if entry["command"] != ["python3", entry["runner"]]:
+                raise ValueError("An example command must execute its declared runner")
         examples[entry["id"]] = entry
         proof = entry["verification"]
         if set(proof) != {"workflow", "job", "step", "command", "checks"}:

@@ -17,7 +17,7 @@ class DocumentationChecks(unittest.TestCase):
         self.root = Path(self.temporary.name)
         for directory in ["docs", ".github", "examples", "src", "internal", "scripts", "test"]:
             shutil.copytree(check_docs.ROOT / directory, self.root / directory,
-                            ignore=shutil.ignore_patterns("__pycache__"))
+                            ignore=shutil.ignore_patterns("__pycache__", "dist-newstyle"))
         for filename in ["README.md", "AGENTS.md", "LICENSE", ".tool-versions"]:
             shutil.copy2(check_docs.ROOT / filename, self.root / filename)
         for name, value in [("ROOT", self.root), ("CATALOGUE", self.root / "examples/catalogue.json")]:
@@ -26,7 +26,7 @@ class DocumentationChecks(unittest.TestCase):
             self.addCleanup(context.stop)
 
     def test_registered_program_is_valid(self):
-        self.assertEqual(len(check_docs.check()), 1)
+        self.assertEqual({entry["id"] for entry in check_docs.check()}, {"typed-values", "capture-graph"})
 
     def test_unregistered_haskell_fence_is_rejected(self):
         with (self.root / "README.md").open("a") as document:
@@ -47,7 +47,7 @@ class DocumentationChecks(unittest.TestCase):
             check_docs.check()
 
     def test_stale_snippet_is_rejected(self):
-        path = self.root / "README.md"
+        path = self.root / "docs/values.md"
         path.write_text(path.read_text().replace('parseWindowId "@17"', 'parseWindowId "@18"'))
         with self.assertRaisesRegex(ValueError, "differs from its source"):
             check_docs.check()
@@ -88,6 +88,20 @@ class DocumentationChecks(unittest.TestCase):
                 document["examples"][0]["verification"][key] = value
                 path.write_text(json.dumps(document))
                 with self.assertRaisesRegex(ValueError, "Example workflow"):
+                    check_docs.check()
+
+    def test_runner_and_command_stay_bound_to_the_example(self):
+        path = self.root / "examples/catalogue.json"
+        original = json.loads(path.read_text())
+        for key, value, message in [
+            ("runner", "scripts/check_docs.py", "runner must belong"),
+            ("command", ["python3", "scripts/check_docs.py"], "command must execute"),
+        ]:
+            with self.subTest(key=key):
+                document = json.loads(json.dumps(original))
+                document["examples"][1][key] = value
+                path.write_text(json.dumps(document))
+                with self.assertRaisesRegex(ValueError, message):
                     check_docs.check()
 
 

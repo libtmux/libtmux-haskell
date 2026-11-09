@@ -31,6 +31,25 @@
           "archive-consumer"
         ]
       }
+    },
+    {
+      "id": "capture-graph",
+      "source": "examples/capture-graph/Main.hs",
+      "package": "examples/capture-graph/libtmux-capture-graph.cabal",
+      "project": "examples/capture-graph/cabal.project",
+      "vcs_project": "examples/capture-graph/cabal.project.vcs",
+      "stdout": "examples/capture-graph/expected.stdout",
+      "runner": "examples/capture-graph/run.py",
+      "executable": "capture-graph",
+      "capability": "tmux 3.3a through 3.8",
+      "command": ["python3", "examples/capture-graph/run.py"],
+      "verification": {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "checks",
+        "step": "Isolated source-archive consumer",
+        "command": ["python3", "scripts/check_sdist.py"],
+        "checks": ["exit-status", "stdout", "stderr-empty", "archive-consumer"]
+      }
     }
   ]
 }
