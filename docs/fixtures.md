@@ -11,6 +11,11 @@ window appearing at two session indices. Run it from a provisioned checkout:
 $ cabal run --verbose=0 offline-graph
 ```
 
+For a separate Cabal application, copy [Main.hs](../examples/offline-graph/Main.hs)
+and its [package file](../examples/offline-graph/libtmux-offline-graph.cabal).
+Save the [pinned source project](../examples/offline-graph/cabal.project.vcs)
+as `cabal.project`, provision its dependencies, then run the same command.
+
 <!-- example: offline-graph -->
 ```haskell
 {-# LANGUAGE OverloadedRecordDot #-}

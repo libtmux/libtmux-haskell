@@ -14,7 +14,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 05d142fba9f110da7ad867901f6e962c485d56c7
+  tag: 54e2c478af7c0ecff7f2b420a792bd1c7929fcf2
 ```
 
 Add the library to the executable's dependencies. The
