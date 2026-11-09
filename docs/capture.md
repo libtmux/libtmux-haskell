@@ -86,8 +86,9 @@ The [process contract](contracts/process.md) defines these outcomes in detail.
 Use [validated offline fixtures](fixtures.md) to exercise application graph
 logic without tmux. Their references belong to a separate offline origin.
 
-The advanced shared-Runtime API and capture measurements
-remain qualification work for the public observation milestone. The
+The [capture baseline](performance.md) covers controlled graph sizes. The
+advanced shared-Runtime API and broader performance cases remain qualification
+work for the public observation milestone. The
 [status page](status.md) records the broader implementation scope.
 
 The example fixture verifies daemon exit after setup failure before session

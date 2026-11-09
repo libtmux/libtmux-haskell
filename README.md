@@ -104,6 +104,7 @@ Operational exceptions retain their recovery context; see [capture and recovery]
 | Capture, filter and navigate linked windows | [Observations and recovery](docs/capture.md) |
 | Understand IDs, indices and validation errors | [Typed values](docs/values.md) |
 | Test graph predicates without tmux | [Validated offline fixtures](docs/fixtures.md) |
+| Reproduce capture measurements | [Performance](docs/performance.md) |
 | Browse declarations and module documentation | [API guide](docs/api.md) |
 | Evaluate the implemented scope and compatibility evidence | [Status](docs/status.md) |
 

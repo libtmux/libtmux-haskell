@@ -15,7 +15,7 @@ class DocumentationChecks(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="libtmux-haskell-docs-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for directory in ["docs", ".github", "examples", "src", "internal", "scripts", "test"]:
+        for directory in ["docs", ".github", "examples", "bench", "src", "internal", "scripts", "test"]:
             shutil.copytree(check_docs.ROOT / directory, self.root / directory,
                             ignore=shutil.ignore_patterns("__pycache__", "dist-newstyle"))
         for filename in ["README.md", "AGENTS.md", "LICENSE", ".tool-versions"]:

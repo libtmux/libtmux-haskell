@@ -19,6 +19,7 @@ tested-with: GHC ==9.14.1
 extra-doc-files:
   docs/capture.md
   docs/fixtures.md
+  docs/performance.md
   README.md
   CHANGELOG.md
   docs/assets/*.svg
@@ -63,6 +64,8 @@ extra-source-files:
   scripts/check_sdist.py
   scripts/check_docs.py
   scripts/test_check_docs.py
+  bench/capture.py
+  bench/results/capture-2026-11-08.json
   examples/catalogue.json
   examples/typed-values/Main.hs
   examples/typed-values/expected.stdout
@@ -103,6 +106,16 @@ common modern
     NoFieldSelectors
   ghc-options: -Wall -Wcompat -Wincomplete-uni-patterns
   build-depends: base >=4.22 && <4.23
+
+benchmark capture
+  import: modern
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench
+  main-is: Capture.hs
+  ghc-options: -threaded -rtsopts
+  build-depends:
+    filepath >=1.5.4 && <1.6,
+    libtmux-haskell
 
 library
   import: modern

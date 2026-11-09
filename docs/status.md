@@ -42,5 +42,7 @@ The [workflow](../.github/workflows/ci.yml) and
 [test guide](../.github/TESTING.md) describe those checks. This is evidence
 for the implemented subset, not complete tmux API compatibility.
 
-No package-performance benchmark results are published. Test and private
-probe durations do not measure an installed public transport.
+A [capture baseline](performance.md) records small, medium and large owned
+graphs on both tmux endpoints. It measures the public API with raw samples
+and host context. Allocation, concurrency and cancellation-latency
+qualification remain open.
