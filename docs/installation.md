@@ -4,9 +4,7 @@ Use GHC 9.14.1, GHC2024 and Cabal 3.18.2.0. The package targets this compiler
 series on Linux x86_64 only. Install the pinned tools through the
 [contributor setup](../.github/CONTRIBUTING.md#toolchain) if needed.
 
-The public observation work currently lives on the development branch below.
-It is a moving input while its draft PR is under review; use an immutable
-commit when selecting a reviewed build for an application:
+Pin the reviewed source revision in your application's `cabal.project`:
 
 <!-- example-project: capture-graph -->
 ```cabal
@@ -16,7 +14,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: feat/capture-recovery
+  tag: 05d142fba9f110da7ad867901f6e962c485d56c7
 ```
 
 Add the library to the executable's dependencies. The
