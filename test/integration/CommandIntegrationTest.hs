@@ -9,6 +9,7 @@ import Fixture qualified
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
+import LibTmux.Internal.Frame qualified as F
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
@@ -54,13 +55,72 @@ tests = testGroup "native mutation lowering"
             actual <- readField target name
             assertEqual (show mutation) (expectedResult.exit, expectedResult.errors, expected)
               (actualResult.exit, actualResult.errors, actual)
+  , testCase "sealed native queues retain rejection and errors after effects" $
+      Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+        client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+        nonce <- require (F.parseNonce (Bytes.replicate 64 97))
+        session <- require (Id.parseSessionId "$0")
+        window <- require (Id.parseWindowId "@0")
+        pane <- require (Id.parsePaneId "%0")
+        missing <- require (Id.parseWindowId "@999999")
+        let raw = invoke fixture client
+            run mutation = do
+              source <- require (C.compileScript nonce mutation)
+              completed <- invokeInput fixture client ["source-file", "-"] source
+              let exited = case completed.exit of
+                    Just (N.Exited status) -> Just (fromIntegral status)
+                    _ -> Nothing
+              require (C.decodeReply nonce exited completed.output completed.errors)
+            inspect target name = do
+              completed <- raw ["display-message", "-p", "-t", target, "-F", "#{" <> name <> "}"]
+              (completed.exit, completed.errors) @?= (Just (N.Exited 0), "")
+              pure completed.output
+            configured arguments = do
+              completed <- raw arguments
+              (completed.exit, completed.output, completed.errors) @?= (Just (N.Exited 0), "", "")
+        run (C.RenameSession session "renamed") >>= (@?= C.Applied)
+        inspect "$0" "session_name" >>= (@?= "renamed\n")
+        run (C.RenameWindow window "#[#{pid}];") >>= (@?= C.Applied)
+        inspect "@0" "window_name" >>= (@?= "#[#{pid}];\n")
+        let title = "quotes\" and $HOME\nλ"
+        configured ["set-option", "-g", "@libtmux-script-title", Utf8.encodeUtf8 title]
+        configured ["select-pane", "-t", "%0", "-T", "#{@libtmux-script-title}"]
+        expectedTitle <- inspect "%0" "pane_title"
+        run (C.SetPaneTitle pane title) >>= (@?= C.Applied)
+        inspect "%0" "pane_title" >>= (@?= expectedTitle)
+        forM_ ["\"$HOME`id`\\;", "tab\tline\n", "#[#(not-a-command)]",
+               Bytes.singleton 255, Bytes.pack [1 .. 255]] $ \value -> do
+          let argument = maybe value (<> "\\;") (Bytes.stripSuffix ";" value)
+          configured ["set-option", "-g", "@libtmux-script-window", argument]
+          oracle <- raw ["rename-window", "-t", "@0", "--", "#{@libtmux-script-window}"]
+          expected <- inspect "@0" "window_name"
+          reply <- run (C.RenameWindow window (Label.fromBytes value))
+          case oracle.exit of
+            Just (N.Exited 0) -> reply @?= C.Applied
+            Just (N.Exited 1) -> case reply of
+              C.Rejected _ -> pure ()
+              other -> fail (show other)
+            other -> fail (show other)
+          inspect "@0" "window_name" >>= (@?= expected)
+        run (C.RenameWindow missing "absent") >>= \case
+          C.Rejected diagnostic -> Bytes.null diagnostic @?= False
+          other -> fail (show other)
+        configured ["set-hook", "-g", "after-rename-window", "has-session -t =libtmux-command-missing"]
+        run (C.RenameWindow window "effect-before-hook-error") >>= \case
+          C.AppliedWithErrors diagnostic -> Bytes.null diagnostic @?= False
+          other -> fail (show other)
+        inspect "@0" "window_name" >>= (@?= "effect-before-hook-error\n")
+        configured ["set-hook", "-gu", "after-rename-window"]
   ]
 
 invoke :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> IO P.Completion
-invoke fixture client arguments = do
+invoke fixture client arguments = invokeInput fixture client arguments ""
+
+invokeInput :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> Bytes.ByteString -> IO P.Completion
+invokeInput fixture client arguments input = do
   let executable = Ascii.pack fixture.executable
       spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.serverPin client)] <> arguments)
-  ticket <- P.submit B.Ordinary P.defaultHooks (R.serverPool client) spec ""
+  ticket <- P.submit B.Ordinary P.defaultHooks (R.serverPool client) spec input
   timeout 1000000 (P.await ticket) >>= maybe (fail "native mutation probe did not complete") pure
 
 require :: Show problem => Either problem value -> IO value
