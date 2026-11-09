@@ -129,6 +129,9 @@ library
   import: modern
   hs-source-dirs: src internal
   exposed-modules: LibTmux LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
+    LibTmux.Query LibTmux.Query.Pane LibTmux.Query.Session LibTmux.Query.Window
+    LibTmux.Query.Link LibTmux.Query.Occurrence LibTmux.Query.Client
+    LibTmux.Query.ClientAttachment LibTmux.Query.ServerInfo
   other-modules: LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits

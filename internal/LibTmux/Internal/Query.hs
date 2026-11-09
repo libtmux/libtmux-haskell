@@ -31,20 +31,27 @@ import Numeric.Natural (Natural)
 
 -- | Selection cardinality without retaining observations or counting ambiguity.
 data CardinalityError
-  = NoMatches
-  | AtLeastTwoMatches
+  = NoMatches -- ^ The selection is empty where one value was required.
+  | AtLeastTwoMatches -- ^ A second match exists; no complete count is computed.
   deriving stock (Eq, Show)
 
+-- | Require exactly one value. Uniqueness can require traversing the entire
+-- input; ambiguity is established at the second match without forcing its tail.
+-- This neither acquires data nor reserves a live command target.
 exactlyOne :: [row] -> Either CardinalityError row
 exactlyOne [] = Left NoMatches
 exactlyOne [row] = Right row
 exactlyOne (_ : _ : _) = Left AtLeastTwoMatches
 
+-- | Permit absence but reject a second match, with the same traversal behavior
+-- as 'exactlyOne'. Use ordinary @listToMaybe@ when choosing the first is intended.
 atMostOne :: [row] -> Either CardinalityError (Maybe row)
 atMostOne [] = Right Nothing
 atMostOne [row] = Right (Just row)
 atMostOne (_ : _ : _) = Left AtLeastTwoMatches
 
+-- | A closed one-to-many relationship. Obtain tokens from the entity field
+-- modules and use 'some', 'every' or 'none'. Constructors are private.
 data ToMany parent child where
   SessionLinks :: ToMany G.Session G.WindowLink
   SessionClients :: ToMany G.Session G.Client
@@ -52,6 +59,7 @@ data ToMany parent child where
   WindowLinks :: ToMany G.Window G.WindowLink
   LinkPanes :: ToMany G.WindowLink G.Pane
 
+-- | A required relationship in a validated graph, used with 'related'.
 data ToOne parent child where
   PaneWindow :: ToOne G.Pane G.Window
   LinkSession :: ToOne G.WindowLink G.Session
@@ -62,6 +70,8 @@ data ToOne parent child where
   AttachmentWindow :: ToOne G.ClientAttachment G.Window
   AttachmentPane :: ToOne G.ClientAttachment G.PaneOccurrence
 
+-- | An observed optional relationship, used with 'optionalRelated'.
+-- Known absence is separate from an unavailable relationship.
 data ToOptional parent child where
   ClientAttachment :: ToOptional G.Client G.ClientAttachment
 
@@ -84,6 +94,9 @@ data Comparison = AtLeast | Above | AtMost | Below
 data Quantifier = Some | Every | None
 
 type role Expr nominal
+-- | A pure predicate description for one row type. Field and relationship
+-- tokens retain their identity; arbitrary application functions stay outside
+-- this portable representation. Constructors and cross-row coercions are hidden.
 data Expr row where
   Equal :: Eq value => F.Field row value -> value -> Expr row
   OneOf :: Eq value => F.Field row value -> [value] -> Expr row
@@ -97,26 +110,32 @@ data Expr row where
   OptionalRelated :: ToOptional row child -> Expr child -> Expr row
 
 type role Order nominal
+-- | One ascending or descending field ordering. Combine keys with 'orderBy'.
 data Order row where
   Order :: Ord value => Bool -> F.Field row value -> Order row
 
 type role Query nominal
+-- | A source, predicate, stable ordering and optional final limit. Building a
+-- query performs no IO and retains no Server handle. Use "LibTmux.Query" to evaluate.
 data Query row = Query !(Source row) !(Expr row) ![Order row] !(Maybe Natural)
 
+-- | Pure validation or navigation failure. Operational acquisition failures
+-- remain exceptions at the Server boundary rather than becoming empty results.
 data QueryError
-  = FieldUnavailable !Text
-  | RelationshipUnavailable !Text
-  | RequiresTmux !Text !Version.TmuxVersion !Version.TmuxVersion
-  | InvalidFieldRequirement !Text
-  | RelationshipLookupFailed !Text !G.LookupError
+  = FieldUnavailable !Text -- ^ Stable field key unavailable to the evaluator.
+  | RelationshipUnavailable !Text -- ^ Stable relationship key unavailable to the evaluator.
+  | RequiresTmux !Text !Version.TmuxVersion !Version.TmuxVersion -- ^ Field, required release and observed release.
+  | InvalidFieldRequirement !Text -- ^ A catalogue entry has invalid version metadata.
+  | RelationshipLookupFailed !Text !G.LookupError -- ^ Relationship key and the failed pure lookup.
   deriving stock (Eq, Show)
 
+-- | Inspectable dependencies, not a serialized query or an optimization plan.
 data QueryRequirements = QueryRequirements
-  { sourceName :: !Text
-  , fieldNames :: ![Text]
-  , relationshipNames :: ![Text]
-  , orderingFields :: ![Text]
-  , rowLimit :: !(Maybe Natural)
+  { sourceName :: !Text -- ^ Stable name of the ordered root source.
+  , fieldNames :: ![Text] -- ^ Sorted, deduplicated fields, including ordering keys.
+  , relationshipNames :: ![Text] -- ^ Sorted, deduplicated relationships at every nesting depth.
+  , orderingFields :: ![Text] -- ^ Ordering field keys in their specified priority order.
+  , rowLimit :: !(Maybe Natural) -- ^ Final limit, or 'Nothing' for no limit.
   }
   deriving stock (Eq, Show)
 
@@ -126,77 +145,115 @@ data EvaluatorProfile = EvaluatorProfile
   , evaluatorVersion :: !(Maybe Version.TmuxVersion)
   }
 
+-- | Exact equality in the field's declared type. No Unicode normalization,
+-- case folding or byte-to-text conversion is implicit.
 eq :: Eq value => F.Field row value -> value -> Expr row
 eq = Equal
 
+-- | Membership using exact equality against a finite operand list. An empty
+-- list never matches, but its field requirement is still validated.
 oneOf :: Eq value => F.Field row value -> [value] -> Expr row
 oneOf = OneOf
 
+-- | Exact, case-sensitive Text substring matching. Byte-bearing fields are
+-- deliberately excluded; use typed equality for their retained values.
 contains :: F.Field row Text -> Text -> Expr row
 contains = Contains
 
+-- | Compare a mathematical Integer field with an unbounded threshold:
+-- greater-or-equal, greater, less-or-equal or less, respectively.
 ge, gt, le, lt :: F.Field row Integer -> Integer -> Expr row
 ge field = NumberCompare (IntegerField field) AtLeast
 gt field = NumberCompare (IntegerField field) Above
 le field = NumberCompare (IntegerField field) AtMost
 lt field = NumberCompare (IntegerField field) Below
 
+-- | Compare a positive cell dimension to an Integer threshold, inclusively.
+-- Negative and arbitrarily large thresholds are valid predicates; they do not
+-- construct a command dimension. Use 'not_' for a strict opposite bound.
 dimensionAtLeast, dimensionAtMost :: F.Field row V.Dimension -> Integer -> Expr row
 dimensionAtLeast field = NumberCompare (DimensionField field) AtLeast
 dimensionAtMost field = NumberCompare (DimensionField field) AtMost
 
+-- | Inclusive bounds on a pane index, without narrowing or constructing an index.
 paneIndexAtLeast, paneIndexAtMost :: F.Field row V.PaneIndex -> Integer -> Expr row
 paneIndexAtLeast field = NumberCompare (PaneIndexField field) AtLeast
 paneIndexAtMost field = NumberCompare (PaneIndexField field) AtMost
 
+-- | Inclusive bounds on a contextual window index, using Integer thresholds.
 windowIndexAtLeast, windowIndexAtMost :: F.Field row V.WindowIndex -> Integer -> Expr row
 windowIndexAtLeast field = NumberCompare (WindowIndexField field) AtLeast
 windowIndexAtMost field = NumberCompare (WindowIndexField field) AtMost
 
+-- | Finite conjunction and disjunction. Empty lists mean True and False,
+-- respectively. Validation checks every branch before evaluation short-circuits.
 allOf, anyOf :: [Expr row] -> Expr row
 allOf = All
 anyOf = Any
 
+-- | Logical negation, preserving the expression's validation requirements.
 not_ :: Expr row -> Expr row
 not_ = Not
 
+-- | Existential, universal or absent matching children. A known empty
+-- relationship yields False, True or True, respectively. The child expression
+-- applies to one child at a time; put conditions inside one 'allOf' when the
+-- same child must satisfy them. Unavailable relationships remain errors.
 some, every, none :: ToMany row child -> Expr child -> Expr row
 some = Quantified Some
 every = Quantified Every
 none = Quantified None
 
+-- | Test the required related observation in the supplied snapshot.
+-- A failed lookup returns 'RelationshipLookupFailed', never False or absence.
 related :: ToOne row child -> Expr child -> Expr row
 related = Related
 
+-- | Test a known optional target. Absence yields False, so negation includes
+-- absence as well as targets that fail the child predicate.
 optionalRelated :: ToOptional row child -> Expr child -> Expr row
 optionalRelated = OptionalRelated
 
+-- | Physical sessions in numeric ID order.
 sessions :: Query G.Session
 sessions = Query Sessions (All []) [] Nothing
+-- | Unique physical windows in numeric ID order, independent of their links.
 windows :: Query G.Window
 windows = Query Windows (All []) [] Nothing
+-- | Unique physical panes in numeric ID order; use 'paneOccurrences' for context.
 panes :: Query G.Pane
 panes = Query Panes (All []) [] Nothing
+-- | Contextual links in session-ID then window-index order, retaining multiplicity.
 windowLinks :: Query G.WindowLink
 windowLinks = Query WindowLinksSource (All []) [] Nothing
+-- | Pane appearances in link order, then pane-index order within each window.
 paneOccurrences :: Query G.PaneOccurrence
 paneOccurrences = Query Occurrences (All []) [] Nothing
+-- | Captured client observations in the snapshot's bytewise name order.
 clients :: Query G.Client
 clients = Query Clients (All []) [] Nothing
+-- | The single captured daemon-metadata observation.
 serverInfo :: Query G.ServerInfo
 serverInfo = Query ServerInfo (All []) [] Nothing
 
+-- | Conjoin a predicate with existing predicates without changing the source.
 matching :: Expr row -> Query row -> Query row
 matching condition (Query source previous orders bound) =
   Query source (All [previous, condition]) orders bound
 
+-- | Replace the ordering keys. Sorting is stable and follows filtering;
+-- an empty key list retains source order. Limits are always applied afterward.
 orderBy :: [Order row] -> Query row -> Query row
 orderBy orders (Query source condition _ bound) = Query source condition orders bound
 
+-- | Order by the declared field's Ord instance in ascending or descending order.
+-- Text and byte-bearing types retain their own comparison semantics.
 ascending, descending :: Ord value => F.Field row value -> Order row
 ascending = Order False
 descending = Order True
 
+-- | Replace the final nonnegative limit, applied after filtering and ordering
+-- regardless of builder order. A zero limit still validates every requirement.
 limit :: Natural -> Query row -> Query row
 limit bound (Query source condition orders _) = Query source condition orders (Just bound)
 
@@ -212,6 +269,8 @@ nativeProfile = EvaluatorProfile
     , fst (optionalDescriptor ClientAttachment)
     ]) Nothing
 
+-- | Collect every declared field and relationship, including ordering and
+-- branches that may short-circuit. This is pure and does not contact tmux.
 requirements :: Query row -> QueryRequirements
 requirements (Query source condition orders bound) =
   let (fields, relationships) = exprRequirements condition
@@ -233,6 +292,10 @@ prepare profile (Query _ condition orders _) = do
   forM_ (Set.toAscList relationships) $ \key ->
     unless (Set.member key profile.availableRelationships) (Left (RelationshipUnavailable key))
 
+-- | Validate and evaluate against the supplied complete snapshot. Every
+-- requirement is checked before reading rows, even for empty sources and
+-- zero limits. Returning Right means consuming the result performs only pure
+-- processing of owned observations. No acquisition, pushdown or refresh occurs.
 runQuery :: G.Snapshot -> Query row -> Either QueryError [row]
 runQuery snapshot = runQueryWith
   (nativeProfile {evaluatorVersion = Just (G.serverInfo snapshot).version}) snapshot
