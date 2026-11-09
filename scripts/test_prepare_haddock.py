@@ -29,6 +29,16 @@ def record(owner):
             '<div class="doc"><p>Kept &amp; exact.</p></div></li></ul></div></div>')
 
 
+def browser_files(raw, body):
+    raw.mkdir(parents=True, exist_ok=True)
+    files = {PAGE: page(body), 'meta.json': '{"haddock_version":"2.33.0","quickjump_version":1}',
+             'doc-index.json': '[]', 'haddock-bundle.min.js': '', 'quick-jump.min.js': '',
+             'quick-jump.css': '', 'linuwial.css': 'body {background: url(synopsis.png)}',
+             'synopsis.png': 'fixture', 'haskell-logo.svg': '<svg></svg>'}
+    for name, content in files.items():
+        (raw / name).write_text(content)
+
+
 class Links(HTMLParser):
     def __init__(self, text):
         super().__init__()
@@ -145,6 +155,22 @@ class PrepareHaddockTest(unittest.TestCase):
         self.assertIn('#line-9', parsed.hrefs)
         self.assertEqual(len(parsed.ids), len(set(parsed.ids)))
 
+    def test_source_names_content_and_footer_are_not_layout_containers(self):
+        for name in ['content', 'footer']:
+            with self.subTest(name=name):
+                source = (f'<html><body><pre><span id="line-2"><a id="{name}"></a>{name} = 1</span>\n'
+                          '<span id="line-4"><a id="ref"></a>ref :: Integer</span>\n'
+                          '<span id="line-7"><a id="ref"></a>ref :: Text</span></pre></body></html>')
+                actual = self.prepare({PAGE: page(''), SOURCE: source})[SOURCE]
+                self.assertEqual(Links(actual).pre, Links(source).pre)
+                self.assertGreater(actual.index('Source identifier destinations'), actual.index('</pre>'))
+
+    def test_source_repair_rejects_duplicates_outside_the_listing(self):
+        source = ('<html><body><pre><span id="line-2">x = 1</span></pre>'
+                  '<div id="unrelated"></div><div id="unrelated"></div></body></html>')
+        with self.assertRaisesRegex(ValueError, 'duplicate|Duplicate|source'):
+            self.prepare({PAGE: page(''), SOURCE: source})
+
     def test_search_snippet_uses_its_explicit_record_owner(self):
         snippet = ('data <a href="#t:Window">Window</a> {'
                    '<ul class="subs"><li><a href="#v:ref">ref</a> :: !Integer</li></ul>}')
@@ -167,6 +193,23 @@ class PrepareHaddockTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'anchor'):
                     self.prepare({PAGE: page(record('Window')),
                                   'doc-index.json': json.dumps(search)})
+
+    def test_search_cannot_specialize_a_different_displayed_owner(self):
+        snippet = 'data <a href="#t:Session">Session</a> {<a href="#v:ref">ref</a> :: Integer}'
+        entry = {'name': 'Window ref', 'module': 'LibTmux.Snapshot',
+                 'link': 'LibTmux-Snapshot.html#t:Window', 'display_html': snippet}
+        with self.assertRaisesRegex(ValueError, 'owner|anchor'):
+            self.prepare({PAGE: page(record('Session') + record('Window')),
+                          'doc-index.json': json.dumps([entry])})
+
+    def test_native_module_reexports_keep_their_empty_search_target(self):
+        snippet = 'module <a href="LibTmux-Snapshot.html">LibTmux.Snapshot</a>'
+        entry = {'name': '', 'module': 'LibTmux', 'link': '', 'display_html': snippet}
+        root = page('<div class="top"><p class="src">' + snippet + '</p></div>')
+        actual, _ = self.tool().prepare_pages({PAGE: page(''), 'LibTmux.html': root,
+                                               'doc-index.json': json.dumps([entry])},
+                                              PUBLIC | {'LibTmux'}, HIDDEN)
+        self.assertEqual(json.loads(actual['doc-index.json']), [entry])
 
     def test_unexpected_duplicate_and_missing_anchor_fail(self):
         for body in ['<a id="v:x"></a><a id="v:x"></a>', '<a href="#absent">x</a>']:
@@ -204,7 +247,7 @@ class PrepareHaddockTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='libtmux-haskell-docs-test-') as directory:
             root = Path(directory)
             raw, output = root / 'raw', root / 'prepared'
-            raw.mkdir()
+            browser_files(raw, '')
             original = page(record('Session') + record('Window')).encode()
             (raw / PAGE).write_bytes(original)
             (raw / 'interface.haddock').write_bytes(b'unchanged compiled interface\x00')
@@ -227,6 +270,24 @@ class PrepareHaddockTest(unittest.TestCase):
                 tool.prepare(raw, failed, manifest)
             self.assertFalse(failed.exists())
             self.assertEqual((raw / PAGE).read_bytes(), original)
+
+    def test_missing_browser_assets_and_enabled_search_fail_before_output(self):
+        tool = self.tool()
+        html = ('<link rel="stylesheet" href="linuwial.css">'
+                '<script src="haddock-bundle.min.js"></script><img src="haskell-logo.svg">')
+        for absent in ['linuwial.css', 'haddock-bundle.min.js', 'haskell-logo.svg',
+                       'synopsis.png', 'meta.json', 'doc-index.json', 'quick-jump.min.js', 'quick-jump.css']:
+            with self.subTest(absent=absent), tempfile.TemporaryDirectory(prefix='libtmux-haskell-docs-test-') as directory:
+                root = Path(directory)
+                raw, output = root / 'raw', root / 'prepared'
+                browser_files(raw, html)
+                (raw / absent).unlink()
+                manifest = root / 'library.cabal'
+                manifest.write_text('library\n  exposed-modules: LibTmux.Snapshot\n'
+                                    '  other-modules: LibTmux.Internal.Graph\n')
+                with self.assertRaisesRegex(ValueError, 'resource|metadata|search|asset'):
+                    tool.prepare(raw, output, manifest)
+                self.assertFalse(output.exists())
 
     def test_a_symlinked_output_parent_cannot_write_inside_raw(self):
         tool = self.tool()
@@ -271,8 +332,7 @@ class PrepareHaddockTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='libtmux-haskell-docs-test-') as directory:
             root = Path(directory)
             raw = root / 'configured-lib/doc/html/libtmux-haskell'
-            raw.mkdir(parents=True)
-            (raw / PAGE).write_text(page(record('Session') + record('Window')))
+            browser_files(raw, record('Session') + record('Window'))
             manifest = root / 'library.cabal'
             manifest.write_text('library\n  exposed-modules: LibTmux.Snapshot\n'
                                 '  other-modules: LibTmux.Internal.Graph\n')

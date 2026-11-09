@@ -127,11 +127,14 @@ def _apply(document, edits):
     return "".join(result)
 
 
-def _insert_choices(document, entries, heading):
-    content = [node for node in document.nodes if node.attrs.get("id") == "content"]
-    footer = [node for node in document.nodes if node.attrs.get("id") == "footer"]
+def _insert_choices(document, entries, heading, source=False):
+    layout = [node for node in document.nodes if node.tag == 'div'
+              and not any(parent.tag == 'pre' for parent in node.ancestors())]
+    content = [node for node in layout if node.attrs.get("id") == "content"]
+    footer = [node for node in layout if node.attrs.get("id") == "footer"]
     body = [node for node in document.nodes if node.tag == "body"]
-    position = (content[0].end_start if len(content) == 1 else
+    position = (_one(body, 'source body').end_start if source else
+                content[0].end_start if len(content) == 1 else
                 footer[0].start if len(footer) == 1 else _one(body, "body").end_start)
     rendered = '<section class="subs"><h2>' + escape(heading) + '</h2><dl>'
     for anchor, links in entries:
@@ -228,7 +231,8 @@ def _source_edits(document):
     for anchor, nodes in identifiers.items():
         if len(nodes) == 1:
             continue
-        if anchor.startswith("line-") or any(line is None for line, _ in nodes):
+        if (anchor.startswith("line-") or any(line is None for line, _ in nodes)
+                or any(not any(parent.tag == 'pre' for parent in node.ancestors()) for _, node in nodes)):
             raise ValueError(f"Unexpected duplicate source anchor: {anchor}")
         lines = list(dict.fromkeys(line for line, _ in nodes))
         for _, node in nodes[1:] if len(lines) == 1 else nodes:
@@ -236,7 +240,7 @@ def _source_edits(document):
         if len(lines) > 1:
             choices.append((anchor, [(line, line.replace("-", " ")) for line in lines]))
     if choices:
-        edits.append(_insert_choices(document, choices, "Source identifier destinations"))
+        edits.append(_insert_choices(document, choices, "Source identifier destinations", source=True))
     return edits
 
 
@@ -337,8 +341,29 @@ def prepare_pages(pages, public_modules, hidden_modules):
             page = entry['module'].replace('.', '-') + '.html'
             search_links.append(('doc-index.json', entry['link']))
             target = _destination('doc-index.json', entry['link'])
-            owner = target[1][2:] if target and target[1].startswith('t:') else None
             document = Document(entry['display_html'])
+            if entry['link'] == '':
+                export = _one([node for node in document.root.children if node.tag == 'a'],
+                              'native search module reexport')
+                exported = _destination(page, export.attrs.get('href', ''))
+                targets = [module for module in public_modules
+                           if exported == (module.replace('.', '-') + '.html', '')]
+                module = _one(targets, 'public reexport owner')
+                expected = 'module ' + module
+                headers = [node for node in documents[page].nodes if node.tag == 'p' and node.has('src')
+                           and node.text() == expected
+                           and [item.attrs.get('href') for item in node.walk() if item.tag == 'a'] == [export.attrs.get('href')]]
+                if entry['name'] != '' or document.root.text() != expected or len(headers) != 1:
+                    raise ValueError('Native search reexport and public module owner disagree')
+                search_links.append((page, export.attrs['href']))
+                continue
+            if target is None or target[0] != page:
+                raise ValueError('Native search module and declaration owner disagree')
+            owner = target[1][2:] if target and target[1].startswith('t:') else None
+            binder = _one([node for node in document.root.children if node.tag == 'a'][:1],
+                          'native search declaration anchor')
+            if binder.attrs.get('href') != '#' + target[1]:
+                raise ValueError('Native search display anchor and declaration owner disagree')
             edits = []
             for node in document.nodes:
                 href = node.attrs.get('href', '')
@@ -353,6 +378,15 @@ def prepare_pages(pages, public_modules, hidden_modules):
                                 if node.tag == 'a' and 'href' in node.attrs)
         result['doc-index.json'] = json.dumps(entries, ensure_ascii=False, separators=(',', ':')) + '\n'
     prepared = {name: Document(text) for name, text in result.items() if name.endswith('.html')}
+    for name, document in documents.items():
+        if not name.startswith('src/'):
+            continue
+        before = _one([node for node in document.nodes if node.tag == 'pre'], 'native source listing')
+        after = _one([node for node in prepared[name].nodes if node.tag == 'pre'], 'prepared source listing')
+        lines = lambda listing: [node.attrs['id'] for node in listing.walk()
+                                 if node.attrs.get('id', '').startswith('line-')]
+        if before.text() != after.text() or lines(before) != lines(after):
+            raise ValueError('Preparation changed source text or line anchors')
     counts['checkedLocalLinks'] = _validate(result, prepared, search_links)
     return result, dict(counts)
 
@@ -371,6 +405,52 @@ def _modules(manifest):
     return result
 
 
+def _resources(files):
+    if 'meta.json' not in files:
+        raise ValueError('Missing native browser metadata')
+    metadata = json.loads(files['meta.json'])
+    if not isinstance(metadata, dict) or metadata.get('haddock_version') != '2.33.0':
+        raise ValueError('Unqualified native browser metadata')
+    quickjump = metadata.get('quickjump_version')
+    if quickjump is not None and (type(quickjump) is not int or quickjump != 1):
+        raise ValueError('Unqualified native search metadata')
+    if quickjump == 1:
+        required = {'doc-index.json', 'haddock-bundle.min.js', 'quick-jump.min.js', 'quick-jump.css'}
+        if not required <= files.keys():
+            raise ValueError('Missing enabled native search resource')
+    checked = 0
+
+    def resource(page, href):
+        nonlocal checked
+        if href.startswith('data:'):
+            return
+        target = _destination(page, href)
+        if target is not None:
+            if target[0] not in files:
+                raise ValueError(f'Missing local browser resource: {page}: {href}')
+            checked += 1
+
+    attributes = {'link': ['href'], 'script': ['src'], 'img': ['src'], 'source': ['src'],
+                  'video': ['src', 'poster'], 'audio': ['src'], 'iframe': ['src'],
+                  'embed': ['src'], 'object': ['data'], 'input': ['src']}
+    for name, data in files.items():
+        if name.endswith('.html'):
+            for node in Document(data.decode('utf-8')).nodes:
+                if 'srcset' in node.attrs:
+                    raise ValueError('Unqualified native resource srcset')
+                for attr in attributes.get(node.tag, []):
+                    if attr in node.attrs:
+                        resource(name, node.attrs[attr])
+        elif name.endswith('.css'):
+            css = data.decode('utf-8')
+            urls = list(re.finditer(r'''\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^\s)]*))\s*\)''', css, re.IGNORECASE))
+            if len(urls) != len(re.findall(r'\burl\(', css, re.IGNORECASE)):
+                raise ValueError('Unqualified native CSS resource syntax')
+            for url in urls:
+                resource(name, next(value for value in url.groups() if value is not None))
+    return checked
+
+
 def prepare(raw, output, manifest):
     """Write a fresh artifact atomically after validating the complete copy."""
     raw, output = Path(raw).resolve(), Path(output)
@@ -387,9 +467,11 @@ def prepare(raw, output, manifest):
             files[path.relative_to(raw).as_posix()] = path.read_bytes()
     if not files or 'navigation.json' in files:
         raise ValueError('Expected an unprepared native artifact')
+    resources = _resources(files)
     pages = {name: data.decode('utf-8') for name, data in files.items()
              if name.endswith('.html') or name == 'doc-index.json'}
     prepared, counts = prepare_pages(pages, *_modules(Path(manifest)))
+    counts['checkedLocalResources'] = resources
     changed = {name: prepared[name].encode('utf-8') if name in prepared else data
                for name, data in files.items()}
     evidence = {'schema': 'libtmux.haddock-navigation/1', 'haddock': '2.33.0',

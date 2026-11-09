@@ -59,8 +59,8 @@ several lines offers those lines. Missing hidden-module instance attributions
 retain their text and valid Source links. No private API page is added.
 
 `navigation.json` records raw and prepared file digests and edit counts.
-The check rejects missing local targets and unexpected duplicate IDs, including
-index and search links. It preserves signatures, instances, source text and
+The check rejects missing local targets, browser assets and unexpected duplicate
+IDs, including index and search links. It preserves signatures, instances, source text and
 compiled interfaces. It does not verify external dependency URLs, prove that
 an arbitrary raw directory is fresh, or publish anything. CI builds from its
 checked-out source and retains the raw and prepared artifacts separately.

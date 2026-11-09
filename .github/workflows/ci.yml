@@ -93,6 +93,7 @@ jobs:
         with:
           name: native-docs-${{ github.sha }}-${{ github.run_attempt }}
           path: dist-newstyle/haddock-prepared
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
       - name: Isolated source-archive consumer
@@ -121,6 +122,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: checks-${{ github.sha }}-${{ github.run_attempt }}
+          include-hidden-files: true
           path: |
             dist-newstyle/cache/plan.json
             dist-newstyle/**/test/*.log
