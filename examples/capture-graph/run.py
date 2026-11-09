@@ -71,7 +71,7 @@ def await_socket(watch, daemon):
 
 
 @contextmanager
-def fixture(binary, checkpoint=lambda _stage, _descriptors: None):
+def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None):
     environment = {key: value for key, value in os.environ.items()
                    if key not in {"TMUX", "TMUX_PANE"}}
     environment["LC_ALL"] = "C.UTF-8"
@@ -85,20 +85,35 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors: None):
                                   stdout=subprocess.DEVNULL, stderr=errors)
         session_dispatched = False
         pane_tracked = False
+        creation = None
         primary = None
         try:
             descriptor = os.pidfd_open(daemon.pid)
             owners.callback(os.close, descriptor)
             descriptors.append(descriptor)
             await_socket(watch, descriptor)
-            checkpoint("daemon-ready", tuple(descriptors))
+            checkpoint("daemon-ready", tuple(descriptors), socket)
             session_dispatched = True
-            started = subprocess.run(
-                [binary, "-u", "-N", "-S", socket, "new-session", "-d",
-                 "-P", "-F", "#{pane_pid}", "-s", "demo", "-n", "editor",
-                 "-x", "120", "-y", "40", "/bin/cat", "-"],
-                env=environment, capture_output=True, check=True, timeout=1)
-            receipt = started.stdout.decode("ascii").strip().split()
+            arguments = [binary, "-u", "-N", "-S", socket, "new-session", "-d",
+                         "-P", "-F", "#{pane_pid}", "-s", "demo", "-n", "editor",
+                         "-x", "120", "-y", "40", "/bin/cat", "-"]
+            creation = subprocess.Popen(arguments, env=environment, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE)
+            owners.callback(creation.stdout.close)
+            owners.callback(creation.stderr.close)
+            try:
+                output, command_errors = creation.communicate(timeout=1)
+            except BaseException as problem:
+                try:
+                    creation.kill()
+                    creation.wait(timeout=1)
+                except BaseException as cleanup:
+                    problem.add_note(f"session command cleanup: {cleanup}")
+                raise
+            if creation.returncode:
+                raise subprocess.CalledProcessError(creation.returncode, arguments,
+                                                    output=output, stderr=command_errors)
+            receipt = output.decode("ascii").strip().split()
             if len(receipt) != 1 or not all(value.isdecimal() and int(value) > 0 for value in receipt):
                 raise RuntimeError("tmux returned an invalid ownership receipt")
             for value in receipt:
@@ -106,7 +121,7 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors: None):
                 owners.callback(os.close, descriptor)
                 descriptors.append(descriptor)
             pane_tracked = True
-            checkpoint("pane-ready", tuple(descriptors))
+            checkpoint("pane-ready", tuple(descriptors), socket)
             linked = subprocess.run(
                 [binary, "-u", "-N", "-S", socket, "link-window", "-d", "-s", "demo:0", "-t", "demo:4"],
                 env=environment, capture_output=True, timeout=1)
@@ -124,6 +139,8 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors: None):
                 except subprocess.TimeoutExpired:
                     daemon.kill()
                     daemon.wait(timeout=1)
+                if creation is not None:
+                    creation.wait(timeout=1)
                 exited(descriptors)
                 if session_dispatched and not pane_tracked:
                     raise RuntimeError("session creation failed before pane exit ownership was established")

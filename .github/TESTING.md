@@ -126,8 +126,13 @@ routes passing when changing an example, manifest or public signature.
 
 The capture runner owns a foreground daemon before session creation. Its
 critical failure cases independently observe pidfds after setup failure,
-callback failure and cancellation. Interruption before the pane receipt is
-an explicit remaining qualification limit; it cannot report complete teardown.
+callback failure and cancellation. A waiting after-new-session hook also
+exercises interruption before the pane receipt. The runner joins the command
+client and preserves the interruption. It reports unestablished pane ownership
+in a cleanup note, even when the test independently observes the pane's exit;
+that test observation does not establish the runner's ownership receipt.
+A failed response followed by failed command retirement also preserves the
+primary failure. Daemon shutdown precedes the remaining bounded command wait.
 
 A real-tmux capability program must include its own setup and cleanup,
 explicit target, feature floor and observable result. Run it end to end;
