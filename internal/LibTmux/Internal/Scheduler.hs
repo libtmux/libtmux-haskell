@@ -119,11 +119,15 @@ admit scheduler = reserve scheduler Nothing
 
 -- | Reserve an operation in one group, under the scheduler's global limits.
 -- Group membership survives logical retirement for physical-owner selection.
+-- The token is forced before admission so metadata retains no caller thunk.
 admitIn :: Scheduler -> Group -> Lane -> STM Operation
 admitIn scheduler group = reserve scheduler (Just group)
 
 reserve :: Scheduler -> Maybe Group -> Lane -> STM Operation
 reserve (Scheduler context variable) group lane = do
+  case group of
+    Just token -> token `seq` pure ()
+    Nothing -> pure ()
   current <- readTVar variable
   unless current.accepting (throwSTM AdmissionClosed)
   when (Map.size current.operations >= 64) (throwSTM AdmissionFull)

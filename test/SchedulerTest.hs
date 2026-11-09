@@ -46,6 +46,18 @@ tests = localOption (mkTimeout 500000) $ testGroup "logical admission"
       atomically (S.outstandingIn scheduler secondGroup) >>= (@?= [])
       atomically (S.outstanding scheduler) >>= \rows ->
         map fst rows @?= [ungrouped, queued]
+  , testCase "a deferred group fails before reserving logical ownership" $ do
+      scheduler <- S.newScheduler
+      result <- try @ErrorCall (atomically
+        (S.admitIn scheduler (error "deferred group") S.Waiting))
+      case result of
+        Left _ -> pure ()
+        Right _ -> assertFailure "admitted an unevaluated ownership group"
+      atomically (S.outstanding scheduler) >>= (@?= [])
+      group <- S.newGroup
+      operation <- atomically (S.admitIn scheduler group S.Waiting)
+      atomically (S.outstandingIn scheduler group) >>= \rows ->
+        map fst rows @?= [operation]
   , testCase "a saturated waiting lane does not obstruct later inspection" $ do
       scheduler <- S.newScheduler
       waiting <- atomically (replicateM 5 (S.admit scheduler S.Waiting))
