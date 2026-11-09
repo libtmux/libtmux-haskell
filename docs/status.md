@@ -12,13 +12,14 @@ The package is unpublished. Public mutation commands are not implemented.
 | Bounded scope cleanup and correlated recovery | Implemented; keep exception context when catching failures |
 | Validated offline fixtures | Implemented through `LibTmux.Snapshot.Fixture` |
 | Shared Runtime ownership | Implemented through `withRuntime` and `withServerIn`; see [the complete program](shared-runtime.md) |
-| Typed query evaluation and commands | Not implemented |
+| Typed predicates, relationships, ordering and cardinality | Implemented through `LibTmux.Query`; see [the complete program](query.md) |
+| Mutation commands, query interchange and backend optimization | Not implemented |
 | Control events, streams and cancellation API | Not implemented |
 | Workspace library/CLI | Planned as a separate Cabal package using the core |
 | MCP integration | Excluded from this port |
 
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
-interface. Query, mutation, event and workspace contracts remain separate
+interface. Mutation, interchange, event and workspace contracts remain separate
 qualification work.
 The [behavior inventory](contracts/README.md) records the intended scope.
 

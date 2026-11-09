@@ -237,15 +237,28 @@ and the existing scalar archive consumer. This is verification timing, excludes
 resource-gate queueing and establishes no capture benchmark. The installed
 consumer still exercises scalar exports, not a public Snapshot API.
 
+## Public typed queries
+
+The [query API](../../src/LibTmux/Query.hs) exposes pure predicates over the
+existing catalogue, typed relationships, stable ordering, final limits and
+cardinality. Preparation visits every requirement before source evaluation;
+generated expressions agree with independent native predicates. Installed
+type checks reject wrong rows, values, operators and cross-row coercion.
+
+The [complete application](../query.md) combines operational, query and
+cardinality errors, compares evaluators over one detached snapshot, preserves
+contextual multiplicity and names its separate fresh acquisition. Checkout,
+immutable Git and archive consumers assert output and owned cleanup. The
+qualified native browser covers these modules in Chromium; other engines,
+complete accessibility and external dependency availability remain open.
+
 ## Remaining gates
 
-- Implement typed queries and cardinality before mutation. Combine operational,
-  query and cardinality errors in an installed application example.
 - Extend capture measurements to allocations, concurrent admission, active
   selection/resize, long fields, cancellation and maximum server pause. The
   existing 64 MiB capture reservation admits one full envelope; it is not RSS.
-- Resolve native Haddock anchor/origin defects and complete shared-site
-  rendering, reference and publication qualification.
+- Extend native browser qualification beyond the checked Chromium paths and
+  complete shared-site rendering, reference and publication qualification.
 - Implement the command, filter-interchange, event and workspace contracts,
   then qualify their installed consumers and complete the adoption review.
 
@@ -255,7 +268,7 @@ Use the existing draft PR for logical commits and current-source verification.
 Keep Hspec/QuickCheck specifications separate from the Tasty suite assembly.
 Run the exact release matrix and source-archive consumer checks before public
 export. Preserve failed and unrun gates in the review record. Shared docs,
-workspace, events, commands and query implementation remain part of the full
+workspace, events, commands and query interchange remain part of the full
 suite; the current native increment does not claim their completion.
 
 MCP is excluded from implementation and scoring. Every other requested quality

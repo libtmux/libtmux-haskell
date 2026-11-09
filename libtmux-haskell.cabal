@@ -6,7 +6,8 @@ description:
   Capture a validated tmux graph in IO, then inspect immutable sessions,
   physical windows, panes and contextual links with ordinary Haskell values.
   Scoped handles retain cleanup ownership after cancellation and failure.
-  Commands, queries and workspace tooling remain under development.
+  Typed queries inspect captured values with explicit cardinality and ordering.
+  Commands and workspace tooling remain under development.
 license: MIT
 license-file: LICENSE
 author: libtmux contributors
@@ -19,6 +20,7 @@ tested-with: GHC ==9.14.1
 extra-doc-files:
   docs/capture.md
   docs/shared-runtime.md
+  docs/query.md
   docs/fixtures.md
   docs/performance.md
   README.md
@@ -92,6 +94,11 @@ extra-source-files:
   examples/shared-runtime/libtmux-shared-runtime.cabal
   examples/shared-runtime/cabal.project
   examples/shared-runtime/cabal.project.vcs
+  examples/query-graph/Main.hs
+  examples/query-graph/expected.stdout
+  examples/query-graph/libtmux-query-graph.cabal
+  examples/query-graph/cabal.project
+  examples/query-graph/cabal.project.vcs
   scripts/ci_tmux.py
   scripts/test_ci_tmux.py
   .github/tmux-releases.json

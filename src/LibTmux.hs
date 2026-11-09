@@ -4,6 +4,8 @@
 --
 -- "LibTmux.Server" documents ownership and failure recovery. Typed IDs,
 -- checked dimensions and supported releases have their own pure modules.
+-- "LibTmux.Query" provides qualified typed descriptions over the same
+-- snapshots; query source names are separate from collection access here.
 module LibTmux
   ( module LibTmux.Server
   , module LibTmux.Snapshot

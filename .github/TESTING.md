@@ -139,6 +139,15 @@ archive consumer executes the installed program with an independent fixture.
 It checks generation separation, selected closure, continued capture and
 detached navigation.
 
+The [query program](../docs/query.md) uses that fixture to compare a typed
+predicate with native Haskell over one detached snapshot. It also checks
+physical versus contextual cardinality, nested relationships, ordering,
+limits, requirement inspection and an explicitly separate fresh capture.
+Pure unit tests exercise unavailable capabilities before short-circuiting,
+empty relationships, numeric bounds, retained bytes and generated predicates
+against an independent interpreter. Public type checks reject wrong rows,
+operands, operators and cross-row coercion using their intended diagnostics.
+
 The capture runner owns a foreground daemon before session creation. Its
 critical failure cases independently observe pidfds after setup failure,
 callback failure and cancellation. A waiting after-new-session hook also
