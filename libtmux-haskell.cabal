@@ -129,7 +129,7 @@ library
   import: modern
   hs-source-dirs: src internal
   exposed-modules: LibTmux LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
-  other-modules: LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -168,7 +168,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
+  other-modules: QueryTest LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,

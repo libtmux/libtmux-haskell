@@ -7,8 +7,9 @@ import FieldTest qualified
 import RecordTest qualified
 import GraphTest qualified
 import GraphProperties qualified
+import QueryTest qualified
 import TopologyTest qualified
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "libtmux" [SchedulerTest.tests, BudgetTest.tests, FrameTest.tests, FieldTest.tests, RecordTest.tests, GraphTest.tests, GraphProperties.tests, TopologyTest.tests])
+main = defaultMain (testGroup "libtmux" [SchedulerTest.tests, BudgetTest.tests, FrameTest.tests, FieldTest.tests, RecordTest.tests, GraphTest.tests, GraphProperties.tests, TopologyTest.tests, QueryTest.tests])
