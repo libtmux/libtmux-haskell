@@ -15,12 +15,20 @@
   adoption or cleanup cannot establish completion. ([#4])
 - Build validated offline snapshots with `LibTmux.Snapshot.Fixture` for pure
   application tests, without starting tmux or creating live references. ([#4])
+- Select observations with typed fields and relationships through
+  `LibTmux.Query`. Validate requirements, evaluate an existing snapshot or
+  fetch fresh observations, and apply stable ordering and limits. ([#6])
+- Require unique selections with `exactlyOne` and `atMostOne`, preserving
+  the distinction between physical entities and contextual appearances. ([#6])
 
 ### Documentation
 
 - Browse native Haddock with distinct links for record owners, instance
   methods and source identifiers. Wide API sections scroll within narrow
   screens; CI retains the original output alongside the checked browser. ([#5])
+- Follow the query guide and runnable example for linked-window selection,
+  ordinary-predicate equivalence and application error handling. Long native
+  module headings wrap on narrow screens. ([#6])
 
 ### Changed
 
@@ -42,3 +50,4 @@
 [#2]: https://github.com/libtmux/libtmux-haskell/pull/2
 [#4]: https://github.com/libtmux/libtmux-haskell/pull/4
 [#5]: https://github.com/libtmux/libtmux-haskell/pull/5
+[#6]: https://github.com/libtmux/libtmux-haskell/pull/6
