@@ -37,6 +37,10 @@
 
 ### Development
 
+- Distinguish rejected mutations from changes followed by hook errors in the
+  private command backend. Cancellation preserves cleanup ownership and
+  correlated recovery without replaying commands. Public mutation methods
+  remain under development. ([#8])
 - Prepare session, window and pane mutations to preserve literal text,
   including tmux format syntax, style markers and command separators.
   Command execution remains private. ([#7])
@@ -55,3 +59,4 @@
 [#5]: https://github.com/libtmux/libtmux-haskell/pull/5
 [#6]: https://github.com/libtmux/libtmux-haskell/pull/6
 [#7]: https://github.com/libtmux/libtmux-haskell/pull/7
+[#8]: https://github.com/libtmux/libtmux-haskell/pull/8
