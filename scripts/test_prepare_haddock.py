@@ -45,6 +45,7 @@ class Links(HTMLParser):
         self.ids = []
         self.hrefs = []
         self.pre = []
+        self.viewports = []
         self.in_pre = False
         self.feed(text)
 
@@ -56,6 +57,8 @@ class Links(HTMLParser):
             self.hrefs.append(attrs["href"])
         if tag == "pre":
             self.in_pre = True
+        if tag == "meta" and attrs.get("name") == "viewport":
+            self.viewports.append(attrs.get("content"))
 
     def handle_endtag(self, tag):
         if tag == "pre":
@@ -87,7 +90,9 @@ class PrepareHaddockTest(unittest.TestCase):
         self.assertEqual(result[PAGE], raw.replace(
             '<a href="LibTmux-Internal-Graph.html">LibTmux.Internal.Graph</a>',
             'LibTmux.Internal.Graph'))
-        self.assertEqual(result[SOURCE], source)
+        self.assertEqual(Links(result[SOURCE]).pre, Links(source).pre)
+        self.assertEqual(Links(result[SOURCE]).ids, Links(source).ids)
+        self.assertEqual(Links(result[SOURCE]).hrefs, Links(source).hrefs)
 
     def test_missing_public_and_unexpected_hidden_links_fail(self):
         for href in ['LibTmux-Missing.html', 'LibTmux-Internal-Graph.html']:
@@ -251,6 +256,11 @@ class PrepareHaddockTest(unittest.TestCase):
             original = page(record('Session') + record('Window')).encode()
             (raw / PAGE).write_bytes(original)
             original_style = (raw / 'linuwial.css').read_bytes()
+            source = '<html><head><link rel="stylesheet" href="style.css"></head><body><pre><span id="line-1">data X = X\n</span></pre></body></html>'
+            (raw / 'src').mkdir()
+            (raw / SOURCE).write_text(source)
+            original_source_style = b'body {color: black}'
+            (raw / 'src/style.css').write_bytes(original_source_style)
             (raw / 'interface.haddock').write_bytes(b'unchanged compiled interface\x00')
             manifest = root / 'library.cabal'
             manifest.write_text('library\n  exposed-modules: LibTmux.Snapshot\n'
@@ -259,6 +269,13 @@ class PrepareHaddockTest(unittest.TestCase):
             self.assertEqual((raw / PAGE).read_bytes(), original)
             self.assertEqual((raw / 'linuwial.css').read_bytes(), original_style)
             self.assertTrue((output / 'linuwial.css').read_bytes().startswith(original_style))
+            self.assertEqual((raw / SOURCE).read_text(), source)
+            self.assertEqual((raw / 'src/style.css').read_bytes(), original_source_style)
+            self.assertNotEqual((output / 'src/style.css').read_bytes(), original_source_style)
+            prepared_source = Links((output / SOURCE).read_text())
+            self.assertEqual(prepared_source.pre, Links(source).pre)
+            self.assertEqual(prepared_source.ids, Links(source).ids)
+            self.assertEqual(prepared_source.viewports, ['width=device-width, initial-scale=1'])
             self.assertEqual((output / 'interface.haddock').read_bytes(), b'unchanged compiled interface\x00')
             evidence = json.loads((output / 'navigation.json').read_text())
             entry = next(item for item in evidence['files'] if item['path'] == PAGE)

@@ -28,6 +28,11 @@ RESPONSIVE_CSS = b"""
   #index { overflow-x: auto; }
 }
 """
+SOURCE_RESPONSIVE_CSS = b"""
+@media screen {
+  body > pre { overflow-x: auto; }
+}
+"""
 
 
 class Node:
@@ -249,6 +254,26 @@ def _source_edits(document):
             choices.append((anchor, [(line, line.replace("-", " ")) for line in lines]))
     if choices:
         edits.append(_insert_choices(document, choices, "Source identifier destinations", source=True))
+    body = _one([node for node in document.nodes if node.tag == 'body'], 'source body')
+    listing = _one([node for node in body.children if node.tag == 'pre'], 'source listing')
+    if listing.attrs:
+        raise ValueError('Unqualified native source listing attributes')
+    opening = _attribute(document, listing, 'tabindex', '0')[2]
+    opening = opening[:-1] + ' role="region" aria-label="Haskell source">'
+    edits.append((listing.start, listing.start_end, opening))
+    viewport = 'width=device-width, initial-scale=1'
+    metas = [node for node in document.nodes if node.tag == 'meta' and node.attrs.get('name') == 'viewport']
+    if metas:
+        if _one(metas, 'source viewport').attrs.get('content') != viewport:
+            raise ValueError('Unqualified native source viewport')
+    else:
+        markup = f'<meta name="viewport" content="{viewport}" />'
+        heads = [node for node in document.nodes if node.tag == 'head']
+        if heads:
+            head = _one(heads, 'source head')
+            edits.append((head.start_end, head.start_end, markup))
+        else:
+            edits.append((body.start, body.start, '<head>' + markup + '</head>'))
     return edits
 
 
@@ -482,9 +507,13 @@ def prepare(raw, output, manifest):
     counts['checkedLocalResources'] = resources
     changed = {name: prepared[name].encode('utf-8') if name in prepared else data
                for name, data in files.items()}
-    if 'linuwial.css' in changed:
-        changed['linuwial.css'] += RESPONSIVE_CSS
-        counts['responsiveStyleEdits'] = 1
+    for name, stylesheet, counter in [
+        ('linuwial.css', RESPONSIVE_CSS, 'responsiveStyleEdits'),
+        ('src/style.css', SOURCE_RESPONSIVE_CSS, 'sourceResponsiveStyleEdits'),
+    ]:
+        if name in changed:
+            changed[name] += stylesheet
+            counts[counter] = 1
     evidence = {'schema': 'libtmux.haddock-navigation/1', 'haddock': '2.33.0',
                 'limits': ['Raw output retained; no source freshness or external URL qualification'],
                 'counts': counts,
