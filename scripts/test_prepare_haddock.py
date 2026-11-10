@@ -46,6 +46,7 @@ class Links(HTMLParser):
         self.hrefs = []
         self.pre = []
         self.viewports = []
+        self.pre_attributes = []
         self.in_pre = False
         self.feed(text)
 
@@ -57,6 +58,7 @@ class Links(HTMLParser):
             self.hrefs.append(attrs["href"])
         if tag == "pre":
             self.in_pre = True
+            self.pre_attributes.append(attrs)
         if tag == "meta" and attrs.get("name") == "viewport":
             self.viewports.append(attrs.get("content"))
 
@@ -256,11 +258,15 @@ class PrepareHaddockTest(unittest.TestCase):
             original = page(record('Session') + record('Window')).encode()
             (raw / PAGE).write_bytes(original)
             original_style = (raw / 'linuwial.css').read_bytes()
-            source = '<html><head><link rel="stylesheet" href="style.css"></head><body><pre><span id="line-1">data X = X\n</span></pre></body></html>'
+            source = ('<html><head><link rel="stylesheet" href="style.css">'
+                      '<script src="highlight.js"></script></head><body><pre>'
+                      '<span id="line-1">data X = X\n</span></pre></body></html>')
             (raw / 'src').mkdir()
             (raw / SOURCE).write_text(source)
             original_source_style = b'body {color: black}'
             (raw / 'src/style.css').write_bytes(original_source_style)
+            original_source_script = b'void 0;'
+            (raw / 'src/highlight.js').write_bytes(original_source_script)
             (raw / 'interface.haddock').write_bytes(b'unchanged compiled interface\x00')
             manifest = root / 'library.cabal'
             manifest.write_text('library\n  exposed-modules: LibTmux.Snapshot\n'
@@ -271,11 +277,15 @@ class PrepareHaddockTest(unittest.TestCase):
             self.assertTrue((output / 'linuwial.css').read_bytes().startswith(original_style))
             self.assertEqual((raw / SOURCE).read_text(), source)
             self.assertEqual((raw / 'src/style.css').read_bytes(), original_source_style)
+            self.assertEqual((raw / 'src/highlight.js').read_bytes(), original_source_script)
+            self.assertTrue((output / 'src/highlight.js').read_bytes().startswith(original_source_script))
             self.assertNotEqual((output / 'src/style.css').read_bytes(), original_source_style)
             prepared_source = Links((output / SOURCE).read_text())
             self.assertEqual(prepared_source.pre, Links(source).pre)
             self.assertEqual(prepared_source.ids, Links(source).ids)
             self.assertEqual(prepared_source.viewports, ['width=device-width, initial-scale=1'])
+            self.assertEqual(prepared_source.pre_attributes,
+                             [{'tabindex': '0', 'role': 'region', 'aria-label': 'Haskell source'}])
             self.assertEqual((output / 'interface.haddock').read_bytes(), b'unchanged compiled interface\x00')
             evidence = json.loads((output / 'navigation.json').read_text())
             entry = next(item for item in evidence['files'] if item['path'] == PAGE)
