@@ -149,9 +149,9 @@ The explicit wait has no deadline; cancellation keeps a reachable owner.
 Logical detachment validates the operation's Runtime and group before changing
 responsibility. It releases no physical ownership.
 
-This ownership layer is private. The fixed server reads below bind logical and
-physical ownership. Public captures use the Server scope; mutation and
-subscription bindings remain unimplemented. Physical shutdown does not resolve
+This ownership layer is private. The fixed server reads and closed mutations
+below bind logical and physical ownership. Public captures use the Server
+scope; public mutation and subscription APIs remain unimplemented. Physical shutdown does not resolve
 logical unknown outcomes or establish completion of a daemon job.
 
 ## Public scope outcomes
@@ -281,6 +281,51 @@ during grace. Its empty shortcut and timed phases include unfinished read
 workers. Metadata alone does not prolong those physical phases. After
 independent worker and process cleanup, explicit inspection can still show
 uncertain logical responsibility requiring proof or detach.
+
+## Closed mutation ownership
+
+The private Runtime binds session renames, window renames and pane-title
+changes to the existing native owner. These handlers return synchronously;
+configured after-hooks may still wait or fail. This is not a general command,
+waiting-job or control-observer interface. Public mutation methods remain
+unimplemented.
+
+Literal lowering produces one checked argument vector. The complete executable,
+socket and command vector is validated before admission. Mutation work uses
+the serialized mutation lane and ordinary capacity, preserving inspection
+capacity. Its parent envelope includes the copied vector; the retained result
+witness contains no original mutation operand or decoder callback.
+
+One nonattaching `-C` client executes the command through the pinned socket.
+It sends no control input and invokes no helper commands. Its stdin writer
+stays open during normal collection: early EOF can let tmux 3.3a exit before
+a waiting after-hook finishes. Existing finite-input requests still write
+their bounded bytes and close stdin. Both modes retain the same process,
+stream and cleanup ownership.
+
+Completion requires drained bounded streams, empty native stderr, a normal
+child exit, the initial matching command acknowledgment and the final bare
+control exit. The closed decoder recognizes only that first acknowledgment;
+following hook output and notifications remain opaque bytes. Unexpected
+leading data, mismatched or truncated framing and abnormal exits retain an
+unknown outcome rather than triggering replay.
+
+The detached result distinguishes:
+
+- `Applied`: an empty primary success acknowledgment and successful client exit.
+- `Rejected`: a primary error acknowledgment and failed client exit, retaining
+  bounded diagnostic bytes.
+- `AppliedWithErrors`: a primary success acknowledgment followed by failed
+  client exit, retaining bounded following diagnostics. The primary effect
+  already happened; this does not imply rollback.
+
+Cancellation of a waiter changes no ownership. Explicit request cancellation
+settles queued work as not dispatched or accepted work as unknown, and requests
+native cleanup. Physical cleanup and logical responsibility remain separate.
+Recovery never resubmits the command; explicit logical detachment releases no
+native resource and cannot change the original caller outcome. The native
+integration cases cover waiting hooks, error after effect, opaque control-shaped
+hook data, unrelated display hooks, reserved inspection and later reuse.
 
 ## Cancellation and retirement
 

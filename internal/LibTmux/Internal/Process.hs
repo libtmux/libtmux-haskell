@@ -33,6 +33,12 @@ data OwnerError = PoolClosed | ResourceLimit | Aborted
   deriving stock (Eq, Show)
 instance Exception OwnerError
 
+data Input = BytesInput !ByteString | KeepInputOpen
+
+inputSize :: Input -> Int
+inputSize (BytesInput bytes) = Bytes.length bytes
+inputSize KeepInputOpen = 0
+
 data Hooks = Hooks
   { afterStart :: !(IO ()), afterReap :: !(IO ()), beforeSecondStream :: !(IO ())
   , signalChild :: !(N.Child -> IO CInt)
@@ -131,9 +137,15 @@ submit = submitRegistered (const (pure ()))
 -- | Register the consumer's binding in the native reservation transaction.
 -- A rejected STM action rolls back every binding and credit before fork.
 submitRegistered :: (Ticket -> STM ()) -> B.Class -> Hooks -> Pool -> N.Spec -> ByteString -> IO Ticket
-submitRegistered register allocation hooks pool spec input = mask_ $ do
+submitRegistered register allocation hooks pool spec input =
+  submitInputRegistered register allocation hooks pool spec (BytesInput input)
+
+-- | KeepInputOpen supplies no bytes and retains its writer until child exit.
+-- Early EOF can make a control client exit before its synchronous hooks finish.
+submitInputRegistered :: (Ticket -> STM ()) -> B.Class -> Hooks -> Pool -> N.Spec -> Input -> IO Ticket
+submitInputRegistered register allocation hooks pool spec input = mask_ $ do
   N.validate spec
-  when (Bytes.length input > inputLimitBytes) (throwIO ResourceLimit)
+  when (inputSize input > inputLimitBytes) (throwIO ResourceLimit)
   ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
     <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO (Progress 0 0) <*> newIORef Set.empty
     <*> newIORef Nothing <*> newMVar () <*> newTVarIO True
@@ -154,7 +166,9 @@ submitRegistered register allocation hooks pool spec input = mask_ $ do
     pure owned
   (do
     ownedSpec <- N.copySpec spec
-    ownedInput <- evaluate (force (Bytes.copy input))
+    ownedInput <- case input of
+      BytesInput bytes -> BytesInput <$> evaluate (force (Bytes.copy bytes))
+      KeepInputOpen -> pure KeepInputOpen
     void (forkIn pool (\unmask -> worker unmask pool registered ownedSpec ownedInput)))
     `onException` do
       atomically $ do
@@ -163,7 +177,7 @@ submitRegistered register allocation hooks pool spec input = mask_ $ do
       finishPin pool
   pure registered
 
-worker :: (forall a. IO a -> IO a) -> Pool -> Ticket -> N.Spec -> ByteString -> IO ()
+worker :: (forall a. IO a -> IO a) -> Pool -> Ticket -> N.Spec -> Input -> IO ()
 worker unmask pool ticket spec input = do
   outcome <- try @SomeException (unmask (runJob ticket spec input >>= evaluate))
   case outcome of
@@ -172,7 +186,7 @@ worker unmask pool ticket spec input = do
       atomically (writeTVar ticket.failure (Just problem))
       recover pool ticket problem
 
-runJob :: Ticket -> N.Spec -> ByteString -> IO Completion
+runJob :: Ticket -> N.Spec -> Input -> IO Completion
 runJob ticket spec input = do
   start <- mask_ $ do
     native <- ticket.hooks.launchNative spec
@@ -193,12 +207,15 @@ runJob ticket spec input = do
       let guarded :: IO a -> IO a
           guarded action = action `catch` \(original :: SomeException) ->
             preservingFinally ticket.cleanupFailure (throwIO original) (stop ticket)
+          writeInput = case input of
+            BytesInput bytes -> guarded (preservingFinally ticket.cleanupFailure
+              (N.writeBytes (Fd child.input) bytes) (retire ticket child.input))
+            KeepInputOpen -> pure ()
           collect = both (pure ())
             (both ticket.hooks.beforeSecondStream (guarded (readStream ticket True child.output))
               (guarded (readStream ticket False child.errors)))
             (both (pure ())
-              (guarded (preservingFinally ticket.cleanupFailure
-                (N.writeBytes (Fd child.input) input) (retire ticket child.input)))
+              writeInput
               (guarded (reap ticket)))
           aborting = atomically (readTVar ticket.cancelled >>= check) >> stop ticket >> throwIO Aborted
       first aborting collect >>= \case

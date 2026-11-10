@@ -63,6 +63,49 @@ tests = testGroup "typed mutation arguments"
       fmap (map Bytes.length) (compile (Bytes.replicate 9358 35 <> "xxxx;")) @?= Right [13, 2, 2, 2, 65512]
       compile (Bytes.replicate 9358 35 <> "xxxxx;") @?= Left (C.EncodedCommandTooLarge "window.name")
       compile (Bytes.replicate 65511 120 <> ";") @?= Left (C.EncodedCommandTooLarge "window.name")
+
+  , testCase "closed control replies separate primary and following failures" $ do
+      let begin = "%begin 1794000000 27 0\n"
+          ended = "%end 1794000000 27 0\n"
+          failed = "%error 1794000000 27 0\n"
+          footer = "%exit\n"
+          diagnostic = Bytes.pack [255, 10]
+          hook = "%begin 1794000000 28 0\nhook failure\n%error 1794000000 28 0\n"
+      C.decodeControlReply (Just 0) (begin <> ended <> footer) "" @?= Right C.Applied
+      C.decodeControlReply (Just 1) (begin <> diagnostic <> failed <> footer) "" @?= Right (C.Rejected diagnostic)
+      C.decodeControlReply (Just 1) (begin <> ended <> hook <> footer) "" @?= Right (C.AppliedWithErrors hook)
+  , testCase "control-shaped hook and error bytes remain data" $ do
+      let begin = "%begin 1794000000 27 0\n"
+          ended = "%end 1794000000 27 0\n"
+          failed = "%error 1794000000 27 0\n"
+          noise = "%begin 0 0 1\n%error 0 0 1\n%exit\n"
+          diagnostic = "invalid name:\n" <> ended
+      C.decodeControlReply (Just 0) (begin <> ended <> noise <> "%exit\n") "" @?= Right C.Applied
+      C.decodeControlReply (Just 1) (begin <> diagnostic <> failed <> "%exit\n") "" @?= Right (C.Rejected diagnostic)
+  , testCase "truncated, mismatched and abnormal control replies stay uncertain" $ do
+      let begin = "%begin 1794000000 27 0\n"
+          ended = "%end 1794000000 27 0\n"
+          valid = begin <> ended <> "%exit\n"
+          reject = Left C.UnexpectedReply
+      forM_ ["", "%exit\n", begin, begin <> ended, valid <> "\n", "noise\n" <> valid,
+             begin <> "%end 1794000000 28 0\n%exit\n",
+             begin <> ended <> "%exit terminated\n",
+             begin <> "invalid\n%error 1794000000 28 0\n%exit\n"] $ \output ->
+        C.decodeControlReply (Just 0) output "" @?= reject
+      C.decodeControlReply Nothing valid "" @?= reject
+      C.decodeControlReply (Just 2) valid "" @?= reject
+      C.decodeControlReply (Just 1) valid "" @?= reject
+      C.decodeControlReply (Just 0) valid "unexpected stderr" @?= reject
+  , testCase "native guard numbers have canonical bounded domains" $ do
+      forM_ ["0 0 0", "9223372036854775807 4294967295 0"] $ \guard ->
+        C.decodeControlReply (Just 0) ("%begin " <> guard <> "\n%end " <> guard <> "\n%exit\n") "" @?= Right C.Applied
+      forM_ ["01 1 0", "1 01 0", "-1 1 0", "1 1 1", "1  1 0", "1\t1 0",
+             "9223372036854775808 1 0", "1 4294967296 0"] $ \guard ->
+        C.decodeControlReply (Just 0) ("%begin " <> guard <> "\n%end " <> guard <> "\n%exit\n") "" @?= Left C.UnexpectedReply
+  , testCase "the control decoder enforces both native stream bounds" $ do
+      let oversized = Bytes.replicate (1048576 + 1) 120
+      C.decodeControlReply (Just 0) oversized "" @?= Left C.ReplyTooLarge
+      C.decodeControlReply (Just 1) "" oversized @?= Left C.ReplyTooLarge
   ]
 
 require :: Show e => Either e a -> IO a
