@@ -37,6 +37,9 @@
 
 ### Development
 
+- Prepare session, window and pane mutations to preserve literal text,
+  including tmux format syntax, style markers and command separators.
+  Command execution remains private. ([#7])
 - Measure complete public captures with an optional benchmark, recorded
   samples and owned graph fixtures, separate from routine CI. ([#4])
 - Add a native capture backend for server metadata, sessions, windows, panes
@@ -51,3 +54,4 @@
 [#4]: https://github.com/libtmux/libtmux-haskell/pull/4
 [#5]: https://github.com/libtmux/libtmux-haskell/pull/5
 [#6]: https://github.com/libtmux/libtmux-haskell/pull/6
+[#7]: https://github.com/libtmux/libtmux-haskell/pull/7
