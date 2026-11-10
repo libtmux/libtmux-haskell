@@ -65,6 +65,8 @@ extra-source-files:
   scripts/check_sdist.py
   scripts/check_docs.py
   scripts/test_check_docs.py
+  scripts/prepare_haddock.py
+  scripts/test_prepare_haddock.py
   bench/capture.py
   bench/results/capture-2026-11-08.json
   examples/catalogue.json

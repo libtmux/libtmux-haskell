@@ -16,6 +16,12 @@
 - Build validated offline snapshots with `LibTmux.Snapshot.Fixture` for pure
   application tests, without starting tmux or creating live references. ([#4])
 
+### Documentation
+
+- Browse native Haddock with distinct links for record owners, instance
+  methods and source identifiers. Wide API sections scroll within narrow
+  screens; CI retains the original output alongside the checked browser. ([#5])
+
 ### Changed
 
 - Admit tmux 3.3a through 3.8, including all intermediate stable releases,
@@ -35,3 +41,4 @@
 
 [#2]: https://github.com/libtmux/libtmux-haskell/pull/2
 [#4]: https://github.com/libtmux/libtmux-haskell/pull/4
+[#5]: https://github.com/libtmux/libtmux-haskell/pull/5
