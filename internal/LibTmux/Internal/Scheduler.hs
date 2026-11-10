@@ -12,6 +12,8 @@
 module LibTmux.Internal.Scheduler
   ( -- * Context and admission
     Scheduler, Operation, Lane (..), newScheduler, admit, claim
+    -- * Ownership groups
+  , Group, newGroup, admitIn, outstandingIn, memberOf
     -- * Detached observations
   , Stage (..), Outcome (..), Status (..), status, await, outstanding
     -- * Evidence and uncertainty
@@ -37,14 +39,23 @@ data State = State
   , operations :: !(Map Word64 Operation)
   }
 
--- | Metadata-only handle, readable with 'status' after responsibility retires.
--- Only its originating t'Scheduler' can advance it.
-data Operation = Operation !Unique !Word64 !Lane !(TVar Status)
+-- | Metadata-only operation identity, readable after responsibility retires.
+-- Its owning scope controls advancement and explicit detachment.
+data Operation = Operation !Unique !Word64 !Lane !(TVar Status) !(Maybe Group)
   deriving stock (Eq)
 
 instance Show Operation where
-  showsPrec precedence (Operation _ key _ _) =
+  showsPrec precedence (Operation _ key _ _ _) =
     showParen (precedence > 10) (showString "Operation " . shows key)
+
+-- | Opaque metadata identifying one owner's operations. This retains no
+-- Runtime, endpoint, resource or scheduler. Groups share admission limits.
+newtype Group = Group Unique
+  deriving stock (Eq)
+
+-- | Allocate a fresh group without reserving admission or resources.
+newGroup :: IO Group
+newGroup = Group <$> newUnique
 
 -- | Internal classification. Unknown raw commands belong to 'Waiting'.
 -- Mutations serialize until proof or explicit 'detachResponsibility'.
@@ -57,16 +68,21 @@ data Stage = Queued | Dispatching | Dispatched | ResponseClosed | OperationCompl
   deriving stock (Eq, Show)
 
 -- | First caller result. Later evidence can retire responsibility without
--- rewriting 'OutcomeUnknown' or 'ConnectionRetired'; see 'finish'.
-data Outcome = Succeeded | Failed | NotDispatched | OutcomeUnknown | ConnectionRetired
+-- rewriting 'OutcomeUnknown' or 'ConnectionRetired'.
+data Outcome
+  = Succeeded -- ^ Validated successful response and completion proof.
+  | Failed -- ^ Validated command failure.
+  | NotDispatched -- ^ Proof that the operation was never dispatched.
+  | OutcomeUnknown -- ^ Dispatch may have happened; completion remains uncertain.
+  | ConnectionRetired -- ^ The connection retired while responsibility remained.
   deriving stock (Eq, Show)
 
 -- | Progress, published result and responsibility are independent observations.
 -- A retained uncertain operation still consumes admission and its lane permit.
 data Status = Status
-  { stage :: !Stage
-  , outcome :: !(Maybe Outcome)
-  , retained :: !Bool
+  { stage :: !Stage -- ^ Last proven progress.
+  , outcome :: !(Maybe Outcome) -- ^ First published caller result, when available.
+  , retained :: !Bool -- ^ Whether the scope still retains logical responsibility.
   }
   deriving stock (Eq, Show)
 
@@ -99,15 +115,27 @@ newScheduler = Scheduler <$> newUnique <*> newTVarIO (State True (Just 0) Map.em
 -- throws 'AdmissionError' immediately. Retire queued work with 'cancelQueued';
 -- active work requires evidence or explicit 'detachResponsibility'.
 admit :: Scheduler -> Lane -> STM Operation
-admit (Scheduler context variable) lane = do
+admit scheduler = reserve scheduler Nothing
+
+-- | Reserve an operation in one group, under the scheduler's global limits.
+-- Group membership survives logical retirement for physical-owner selection.
+-- The token is forced before admission so metadata retains no caller thunk.
+admitIn :: Scheduler -> Group -> Lane -> STM Operation
+admitIn scheduler group = reserve scheduler (Just group)
+
+reserve :: Scheduler -> Maybe Group -> Lane -> STM Operation
+reserve (Scheduler context variable) group lane = do
+  case group of
+    Just token -> token `seq` pure ()
+    Nothing -> pure ()
   current <- readTVar variable
   unless current.accepting (throwSTM AdmissionClosed)
   when (Map.size current.operations >= 64) (throwSTM AdmissionFull)
-  let ordinary = Map.size (Map.filter (\(Operation _ _ ownedLane _) -> ownedLane /= Inspection) current.operations)
+  let ordinary = Map.size (Map.filter (\(Operation _ _ ownedLane _ _) -> ownedLane /= Inspection) current.operations)
   when (lane /= Inspection && ordinary >= 63) (throwSTM OrdinaryFull)
   key <- maybe (throwSTM KeyExhausted) pure current.nextKey
   observed <- newTVar (Status Queued Nothing True)
-  let operation = Operation context key lane observed
+  let operation = Operation context key lane observed group
       following = if key == maxBound then Nothing else Just (key + 1)
   writeTVar variable $! current {nextKey = following, operations = Map.insert key operation current.operations}
   pure operation
@@ -115,7 +143,7 @@ admit (Scheduler context variable) lane = do
 -- | Read detached metadata without IO, including after 'closeAdmission' or
 -- explicit 'detachResponsibility'. This does not inspect tmux.
 status :: Operation -> STM Status
-status (Operation _ _ _ observed) = readTVar observed
+status (Operation _ _ _ observed _) = readTVar observed
 
 -- | Observe retained metadata in admission order, including uncertain work.
 -- The opaque handles remain bound to this context for explicit detach.
@@ -123,6 +151,16 @@ outstanding :: Scheduler -> STM [(Operation, Status)]
 outstanding (Scheduler _ variable) = do
   current <- readTVar variable
   mapM (\operation -> (operation,) <$> status operation) (Map.elems current.operations)
+
+-- | Retained logical operations in one group, in admission order. Detached
+-- operations remain group members but no longer appear in this list.
+outstandingIn :: Scheduler -> Group -> STM [(Operation, Status)]
+outstandingIn scheduler group = filter (memberOf group . fst) <$> outstanding scheduler
+
+-- | Match ownership metadata, including after completion or detachment.
+-- This does not establish logical or physical liveness.
+memberOf :: Group -> Operation -> Bool
+memberOf group (Operation _ _ _ _ origin) = origin == Just group
 
 -- | Wait for the first published 'Outcome'. Cancelling this transaction
 -- changes neither admission nor responsibility; see 'markUnknown'.
@@ -137,7 +175,7 @@ claim (Scheduler _ variable) = do
   current <- readTVar variable
   if not current.accepting then pure Nothing else do
     entries <- mapM (\operation -> do observed <- status operation; pure (operation, observed)) (Map.elems current.operations)
-    let active = [lane | (Operation _ _ lane _, observed) <- entries, observed.stage /= Queued]
+    let active = [lane | (Operation _ _ lane _ _, observed) <- entries, observed.stage /= Queued]
         count lane = length (filter (== lane) active)
         readCount = count ScalarRead + count Inspection
         eligible lane = length active < 16 && case lane of
@@ -148,7 +186,7 @@ claim (Scheduler _ variable) = do
     choose eligible entries
   where
     choose _ [] = retry
-    choose eligible ((operation@(Operation _ _ lane observed), current) : rest) =
+    choose eligible ((operation@(Operation _ _ lane observed _), current) : rest) =
       if current.stage == Queued && eligible lane then do
         writeTVar observed $! current {stage = Dispatching}
         pure (Just operation)
@@ -222,14 +260,14 @@ closeAdmission scheduler@(Scheduler _ variable) = do
     else pure True) (Map.elems current.operations)
 
 withLive :: Scheduler -> Operation -> a -> (Status -> STM a) -> STM a
-withLive (Scheduler context variable) (Operation origin key _ observed) absent action = do
+withLive (Scheduler context variable) (Operation origin key _ observed _) absent action = do
   unless (context == origin) (throwSTM ForeignContext)
   current <- readTVar variable
   if Map.member key current.operations then readTVar observed >>= action
   else pure absent
 
 advance :: Stage -> Stage -> Scheduler -> Operation -> STM ()
-advance required target scheduler operation@(Operation _ _ _ observed) =
+advance required target scheduler operation@(Operation _ _ _ observed _) =
   withLive scheduler operation () $ \current ->
     unless (current.stage == target) $ do
       requireStage required current
@@ -246,7 +284,7 @@ publish result current = case current.outcome of
   Just _ -> current
 
 publishActive :: Outcome -> Scheduler -> Operation -> STM Bool
-publishActive result scheduler operation@(Operation _ _ _ observed) =
+publishActive result scheduler operation@(Operation _ _ _ observed _) =
   withLive scheduler operation False $ \current -> do
     when (current.stage == Queued) (throwSTM (InvalidTransition Dispatching Queued))
     case current.outcome of
@@ -256,7 +294,7 @@ publishActive result scheduler operation@(Operation _ _ _ observed) =
         pure True
 
 retire :: Scheduler -> Operation -> Status -> STM Bool
-retire (Scheduler _ variable) (Operation _ key _ observed) current = do
+retire (Scheduler _ variable) (Operation _ key _ observed _) current = do
   context <- readTVar variable
   writeTVar observed $! current {retained = False}
   writeTVar variable $! context {operations = Map.delete key context.operations}

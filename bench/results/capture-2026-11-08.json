@@ -1,0 +1,571 @@
+{
+  "schemaVersion": 1,
+  "measuredLocalDate": "2026-11-08",
+  "libraryRevision": "eb1bcaf3fb5fa323868c139db73ccc06a837240a",
+  "compiler": "9.14.1",
+  "cabal": "3.18.2.0",
+  "rtsCapabilities": 1,
+  "libraryOptimization": "O1",
+  "executionLimits": {
+    "cpuQuotaCores": 4,
+    "memoryMaxGiB": 8,
+    "host": "shared Linux x86_64 host"
+  },
+  "harnessSha256": {
+    "bench/Capture.hs": "e85e5f42d8f9400a5c47ec6f06b6dce070dbe402bbd4925f7079ce10d6ad748e",
+    "bench/capture.py": "b0dcd486fd4930fca518558721158cf9ea793deac1578f8f33c0a7a6c42c3e29",
+    "examples/capture-graph/run.py": "e35bf49829344edfb440df5c45df2ab0554462a8326dfec73e60fbcffb23045e"
+  },
+  "trackedPatchSha256": "4d2bf6177b3f9e7d965a21dcfece6a655cd10f59b277fa4b05408b7f9f667af8",
+  "librarySourceSha256": {
+    "src/LibTmux/Id.hs": "3456edf88bf412e8769e5c96cc5d35b7b118ea3bd3786f167c9002f9804fb3b7",
+    "src/LibTmux/Server.hs": "98f8691edffcc690372aceca03261c50022807440c621aac5b0e8e77f4344342",
+    "src/LibTmux/Snapshot/Fixture.hs": "b1b53369587d2ea963a97ba2b34ce963233130c4e47581292510613e7819a919",
+    "src/LibTmux/Snapshot.hs": "cddfee4e757f1dd4b35ee9f099fa796c86213ea7ff50a4727ddf198d26aaa2a1",
+    "src/LibTmux/Value.hs": "e199c3d0bbf08a159daa35bb4ae9a5d2ad4761117d375f292dd8b250bb459e55",
+    "src/LibTmux/Version.hs": "cf4e4d94a113a95ffb7b650cffbd0b4f702608627db84b7c7bf7630b83e4dfa7",
+    "src/LibTmux.hs": "d9dcb17fc4f7a7aecda31b48f2eb2286ee9637e4c85d997716431a882f5a1529",
+    "internal/LibTmux/Internal/Budget.hs": "b9d5e202feac125b518f22bb200d695c11afde8c8e0f93eb7043a8076570ba91",
+    "internal/LibTmux/Internal/Capture.hs": "2d64c8e56a6abfa704ab0644bebc3590f5a1bd0cf5a952571be65ebc6d9aec5a",
+    "internal/LibTmux/Internal/Entropy.hs": "5fb00be60a26390da3690095214b1f50fa8b9e3cb16ba068c113c4fa32ab998b",
+    "internal/LibTmux/Internal/Field.hs": "48e4c35bc64cb45644190bfde102ba0ec2992f3ac1e3022f78eeba07dbb5aa6b",
+    "internal/LibTmux/Internal/Frame.hs": "8882edc3dd94efef6b19072ec501ab437669422950f4910db0f840ce046a68cc",
+    "internal/LibTmux/Internal/Graph.hs": "1f0097798f1cfa5e1837006fcfb1c33ba1b089c8e9ea1aa2e503382ad1eae14f",
+    "internal/LibTmux/Internal/Process/Native.hs": "eeddd25bbda9251cd8bfae9a43ed5e569fb831256e69cf5039a88dbeba545833",
+    "internal/LibTmux/Internal/Process.hs": "44dd53a93312d9f5f96e587cecf5e909bbefce36adee7326becab101787521e5",
+    "internal/LibTmux/Internal/Record.hs": "b14168f972c598711953d1f08955341557c150b72d6b01d276274b9f9fbf6fa1",
+    "internal/LibTmux/Internal/Runtime.hs": "446bc810282a0163bc11ba9d76d421fe34cf631c255b732bdc07db7619d2df92",
+    "internal/LibTmux/Internal/Scheduler.hs": "3dbbc76b7760a75916c68527505c954315d664f1f4e817b79a25d9fa7ac36420",
+    "internal/LibTmux/Internal/Scope.hs": "ee4ebc57bf9718f6aca9c2331574e5a0c3c6514246467a4a8a6dc607f13f5847",
+    "internal/LibTmux/Internal/SocketPin.hs": "a751fb1d891bdf6f7ca5e29e11c4cba8d30ead3dc7703a18e549d271de3df12f",
+    "internal/LibTmux/Internal/TmuxText.hs": "766344310c5151417ab8fadc36d3a8940c051dde9fa7a2ac379dead984afacba",
+    "internal/LibTmux/Internal/Topology.hs": "e97add3ce6717d9d4e6e931d568fc85150b2552039f8a44bc4059942b19c432d",
+    "cbits/process.c": "847f16335d7f924041e02a836cac098b5e5e5725b8d9ebe1ca21b6c618872fa0",
+    "cbits/process.h": "88adae819ffd43af9bfc4eec57f1a640e12f4103d106ed0cf37b2186f6a6c0c8"
+  },
+  "benchmarkExecutableSha256": "c3bbf2934a3688a6983e2d488b862d79c6e7738bc26120eec2d34421e13533f5",
+  "method": "Elapsed time surrounds public capture; includes decoding, graph validation, stored indexes and forcing. Endpoint adoption, fixture setup, derived occurrence counting and teardown are excluded.",
+  "cpuMetric": "Haskell process CPU only; excludes daemon and command-client CPU.",
+  "cases": [
+    {
+      "version": "tmux 3.3a",
+      "size": "small",
+      "artifactKey": "tmux-3.3a-1-6afd01583b60-small",
+      "tmuxBinarySha256": "6afd01583b60a3296d43d4417b160b6153105413443ce608f4b6cfba8b18ae52",
+      "sessions": 1,
+      "windows": 3,
+      "panes": 6,
+      "setupSeconds": 0.034,
+      "caseSeconds": 0.083,
+      "defaultTimeoutSeconds": 2,
+      "captureMilliseconds": {
+        "min": 2.915697,
+        "median": 3.091248,
+        "max": 5.476288
+      },
+      "samples": [
+        {
+          "iteration": 1,
+          "elapsed_ns": 3091248,
+          "haskell_cpu_ps": 990484000,
+          "capture_ns": 3063511,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 2,
+          "elapsed_ns": 5476288,
+          "haskell_cpu_ps": 2163350000,
+          "capture_ns": 5473085,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 3,
+          "elapsed_ns": 2974896,
+          "haskell_cpu_ps": 894670000,
+          "capture_ns": 2971741,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 4,
+          "elapsed_ns": 3178346,
+          "haskell_cpu_ps": 1011209000,
+          "capture_ns": 3174895,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 5,
+          "elapsed_ns": 2915697,
+          "haskell_cpu_ps": 835308000,
+          "capture_ns": 2910751,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        }
+      ],
+      "ownedDaemonAndAllTrackedPanesExitObserved": true,
+      "hostLoadBefore": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "hostLoadAfter": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "availableMemoryBeforeKiB": 21058888
+    },
+    {
+      "version": "tmux 3.3a",
+      "size": "medium",
+      "artifactKey": "tmux-3.3a-1-6afd01583b60-medium",
+      "tmuxBinarySha256": "6afd01583b60a3296d43d4417b160b6153105413443ce608f4b6cfba8b18ae52",
+      "sessions": 5,
+      "windows": 25,
+      "panes": 75,
+      "setupSeconds": 0.256,
+      "caseSeconds": 0.358,
+      "defaultTimeoutSeconds": 2,
+      "captureMilliseconds": {
+        "min": 9.274513,
+        "median": 10.449382,
+        "max": 12.226265
+      },
+      "samples": [
+        {
+          "iteration": 1,
+          "elapsed_ns": 12226265,
+          "haskell_cpu_ps": 4165061000,
+          "capture_ns": 12194703,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 2,
+          "elapsed_ns": 10483984,
+          "haskell_cpu_ps": 3501702000,
+          "capture_ns": 10476675,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 3,
+          "elapsed_ns": 10449382,
+          "haskell_cpu_ps": 2670309000,
+          "capture_ns": 10442439,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 4,
+          "elapsed_ns": 10050502,
+          "haskell_cpu_ps": 2371115000,
+          "capture_ns": 10044082,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 5,
+          "elapsed_ns": 9274513,
+          "haskell_cpu_ps": 2094162000,
+          "capture_ns": 9268368,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        }
+      ],
+      "ownedDaemonAndAllTrackedPanesExitObserved": true,
+      "hostLoadBefore": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "hostLoadAfter": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "availableMemoryBeforeKiB": 21052732
+    },
+    {
+      "version": "tmux 3.3a",
+      "size": "large",
+      "artifactKey": "tmux-3.3a-1-6afd01583b60-large",
+      "tmuxBinarySha256": "6afd01583b60a3296d43d4417b160b6153105413443ce608f4b6cfba8b18ae52",
+      "sessions": 15,
+      "windows": 80,
+      "panes": 250,
+      "setupSeconds": 1.281,
+      "caseSeconds": 1.596,
+      "defaultTimeoutSeconds": 2,
+      "captureMilliseconds": {
+        "min": 37.241194,
+        "median": 41.396209,
+        "max": 49.602687
+      },
+      "samples": [
+        {
+          "iteration": 1,
+          "elapsed_ns": 49602687,
+          "haskell_cpu_ps": 19051267000,
+          "capture_ns": 49545145,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 2,
+          "elapsed_ns": 45354674,
+          "haskell_cpu_ps": 12522425000,
+          "capture_ns": 45335336,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 3,
+          "elapsed_ns": 41396209,
+          "haskell_cpu_ps": 12679807000,
+          "capture_ns": 41380342,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 4,
+          "elapsed_ns": 39044510,
+          "haskell_cpu_ps": 9754901000,
+          "capture_ns": 39029133,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 5,
+          "elapsed_ns": 37241194,
+          "haskell_cpu_ps": 9997629000,
+          "capture_ns": 37218354,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        }
+      ],
+      "ownedDaemonAndAllTrackedPanesExitObserved": true,
+      "hostLoadBefore": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "hostLoadAfter": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "availableMemoryBeforeKiB": 20986144
+    },
+    {
+      "version": "tmux 3.8",
+      "size": "small",
+      "artifactKey": "tmux-3.8-2-8d26a03aea06-small",
+      "tmuxBinarySha256": "8d26a03aea063272363af174dfe9f6847fc831d9da53b4688da26f3fd24a2ab8",
+      "sessions": 1,
+      "windows": 3,
+      "panes": 6,
+      "setupSeconds": 0.043,
+      "caseSeconds": 0.1,
+      "defaultTimeoutSeconds": 2,
+      "captureMilliseconds": {
+        "min": 4.329618,
+        "median": 4.638513,
+        "max": 5.111672
+      },
+      "samples": [
+        {
+          "iteration": 1,
+          "elapsed_ns": 4898859,
+          "haskell_cpu_ps": 1745841000,
+          "capture_ns": 4845403,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 2,
+          "elapsed_ns": 4329618,
+          "haskell_cpu_ps": 1184110000,
+          "capture_ns": 4325405,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 3,
+          "elapsed_ns": 4584758,
+          "haskell_cpu_ps": 1387606000,
+          "capture_ns": 4580258,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 4,
+          "elapsed_ns": 4638513,
+          "haskell_cpu_ps": 1533158000,
+          "capture_ns": 4631735,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        },
+        {
+          "iteration": 5,
+          "elapsed_ns": 5111672,
+          "haskell_cpu_ps": 1821149000,
+          "capture_ns": 5106200,
+          "sessions": 1,
+          "windows": 3,
+          "panes": 6,
+          "window_links": 4,
+          "pane_occurrences": 8
+        }
+      ],
+      "ownedDaemonAndAllTrackedPanesExitObserved": true,
+      "hostLoadBefore": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "hostLoadAfter": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "availableMemoryBeforeKiB": 20682212
+    },
+    {
+      "version": "tmux 3.8",
+      "size": "medium",
+      "artifactKey": "tmux-3.8-2-8d26a03aea06-medium",
+      "tmuxBinarySha256": "8d26a03aea063272363af174dfe9f6847fc831d9da53b4688da26f3fd24a2ab8",
+      "sessions": 5,
+      "windows": 25,
+      "panes": 75,
+      "setupSeconds": 0.294,
+      "caseSeconds": 0.402,
+      "defaultTimeoutSeconds": 2,
+      "captureMilliseconds": {
+        "min": 10.728002,
+        "median": 11.62227,
+        "max": 12.748792
+      },
+      "samples": [
+        {
+          "iteration": 1,
+          "elapsed_ns": 12748792,
+          "haskell_cpu_ps": 3956696000,
+          "capture_ns": 12712951,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 2,
+          "elapsed_ns": 12265112,
+          "haskell_cpu_ps": 3526237000,
+          "capture_ns": 12258676,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 3,
+          "elapsed_ns": 11227882,
+          "haskell_cpu_ps": 2898578000,
+          "capture_ns": 11220648,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 4,
+          "elapsed_ns": 10728002,
+          "haskell_cpu_ps": 2345882000,
+          "capture_ns": 10720811,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        },
+        {
+          "iteration": 5,
+          "elapsed_ns": 11622270,
+          "haskell_cpu_ps": 2339108000,
+          "capture_ns": 11616004,
+          "sessions": 5,
+          "windows": 25,
+          "panes": 75,
+          "window_links": 29,
+          "pane_occurrences": 87
+        }
+      ],
+      "ownedDaemonAndAllTrackedPanesExitObserved": true,
+      "hostLoadBefore": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "hostLoadAfter": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "availableMemoryBeforeKiB": 20683860
+    },
+    {
+      "version": "tmux 3.8",
+      "size": "large",
+      "artifactKey": "tmux-3.8-2-8d26a03aea06-large",
+      "tmuxBinarySha256": "8d26a03aea063272363af174dfe9f6847fc831d9da53b4688da26f3fd24a2ab8",
+      "sessions": 15,
+      "windows": 80,
+      "panes": 250,
+      "setupSeconds": 0.956,
+      "caseSeconds": 1.164,
+      "defaultTimeoutSeconds": 2,
+      "captureMilliseconds": {
+        "min": 27.245003,
+        "median": 28.228059,
+        "max": 29.731202
+      },
+      "samples": [
+        {
+          "iteration": 1,
+          "elapsed_ns": 29731202,
+          "haskell_cpu_ps": 9793495000,
+          "capture_ns": 29679970,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 2,
+          "elapsed_ns": 28106503,
+          "haskell_cpu_ps": 6994328000,
+          "capture_ns": 28092550,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 3,
+          "elapsed_ns": 27245003,
+          "haskell_cpu_ps": 6662614000,
+          "capture_ns": 27232873,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 4,
+          "elapsed_ns": 28228059,
+          "haskell_cpu_ps": 6865288000,
+          "capture_ns": 28214732,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        },
+        {
+          "iteration": 5,
+          "elapsed_ns": 28243636,
+          "haskell_cpu_ps": 6689583000,
+          "capture_ns": 28231243,
+          "sessions": 15,
+          "windows": 80,
+          "panes": 250,
+          "window_links": 84,
+          "pane_occurrences": 266
+        }
+      ],
+      "ownedDaemonAndAllTrackedPanesExitObserved": true,
+      "hostLoadBefore": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "hostLoadAfter": [
+        5.98388671875,
+        9.7099609375,
+        10.83154296875
+      ],
+      "availableMemoryBeforeKiB": 20783760
+    }
+  ],
+  "limits": [
+    "Five samples per case on one shared host; no latency guarantee.",
+    "No allocation, concurrency, active-resize, long-field or cancellation-latency qualification."
+  ]
+}

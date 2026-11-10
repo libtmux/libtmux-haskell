@@ -2,18 +2,25 @@
 --
 -- 'captureSnapshot' includes daemon metadata and attached clients; 'captureGraph'
 -- acquires only physical entities and links. Read failures and cancellation
--- can leave logical
--- uncertainty in 'R.inspect'; the caller must retain the Runtime and inspect
--- those handles. Public recovery and Server scope policies remain unfinished.
+-- can leave logical uncertainty. t'CaptureRecovery' in the exception context
+-- retains the exact read and its recovery owner, without retaining its result.
+-- "LibTmux.Server" owns the public scope and cleanup policy.
 module LibTmux.Internal.Capture
-  ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot ) where
+  ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
+  , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
+  ) where
 
+import Control.Concurrent.STM (STM)
 import Control.DeepSeq (NFData, force)
-import Control.Exception (Exception, Handler (..), catches, evaluate, mask, onException, throwIO)
+import Control.Exception (Exception, ExceptionWithContext (..), Handler (..), SomeException,
+  catchNoPropagate, catches, evaluate, mask, onException, rethrowIO, someExceptionContext, throwIO)
+import Control.Exception.Annotation (ExceptionAnnotation)
+import Control.Exception.Context qualified as Context
 import Control.Monad (forM, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.IORef
+import Data.Maybe (listToMaybe)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Internal.Graph qualified as G
@@ -37,39 +44,70 @@ data CaptureError
   deriving stock (Eq, Show)
 instance Exception CaptureError
 
-captureGraph :: R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedGraph
-captureGraph runtime client executable duration = withinDeadline duration $ \deadline -> do
-  left <- remaining deadline
-  owned runtime (R.readGraphWith P.defaultHooks left runtime client executable)
+-- | A reachable owner for one failed or cancelled capture. The receipt holds
+-- metadata only; the Runtime retains any remaining native and logical owners.
+data CaptureRecovery = CaptureRecovery !R.Runtime !R.ServerHandle !R.ReadReceipt
+instance Show CaptureRecovery where
+  showsPrec precedence (CaptureRecovery _ _ receipt) =
+    showParen (precedence > 10) (showString "CaptureRecovery " . shows receipt)
+instance ExceptionAnnotation CaptureRecovery
 
-captureSnapshot :: R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedSnapshot
-captureSnapshot runtime client executable duration = withinDeadline duration $ \deadline -> do
+captureRecoveries :: SomeException -> [CaptureRecovery]
+captureRecoveries = Context.getExceptionAnnotations . someExceptionContext
+
+recoveryReceipt :: CaptureRecovery -> R.ReadReceipt
+recoveryReceipt (CaptureRecovery _ _ receipt) = receipt
+
+inspectRecovery :: CaptureRecovery -> STM R.ReadRecovery
+inspectRecovery (CaptureRecovery runtime client receipt) = R.inspectReceipt runtime client receipt
+
+-- | Resume only existing cleanup, leaving Runtime admission open. Never retry
+-- the tmux read; a new capture is a separately requested observation.
+resumeRecovery :: CaptureRecovery -> IO ()
+resumeRecovery (CaptureRecovery runtime client receipt) = R.resumeReceipt runtime client receipt
+
+-- | Explicitly release logical uncertainty without releasing native owners.
+detachRecovery :: CaptureRecovery -> STM Bool
+detachRecovery (CaptureRecovery runtime client receipt) = R.detachReceipt runtime client receipt
+
+captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
+captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
   left <- remaining deadline
-  owned runtime (R.readSnapshotWith P.defaultHooks left runtime client executable)
+  owned runtime receipt (R.readGraphWith P.defaultHooks left runtime client executable)
+
+captureSnapshot :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedSnapshot
+captureSnapshot = captureSnapshotWith P.defaultHooks
+
+-- | Use the native process checkpoints while retaining capture correlation
+-- across worker handoff, cancellation and conversion of a deadline failure.
+captureSnapshotWith :: P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedSnapshot
+captureSnapshotWith hooks runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
+  left <- remaining deadline
+  owned runtime receipt (R.readSnapshotWith hooks left runtime client executable)
 
 -- | Serial comparison path with a checkpoint before its final topology read.
 -- The tagged default above does not use these scalar hydration boundaries.
-captureGraphWith :: IO () -> R.Runtime -> R.Client -> ByteString -> Int -> IO CapturedGraph
+captureGraphWith :: IO () -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraphWith checkpoint runtime client executable duration =
-  withinDeadline duration (\deadline -> R.withCaptureBudget runtime (attempt deadline 2))
+  withinDeadline runtime client duration (\receipt deadline -> R.withCaptureBudget runtime (attempt receipt deadline 2))
   where
-    generation = pinGeneration (R.clientPin client)
-    attempt :: Word64 -> Int -> IO G.EntityGraph
-    attempt deadline tries = oneAttempt deadline `catches`
+    generation = pinGeneration (R.serverPin client)
+    attempt :: IORef (Maybe R.ReadReceipt) -> Word64 -> Int -> IO G.EntityGraph
+    attempt receipt deadline tries = oneAttempt receipt deadline `catches`
       [ Handler $ \problem -> case problem of
-          CaptureChanged -> retry deadline tries
+          CaptureChanged -> retry receipt deadline tries
           _ -> throwIO problem
       , Handler $ \problem -> case problem of
-          T.TopologyGraphError _ -> retry deadline tries
+          T.TopologyGraphError _ -> retry receipt deadline tries
           _ -> throwIO problem
       , Handler $ \problem -> case problem of
-          R.InvalidEntityReceipt -> retry deadline tries
+          R.InvalidEntityReceipt -> retry receipt deadline tries
           _ -> throwIO problem
       ]
-    retry deadline tries
-      | tries > 1 = attempt deadline (tries - 1)
+    retry receipt deadline tries
+      | tries > 1 = attempt receipt deadline (tries - 1)
       | otherwise = throwIO CaptureChanged
-    oneAttempt deadline = do
+    oneAttempt receipt deadline = do
       retained <- newIORef 0
       let charge amount = do
             old <- readIORef retained
@@ -78,7 +116,7 @@ captureGraphWith checkpoint runtime client executable duration =
             writeIORef retained total
           topology = do
             left <- remaining deadline
-            bytes <- owned runtime (R.readTopologyWith P.defaultHooks left runtime client executable R.ScalarRead)
+            bytes <- owned runtime receipt (R.readTopologyWith P.defaultHooks left runtime client executable R.ScalarRead)
             charge (4 * toInteger (Bytes.length bytes))
             graph <- either throwIO pure (T.decodeTopology generation bytes)
             -- Both topology graphs coexist during validation. Reserve metadata
@@ -88,7 +126,7 @@ captureGraphWith checkpoint runtime client executable duration =
             pure graph
           scalar field = do
             left <- remaining deadline
-            bytes <- owned runtime (R.readEntityFieldWith field P.defaultHooks left runtime client executable R.ScalarRead)
+            bytes <- owned runtime receipt (R.readEntityFieldWith field P.defaultHooks left runtime client executable R.ScalarRead)
             charge (4 * toInteger (Bytes.length bytes))
             pure bytes
           decoded :: Field.Field row value -> R.EntityField -> IO value
@@ -115,23 +153,48 @@ captureGraphWith checkpoint runtime client executable duration =
         (G.assembleEntityGraph generation sessions windows panes (G.graphLinks before))
       evaluate (force graph)
 
-withinDeadline :: NFData value => Int -> (Word64 -> IO value) -> IO (Word64, Word64, value)
-withinDeadline duration action = do
+withinDeadline :: NFData value => R.Runtime -> R.ServerHandle -> Int
+  -> (IORef (Maybe R.ReadReceipt) -> Word64 -> IO value) -> IO (Word64, Word64, value)
+withinDeadline runtime client duration action = mask $ \restore -> do
   when (duration < 1 || duration > 10000000) (throwIO (InvalidCaptureDeadline duration))
-  started <- getMonotonicTimeNSec
-  let delta = fromIntegral duration * 1000
-  when (started > maxBound - delta) (throwIO R.ReadClockOverflow)
-  let deadline = started + delta
-  left <- remaining deadline
-  completed <- timeout left (action deadline >>= evaluate . force)
-  graph <- maybe (throwIO CaptureDeadline) pure completed
-  ended <- getMonotonicTimeNSec
-  when (ended >= deadline) (throwIO CaptureDeadline)
-  pure (started, ended, graph)
+  receipt <- newIORef Nothing
+  let annotate (ExceptionWithContext context (problem :: SomeException)) = do
+        current <- readIORef receipt
+        let selected = case current of
+              Just value -> Just value
+              Nothing -> listToMaybe (Context.getExceptionAnnotations @R.ReadReceipt context)
+            annotated = case selected of
+              Nothing -> context
+              Just !value ->
+                let !recovery = CaptureRecovery runtime client value
+                in Context.addExceptionAnnotation recovery context
+        rethrowIO (ExceptionWithContext annotated problem)
+  catchNoPropagate (restore (timed receipt)) annotate
+  where
+    timed receipt = do
+      started <- getMonotonicTimeNSec
+      let delta = fromIntegral duration * 1000
+      when (started > maxBound - delta) (throwIO R.ReadClockOverflow)
+      let deadline = started + delta
+      left <- remaining deadline
+      completed <- timeout left (action receipt deadline >>= evaluate . force)
+      graph <- maybe (throwIO CaptureDeadline) pure completed
+      ended <- getMonotonicTimeNSec
+      when (ended >= deadline) (throwIO CaptureDeadline)
+      pure (started, ended, graph)
 
-owned :: R.Runtime -> IO (R.Request value) -> IO value
-owned runtime start = mask $ \restore -> do
-  request <- start
+owned :: R.Runtime -> IORef (Maybe R.ReadReceipt) -> IO (R.Request value) -> IO value
+owned runtime receipt start = mask $ \restore -> do
+  writeIORef receipt Nothing
+  request <- catchNoPropagate start $ \problem@(ExceptionWithContext context (_ :: SomeException)) -> do
+    -- System.Timeout consumes its private exception. Copy correlation before
+    -- that conversion, including when start never returns a Request.
+    case Context.getExceptionAnnotations @R.ReadReceipt context of
+      current : _ -> current `seq` writeIORef receipt (Just current)
+      [] -> pure ()
+    rethrowIO problem
+  let !current = R.readReceipt request
+  writeIORef receipt (Just current)
   response <- restore (R.awaitRead request) `onException` R.cancelRead runtime request
   case response of
     R.ReadValue value -> pure value

@@ -78,20 +78,26 @@ through decoding, then transfer that charge or release it on external delivery.
 
 ## Provisional Runtime ownership
 
-The private [Runtime](../../internal/LibTmux/Internal/Runtime.hs) constructs a
-fresh pin owner and reserves its pool's client credit in the same STM
+The private [Runtime](../../internal/LibTmux/Internal/Runtime.hs) creates a
+fresh pin journal, then reserves its pool's client credit in the same STM
 transaction that registers cleanup responsibility. Socket adoption starts
 after that registration. Exhausted or closed admission therefore refuses
 before creating a private socket alias. Only successful adoption on an open
-pool can return a client.
+pool can return a handle.
 
 Failed and cancelled adoption retain their pool and pin journal. Cleanup
 failure keeps the registry entry and client credit until a successful retry.
 The original adoption exception remains primary, including cancellation.
 Closing shared admission observes every registered owner; it cannot miss a
 pool between reservation and registration. Reports and later admission
-remove only entries whose cleanup has completed, so retired clients do not
+remove only entries whose cleanup has completed, so retired handles do not
 accumulate in the registry.
+
+The private `ServerOwner` identifies that registered responsibility before a
+socket pin exists. `ServerHandle` still requires a complete pin. Separating
+registration from acquisition lets an owner-specific exception policy cover
+failed or cancelled adoption without requiring a returned handle. Origin and
+admission checks precede filesystem acquisition and repeat before publication.
 
 Runtime close requests cleanup for all registered pools and reports ordinary
 request failures. Waiting propagates a failed cleanup restart before awaiting
@@ -115,14 +121,42 @@ attempt. Supervisor allocation failure closes admission, reports the
 exception and leaves owners available for retry. The Runtime retains only
 the current attempt's completion latch.
 
+Private `shutdownServerHandle` applies the same phase limits to one adopted
+handle. Its first STM transaction validates the Runtime, closes only that
+pool's admission and publishes `NotDispatched` for its queued reads. This cut
+precedes supervisor allocation, so an allocation failure still leaves the
+selected handle closed and its queued results available. Concurrent callers
+join that handle's owned attempt; cancellation stops only the caller's wait.
+Other handles retain admission under the unchanged global resource limits.
+
+Private `inspectServerHandle` reports that pool, its read workers and its
+logical operation group. Logical detachment cannot hide a physical owner;
+decoder retirement cannot erase uncertain logical responsibility. Admission
+requires both the Runtime and selected pool to remain open. Global and scoped
+shutdown may overlap; completed owners release their credits once. A foreign
+Runtime/handle pair is rejected before either context changes.
+
+Private `runServerScope` preserves the common exception policy for one
+`ServerOwner`. Registration and policy installation stay masked; the caller's
+outer restore applies to acquisition and application work inside that policy.
+Recovery retains the selected target through callback failure, cleanup failure
+and cancellation. A provisional adoption can therefore retain a recovery owner
+before it publishes a Server handle, while other handles remain usable under
+the shared limits.
+
+Inspection, retry and explicit cleanup waiting use the same selected target.
+The explicit wait has no deadline; cancellation keeps a reachable owner.
+Logical detachment validates the operation's Runtime and group before changing
+responsibility. It releases no physical ownership.
+
 This ownership layer is private. The fixed server reads below bind logical and
-physical ownership. Other command bindings, capture and subscription consumers
-remain unimplemented. Physical shutdown does not resolve logical unknown
-outcomes or establish completion of a daemon job.
+physical ownership. Public captures use the Server scope; mutation and
+subscription bindings remain unimplemented. Physical shutdown does not resolve
+logical unknown outcomes or establish completion of a daemon job.
 
 ## Public scope outcomes
 
-The proposed Server scopes must preserve the following outcomes before export:
+The common Server scope preserves these outcomes:
 
 - Successful callback and cleanup return the callback result.
 - Successful callback with failed cleanup reports cleanup failure and retains
@@ -136,8 +170,19 @@ The proposed Server scopes must preserve the following outcomes before export:
   the failed handoff.
 
 A generally blocking uninterruptible region cannot supply bounded cleanup.
-Exception-context annotations are a candidate mechanism; the common scope
-needs integrated cancellation and double-failure tests. Correlate capture
+Exception-context annotations retain recovery owners. Integrated scope tests
+cover cancellation, double failure and failed worker allocation. The public
+`tryTmux` specializes base's `tryWithContext`, returning the typed failure together
+with its exception context. Retain that context when converting errors;
+`cleanupRecoveries` and `captureRecoveries` read their owners from it.
+An ordinary typed `try` discards those annotations. The GHC 9.14.1 probe and
+the public cleanup-failure integration case qualify the chosen catch boundary.
+[base exception API](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext).
+
+The advanced caller-owned Runtime scope remains unimplemented; the common
+`withServer` scope creates and owns its Runtime.
+
+Correlate capture
 failure with operation ID, endpoint/generation, physical cleanup status,
 logical outcome and available recovery or explicit detachment. Batching
 alone does not establish logical completion or retire uncertainty.

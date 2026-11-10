@@ -57,12 +57,13 @@ tests = testGroup "private socket pin"
           bracket newPinOwner closePin $ \secondOwner -> do
             first <- acquirePin firstOwner (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
             second <- acquirePin secondOwner (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
-            let Generation firstIdentity firstToken = pinGeneration first
-                Generation secondIdentity secondToken = pinGeneration second
-            firstIdentity @?= secondIdentity
-            Bytes.length firstToken @?= 32
-            Bytes.length secondToken @?= 32
-            assertBool "generation was reused" (firstToken /= secondToken)
+            case (pinGeneration first, pinGeneration second) of
+              (Generation firstIdentity firstToken, Generation secondIdentity secondToken) -> do
+                firstIdentity @?= secondIdentity
+                Bytes.length firstToken @?= 32
+                Bytes.length secondToken @?= 32
+                assertBool "generation was reused" (firstToken /= secondToken)
+              _ -> assertFailure "endpoint adoption returned an offline fixture identity"
   , testCase "non-sockets, symlink leaves and non-writable sockets are refused" $
       withFixture $ \fixture -> do
         let parent = Ascii.pack fixture.directory

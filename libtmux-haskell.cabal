@@ -1,11 +1,12 @@
 cabal-version: 3.18
 name: libtmux-haskell
 version: 0.1.0.0
-synopsis: Typed tmux IDs, checked values and release admission
+synopsis: Haskell tmux client library with detached snapshots
 description:
-  Distinct entity IDs, checked dimensions and indices, and stable-release
-  parsing. These pure values do not contact tmux. Native client, observation
-  and command APIs remain under development.
+  Capture a validated tmux graph in IO, then inspect immutable sessions,
+  physical windows, panes and contextual links with ordinary Haskell values.
+  Scoped handles retain cleanup ownership after cancellation and failure.
+  Commands, queries and workspace tooling remain under development.
 license: MIT
 license-file: LICENSE
 author: libtmux contributors
@@ -16,6 +17,10 @@ bug-reports: https://github.com/libtmux/libtmux-haskell/issues
 build-type: Simple
 tested-with: GHC ==9.14.1
 extra-doc-files:
+  docs/capture.md
+  docs/shared-runtime.md
+  docs/fixtures.md
+  docs/performance.md
   README.md
   CHANGELOG.md
   docs/assets/*.svg
@@ -60,12 +65,31 @@ extra-source-files:
   scripts/check_sdist.py
   scripts/check_docs.py
   scripts/test_check_docs.py
+  bench/capture.py
+  bench/results/capture-2026-11-08.json
   examples/catalogue.json
   examples/typed-values/Main.hs
   examples/typed-values/expected.stdout
   examples/typed-values/libtmux-typed-values.cabal
   examples/typed-values/cabal.project
   examples/typed-values/cabal.project.vcs
+  examples/capture-graph/Main.hs
+  examples/capture-graph/expected.stdout
+  examples/capture-graph/libtmux-capture-graph.cabal
+  examples/capture-graph/cabal.project
+  examples/capture-graph/cabal.project.vcs
+  examples/capture-graph/run.py
+  examples/capture-graph/test_run.py
+  examples/offline-graph/Main.hs
+  examples/offline-graph/expected.stdout
+  examples/offline-graph/libtmux-offline-graph.cabal
+  examples/offline-graph/cabal.project
+  examples/offline-graph/cabal.project.vcs
+  examples/shared-runtime/Main.hs
+  examples/shared-runtime/expected.stdout
+  examples/shared-runtime/libtmux-shared-runtime.cabal
+  examples/shared-runtime/cabal.project
+  examples/shared-runtime/cabal.project.vcs
   scripts/ci_tmux.py
   scripts/test_ci_tmux.py
   .github/tmux-releases.json
@@ -89,11 +113,21 @@ common modern
   ghc-options: -Wall -Wcompat -Wincomplete-uni-patterns
   build-depends: base >=4.22 && <4.23
 
+benchmark capture
+  import: modern
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench
+  main-is: Capture.hs
+  ghc-options: -threaded -rtsopts
+  build-depends:
+    filepath >=1.5.4 && <1.6,
+    libtmux-haskell
+
 library
   import: modern
   hs-source-dirs: src internal
-  exposed-modules: LibTmux.Id LibTmux.Value LibTmux.Version
-  other-modules: LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  exposed-modules: LibTmux LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
+  other-modules: LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -118,11 +152,12 @@ test-suite specs
   type: exitcode-stdio-1.0
   hs-source-dirs: test/specs
   main-is: Main.hs
-  other-modules: IdSpec IdProperties ValueSpec VersionSpec
+  other-modules: IdSpec IdProperties ValueSpec VersionSpec FixtureSpec
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
     hspec >=2.11.18 && <2.12,
+    os-string >=2.0.8 && <2.1,
     QuickCheck >=2.19 && <2.20,
     text >=2.1.3 && <2.2
 
@@ -153,7 +188,7 @@ test-suite integration
   type: exitcode-stdio-1.0
   hs-source-dirs: test/integration test-support internal
   main-is: Main.hs
-  other-modules: EntityCaptureTest LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: PublicServerTest ScopeTest LibTmux.Internal.Scope EntityCaptureTest LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: test-support/fixture-watch.c test-support/process-gate.c cbits/process.c
   include-dirs: cbits
   extra-libraries: dl

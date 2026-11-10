@@ -44,14 +44,25 @@ def check():
     paths = {"source", "package", "project", "vcs_project", "stdout"}
     fields = paths | {"id", "executable", "capability", "command", "verification"}
     for entry in entries:
-        if set(entry) != fields or entry["id"] in examples:
+        if set(entry) not in [fields, fields | {"runner"}] or entry["id"] in examples:
             raise ValueError("Invalid or duplicate example entry")
-        for key in paths:
+        for key in paths | ({"runner"} if "runner" in entry else set()):
             path = Path(entry[key])
             if path.is_absolute() or ".." in path.parts or not (ROOT / path).is_file():
                 raise ValueError(f"Missing or invalid {key} for {entry['id']}")
         if Path(entry["source"]).parts != ("examples", entry["id"], "Main.hs"):
             raise ValueError("An example must have one Main.hs in its own directory")
+        if "runner" in entry:
+            runner = Path(entry["runner"]).parts
+            if (len(runner) != 3 or runner[0] != "examples" or runner[2] != "run.py"
+                    or not any(owner["id"] == runner[1] and owner.get("runner") == entry["runner"]
+                               for owner in entries)):
+                raise ValueError("An example runner must belong to a declared example directory")
+            command = ["python3", entry["runner"]]
+            if runner[1] != entry["id"]:
+                command += ["--executable", entry["executable"], "--expected-output", entry["stdout"]]
+            if entry["command"] != command:
+                raise ValueError("An example command must execute its declared runner")
         examples[entry["id"]] = entry
         proof = entry["verification"]
         if set(proof) != {"workflow", "job", "step", "command", "checks"}:

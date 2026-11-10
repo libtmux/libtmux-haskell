@@ -4,7 +4,7 @@ import Control.Concurrent (myThreadId)
 import Control.Concurrent.Async (AsyncCancelled (..), asyncThreadId, cancel, wait, waitCatch, withAsync)
 import Control.Concurrent.STM
 import Control.Exception
-import Control.Monad (forM, forM_, replicateM, void)
+import Control.Monad (forM, forM_, replicateM, void, when)
 import Data.ByteString.Char8 qualified as Bytes
 import Data.ByteString.Lazy.Char8 qualified as Lazy
 import Data.IORef
@@ -17,10 +17,12 @@ import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Graph qualified as Graph
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Internal.SocketPin qualified as Pin
 import LibTmux.Version qualified as Version
 import ProcessGate qualified as G
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString)
+import System.Posix.Files.ByteString qualified as Files
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
@@ -69,7 +71,7 @@ tests = testGroup "owned Runtime reads"
             tracked action = modifyIORef' forks (+ 1) >> P.normalFork action
         bracket (R.newRuntime tracked) R.awaitCleanup $ \other -> do
           try @R.ReadError (start other client fixture R.InspectionRead) >>= \case
-            Left R.ForeignClient -> pure ()
+            Left R.ForeignServer -> pure ()
             _ -> assertFailure "foreign client crossed Runtime budgets"
           readIORef forks >>= (@?= 0)
           atomically (R.usage other) >>= (@?= B.Usage True 0 0 0)
@@ -100,6 +102,74 @@ tests = testGroup "owned Runtime reads"
   , cancelledProfile "snapshot" R.readSnapshotWith $ \snapshot -> do
       length (Graph.graphPanes (Graph.entities snapshot)) @?= 1
       Graph.clients snapshot @?= []
+
+  , testCase "receipts correlate retained native cleanup after the decoder retires" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        blocked <- newIORef True
+        let hooks = P.defaultHooks
+              { P.afterStart = throwIO (userError "read checkpoint failed")
+              , P.signalChild = \child -> readIORef blocked >>= \case
+                  True -> throwIO (userError "native cleanup blocked")
+                  False -> P.defaultHooks.signalChild child
+              }
+        flip finally (writeIORef blocked False) $ do
+          request <- startWith hooks 1000000 runtime client fixture R.ScalarRead
+          expectUnavailable S.OutcomeUnknown request
+          waitWorkers runtime
+          let receipt = R.readReceipt request
+          observed <- atomically (R.inspectReceipt runtime client receipt)
+          observed.logical.retained @?= True
+          observed.workerOwned @?= False
+          observed.nativeOwned @?= True
+          case observed.nativeFailure >>= fromException of
+            Just problem -> ioeGetErrorString problem @?= "native cleanup blocked"
+            Nothing -> assertFailure "receipt lost the native cleanup failure"
+          healthy <- start runtime client fixture R.InspectionRead
+          serverPid fixture >>= flip expectValue healthy
+          unrelated <- atomically (R.inspectReceipt runtime client (R.readReceipt healthy))
+          unrelated.nativeOwned @?= False
+          unrelated.logical.retained @?= False
+          atomically (R.detachReceipt runtime client receipt) >>= (@?= True)
+          atomically (R.inspectReceipt runtime client receipt) >>= \detached -> do
+            detached.logical.retained @?= False
+            detached.nativeOwned @?= True
+          writeIORef blocked False
+          R.resumeReceipt runtime client receipt
+          recovered <- atomically $ do
+            current <- R.inspectReceipt runtime client receipt
+            check (not current.nativeOwned)
+            pure current
+          recovered.logical.outcome @?= Just S.OutcomeUnknown
+          expected <- serverPid fixture
+          start runtime client fixture R.ScalarRead >>= expectValue expected
+          atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
+  , testCase "receipts reject other handles and runtimes before changing ownership" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        request <- start runtime client fixture R.ScalarRead
+        expected <- serverPid fixture
+        expectValue expected request
+        let receipt = R.readReceipt request
+            rejected selected other = do
+              try @R.ReadError (atomically (R.inspectReceipt selected other receipt)) >>= \case
+                Left R.ForeignServer -> pure ()
+                _ -> assertFailure "foreign receipt was inspected"
+              try @R.ReadError (R.resumeReceipt selected other receipt) >>= \case
+                Left R.ForeignServer -> pure ()
+                _ -> assertFailure "foreign receipt resumed cleanup"
+              try @R.ReadError (R.cancelReceipt selected other receipt) >>= \case
+                Left R.ForeignServer -> pure ()
+                _ -> assertFailure "foreign receipt requested cancellation"
+              try @R.ReadError (atomically (R.detachReceipt selected other receipt)) >>= \case
+                Left R.ForeignServer -> pure ()
+                _ -> assertFailure "foreign receipt detached responsibility"
+        other <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+        rejected runtime other
+        bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \foreignRuntime -> do
+          foreignClient <- R.adopt foreignRuntime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+          rejected foreignRuntime foreignClient
+        observed <- atomically (R.inspectReceipt runtime client receipt)
+        observed.logical @?= S.Status S.OperationComplete (Just S.Succeeded) False
 
   , testCase "queued expiry proves non-dispatch behind four claimed inspections" $
       withRuntime P.normalFork $ \runtime client fixture -> withGates 4 $ \gates -> do
@@ -138,7 +208,7 @@ tests = testGroup "owned Runtime reads"
           expectUnavailable S.OutcomeUnknown request
           atomically (R.readStatus request) >>= \status -> status.retained @?= True
           atomically (R.usage runtime) >>= (@?= B.Usage True 1 1 (P.childBytes + P.retainedBytes))
-          atomically (readTVar (R.clientPool client).jobs) >>= \jobs -> do
+          atomically (readTVar (R.serverPool client).jobs) >>= \jobs -> do
             Map.size jobs @?= 1
             forM_ (Map.elems jobs) $ \ticket -> atomically (readTVar ticket.cancelled) >>= (@?= True)
         waitWorkers runtime
@@ -253,7 +323,7 @@ tests = testGroup "owned Runtime reads"
             check (any (maybe False (const True) . snd) report.readWorkers)
           atomically (R.usage runtime) >>= (@?= B.Usage False 1 1 (P.childBytes + P.retainedBytes))
           writeIORef refuse True
-          failed <- timeout 250000 (try @IOException (R.awaitCleanup runtime))
+          failed <- timeout 250000 (try @IOException (R.resumeReceipt runtime client (R.readReceipt request)))
           case failed of
             Just (Left problem) -> ioeGetErrorString problem @?= "request recovery allocation refused"
             _ -> assertFailure "known recovery allocation failure became an unbounded join"
@@ -267,7 +337,7 @@ tests = testGroup "owned Runtime reads"
 
   , testCase "an inspection executes using protected physical and parent credits" $
       withRuntime P.normalFork $ \runtime client fixture -> do
-        let budget = (R.clientPool client).budget
+        let budget = (R.serverPool client).budget
         expected <- serverPid fixture
         bracket (atomically (replicateM 15 (B.acquireChild budget B.Ordinary 0)))
           (atomically . mapM_ B.releaseChild) $ \_ ->
@@ -304,6 +374,202 @@ tests = testGroup "owned Runtime reads"
         atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
         atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= True)
 
+  , testGroup "scoped Server shutdown"
+      [ testCase "retiring one handle preserves other admission and reads" $
+          withRuntime P.normalFork $ \runtime selected fixture -> do
+            expected <- serverPid fixture
+            healthy <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+            report <- R.shutdownServerHandle runtime selected
+            report.accepting @?= False
+            length report.pending @?= 0
+            length report.readWorkers @?= 0
+            length report.unresolved @?= 0
+            atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+            Files.fileExist (Pin.pinPath (R.serverPin selected)) >>= (@?= False)
+            Files.fileExist (Pin.pinPath (R.serverPin healthy)) >>= (@?= True)
+            atomically (R.inspectServerHandle runtime healthy) >>= \other -> do
+              other.accepting @?= True
+              length other.pending @?= 1
+            try @P.OwnerError (start runtime selected fixture R.ScalarRead) >>= \case
+              Left P.PoolClosed -> pure ()
+              _ -> assertFailure "closed handle admitted another read"
+            start runtime healthy fixture R.ScalarRead >>= expectValue expected
+            replacement <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+            atomically (R.usage runtime) >>= (@?= B.Usage True 2 0 0)
+            _ <- R.shutdownServerHandle runtime replacement
+            repeated <- timeout 250000 (R.shutdownServerHandle runtime selected)
+            case repeated of
+              Just current -> length current.pending @?= 0
+              Nothing -> assertFailure "retired handle restarted cleanup phase waits"
+
+      , testCase "retired decoders leave uncertain reads in their own handle report" $
+          withRuntime P.normalFork $ \runtime selected fixture -> do
+            expected <- serverPid fixture
+            healthy <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+            request <- bracket_
+              (Fixture.command fixture ["set-hook", "-g", "after-display-message", "display-message -p extra"] >>= (@?= (ExitSuccess, "", "")))
+              (Fixture.command fixture ["set-hook", "-gu", "after-display-message"] >>= (@?= (ExitSuccess, "", ""))) $ do
+                request <- start runtime selected fixture R.ScalarRead
+                expectUnavailable S.OutcomeUnknown request
+                waitWorkers runtime
+                pure request
+            report <- R.shutdownServerHandle runtime selected
+            length report.pending @?= 0
+            length report.readWorkers @?= 0
+            map fst report.unresolved @?= [R.readOperation request]
+            atomically (R.inspectServerHandle runtime healthy) >>= \other ->
+              length other.unresolved @?= 0
+            start runtime healthy fixture R.ScalarRead >>= expectValue expected
+            atomically (R.inspect runtime) >>= \root ->
+              map fst root.unresolved @?= [R.readOperation request]
+            atomically (R.detachReceipt runtime selected (R.readReceipt request)) >>= (@?= True)
+            atomically (R.inspectServerHandle runtime selected) >>= \detached ->
+              length detached.unresolved @?= 0
+            atomically (R.inspect runtime) >>= \root -> length root.unresolved @?= 0
+            atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
+      , testCase "detached reads retain scoped physical owners after a shutdown waiter is cancelled" $
+          withRuntime P.normalFork $ \runtime selected fixture -> G.withGate $ \gate -> do
+            expected <- serverPid fixture
+            healthy <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+            request <- startWith (P.defaultHooks {P.launchNative = G.launch G.AfterLaunch gate})
+              10000000 runtime selected fixture R.ScalarRead
+            G.awaitGate gate
+            flip finally (G.releaseGate gate) $ do
+              R.cancelRead runtime request
+              expectUnavailable S.OutcomeUnknown request
+              atomically (R.detachReceipt runtime selected (R.readReceipt request)) >>= (@?= True)
+              withAsync (R.shutdownServerHandle runtime selected) $ \closer -> do
+                atomically (readTVar (R.serverPool selected).closing >>= check)
+                cancel closer
+                waitCatch closer >>= assertCancelled
+                timeout 750000 (R.shutdownServerHandle runtime selected) >>= \case
+                  Nothing -> assertFailure "cancelled waiter stopped its owned shutdown attempt"
+                  Just report -> do
+                    length report.pending @?= 1
+                    map fst report.readWorkers @?= [R.readOperation request]
+                    length report.unresolved @?= 0
+              atomically (R.inspectReceipt runtime selected (R.readReceipt request)) >>= \receipt -> do
+                receipt.logical.retained @?= False
+                receipt.workerOwned @?= True
+                receipt.nativeOwned @?= True
+              atomically (readTVar (R.serverPool healthy).closing) >>= (@?= False)
+              start runtime healthy fixture R.ScalarRead >>= expectValue expected
+            report <- R.shutdownServerHandle runtime selected
+            length report.pending @?= 0
+            length report.readWorkers @?= 0
+            expectUnavailable S.OutcomeUnknown request
+            start runtime healthy fixture R.ScalarRead >>= expectValue expected
+            atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
+      , testCase "refused scoped supervisor settles queued reads before retry" $ do
+          refuse <- newIORef False
+          let fork :: P.Fork
+              fork action = atomicModifyIORef' refuse (\old -> (False, old)) >>= \case
+                True -> throwIO (userError "scoped supervisor allocation refused")
+                False -> P.normalFork action
+          withRuntime fork $ \runtime selected fixture -> withGates 3 $ \gates -> do
+            expected <- serverPid fixture
+            healthy <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+            held <- forM gates $ \gate ->
+              startWith (P.defaultHooks {P.launchNative = G.launch G.BeforeLaunch gate})
+                10000000 runtime healthy fixture R.ScalarRead
+            flip finally (writeIORef refuse False >> mapM_ G.releaseGate gates) $ do
+              mapM_ G.awaitGate gates
+              queued <- start runtime selected fixture R.ScalarRead
+              atomically (R.readStatus queued) >>= \status -> status.stage @?= S.Queued
+              writeIORef refuse True
+              try @IOException (R.shutdownServerHandle runtime selected) >>= \case
+                Left problem -> ioeGetErrorString problem @?= "scoped supervisor allocation refused"
+                Right _ -> assertFailure "refused supervisor did not report allocation failure"
+              atomically (readTVar (R.serverPool selected).closing) >>= (@?= True)
+              atomically (R.readStatus queued) >>= \status -> do
+                status.outcome @?= Just S.NotDispatched
+                status.retained @?= False
+              R.awaitRead queued >>= \case
+                R.ReadUnavailable S.NotDispatched (Just problem) ->
+                  fromException problem @?= Just R.ReadClosing
+                _ -> assertFailure "queued read was not settled in the scoped admission cut"
+              atomically (readTVar (R.serverPool healthy).closing) >>= (@?= False)
+              report <- R.shutdownServerHandle runtime selected
+              length report.pending @?= 0
+              length report.readWorkers @?= 0
+              atomically (R.inspectServerHandle runtime healthy) >>= \other -> do
+                other.accepting @?= True
+                map fst other.readWorkers @?= map R.readOperation held
+            mapM_ (expectValue expected) held
+            start runtime healthy fixture R.ScalarRead >>= expectValue expected
+            atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
+      , testCase "global and scoped shutdown share owners while root admission closes first" $ do
+          forks <- newTVarIO (0 :: Int)
+          hold <- newTVarIO False
+          entered <- newEmptyTMVarIO
+          release <- newEmptyTMVarIO
+          let fork :: P.Fork
+              fork action = do
+                held <- atomically $ modifyTVar' forks (+ 1) >> readTVar hold
+                when held $ do
+                  atomically (void (tryPutTMVar entered ()))
+                  atomically (readTMVar release)
+                P.normalFork action
+          withRuntime fork $ \runtime selected fixture -> withGates 2 $ \gates -> do
+            healthy <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+            requests <- forM (zip [selected, healthy] gates) $ \(server, gate) ->
+              startWith (P.defaultHooks {P.launchNative = G.launch G.BeforeLaunch gate})
+                10000000 runtime server fixture R.ScalarRead
+            let releaseAll = do
+                  atomically $ writeTVar hold False >> void (tryPutTMVar release ())
+                  mapM_ G.releaseGate gates
+            flip finally releaseAll $ do
+              mapM_ G.awaitGate gates
+              previous <- readTVarIO forks
+              withAsync (R.shutdownServerHandle runtime selected) $ \localCloser -> do
+                atomically $ do
+                  readTVar forks >>= check . (> previous)
+                  readTVar (R.serverPool selected).closing >>= check
+                  writeTVar hold True
+                withAsync (R.shutdown runtime) $ \rootCloser -> do
+                  atomically (readTMVar entered)
+                  atomically (readTVar (R.serverPool healthy).closing) >>= (@?= False)
+                  atomically (R.inspectServerHandle runtime healthy) >>= \other ->
+                    other.accepting @?= False
+                  atomically $ writeTVar hold False >> void (tryPutTMVar release ())
+                  timeout 750000 (wait localCloser) >>= \case
+                    Nothing -> assertFailure "scoped shutdown did not finish its bounded attempt"
+                    Just report -> do
+                      length report.pending @?= 1
+                      map fst report.readWorkers @?= take 1 (map R.readOperation requests)
+                  timeout 750000 (wait rootCloser) >>= \case
+                    Nothing -> assertFailure "global shutdown did not finish its bounded attempt"
+                    Just report -> do
+                      length report.pending @?= 2
+                      map fst report.readWorkers @?= map R.readOperation requests
+                  mapM_ (expectUnavailable S.OutcomeUnknown) requests
+            R.awaitCleanup runtime
+            atomically (R.usage runtime) >>= (@?= B.Usage False 0 0 0)
+            atomically (R.inspectServerHandle runtime selected) >>= \report -> do
+              length report.pending @?= 0
+              length report.readWorkers @?= 0
+            atomically (R.inspect runtime) >>= \report ->
+              forM_ report.unresolved $ \(operation, _) ->
+                atomically (R.detachOperation runtime operation) >>= (@?= True)
+
+      , testCase "foreign scoped inspection and shutdown refuse before changing admission" $
+          withRuntime P.normalFork $ \runtime _ fixture ->
+            bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \foreignRuntime -> do
+              foreignHandle <- R.adopt foreignRuntime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
+              forM_ [atomically (R.inspectServerHandle runtime foreignHandle),
+                     R.shutdownServerHandle runtime foreignHandle] $ \action ->
+                try @R.ReadError action >>= \case
+                  Left R.ForeignServer -> pure ()
+                  _ -> assertFailure "foreign scoped operation was accepted"
+              atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+              atomically (R.usage foreignRuntime) >>= (@?= B.Usage True 1 0 0)
+              expected <- serverPid fixture
+              start foreignRuntime foreignHandle fixture R.ScalarRead >>= expectValue expected
+      ]
+
   , testCase "close settles queued requests and preserves active grace and uncertainty" $
       withRuntime P.normalFork $ \runtime client fixture -> withGates 3 $ \gates -> do
         expected <- serverPid fixture
@@ -338,7 +604,7 @@ tests = testGroup "owned Runtime reads"
 
 cancelledProfile
   :: Show value => String
-  -> (P.Hooks -> Int -> R.Runtime -> R.Client -> Bytes.ByteString -> IO (R.Request value))
+  -> (P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> Bytes.ByteString -> IO (R.Request value))
   -> (value -> Assertion) -> TestTree
 cancelledProfile label readProfile verifyValue =
   testCase ("cancelled " <> label <> " reads retain their envelope and leave inspection usable") $
@@ -356,23 +622,27 @@ cancelledProfile label readProfile verifyValue =
         start runtime client fixture R.InspectionRead >>= expectValue expected
       waitWorkers runtime
       atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
-      atomically (R.inspect runtime) >>= \report -> map fst report.unresolved @?= [R.readOperation request]
-      atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= True)
+      observed <- atomically (R.readStatus request)
+      observed.outcome @?= Just S.OutcomeUnknown
+      let expectedDebt = if observed.retained then [R.readOperation request] else []
+      atomically (R.inspect runtime) >>= \report -> map fst report.unresolved @?= expectedDebt
+      atomically (R.detachOperation runtime (R.readOperation request)) >>= (@?= observed.retained)
+      if observed.retained then pure () else observed.stage @?= S.OperationComplete
       recovered <- readProfile P.defaultHooks 1000000 runtime client executable
       R.awaitRead recovered >>= \case
         R.ReadValue value -> verifyValue value
         other -> assertFailure (show other)
 
-withRuntime :: P.Fork -> (R.Runtime -> R.Client -> Fixture.Fixture -> IO a) -> IO a
+withRuntime :: P.Fork -> (R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO a) -> IO a
 withRuntime fork action = Fixture.withFixture $ \fixture ->
   bracket (R.newRuntime fork) R.awaitCleanup $ \runtime -> do
     client <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
     action runtime client fixture
 
-start :: R.Runtime -> R.Client -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
+start :: R.Runtime -> R.ServerHandle -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
 start runtime client fixture = R.readServerPid runtime client (Bytes.pack fixture.executable)
 
-startWith :: P.Hooks -> Int -> R.Runtime -> R.Client -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
+startWith :: P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> Fixture.Fixture -> R.ReadClass -> IO R.PidRead
 startWith hooks duration runtime client fixture =
   R.readServerPidWith hooks duration runtime client (Bytes.pack fixture.executable)
 

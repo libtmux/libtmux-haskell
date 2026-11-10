@@ -4,6 +4,10 @@ The public modules are:
 
 | Module | Read it for |
 | --- | --- |
+| [LibTmux](../src/LibTmux.hs) | Common entry point re-exporting the public modules |
+| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, configuration, capture, failures and recovery |
+| [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
+| [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
 | [LibTmux.Id](../src/LibTmux/Id.hs) | Distinct entity IDs, canonical parsing, rendering and `IdError` |
 | [LibTmux.Value](../src/LibTmux/Value.hs) | Checked dimensions/indices, numeric access and `ValueError` |
 | [LibTmux.Version](../src/LibTmux/Version.hs) | Stable-release identity, admission and `VersionError` |
@@ -11,23 +15,35 @@ The public modules are:
 Build the native Haddock browser from a checkout:
 
 ```console
-$ cabal haddock lib:libtmux-haskell
+$ cabal haddock lib:libtmux-haskell --offline
 ```
 
 Open the `index.html` path printed by Cabal. Module overviews explain the
 types; declaration documentation specifies input domains, results and
 errors. The project enables declaration-to-source links, interactive symbol
-search and a Hoogle index for this package. The current public functions are
-pure: no field access or parser starts a tmux process.
+search and a Hoogle index for this package. Acquisition and recovery are
+explicit `IO`; field access, list processing, parsers and navigation are pure.
+Record fields use
+[`OverloadedRecordDot`](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/overloaded_record_dot.html);
+the library does not generate
+top-level selector functions. Detached record constructors support patterns
+and local updates. Snapshot assembly and targeting references remain opaque.
+For an ambiguous record update, qualify the field through its defining module.
+For example, import `LibTmux.Server` as `Server` and update `Server.socketPath`;
+this identifies the field owner without deprecated type-directed disambiguation.
 
-Haddock 2.33.0 generates some derived-instance method self-links without
-targets. Follow the instance's class link for its method contract. Package
-declaration links, symbol search and declaration-to-source navigation have
-been checked separately.
+Haddock 2.33.0 has native output limitations: some derived-instance method
+self-links lack targets, hidden-module instance attribution links have no
+page, and repeated record labels share field anchors within a module. Use
+the enclosing record declaration and source links for those fields. Native
+declaration coverage does not establish that every generated link works.
 
-The complete [typed-value example](../examples/typed-values/Main.hs) uses
-only these exports. Its source and output are checked against the source
-archive by the [consumer check](../scripts/check_sdist.py).
+The complete [capture example](../examples/capture-graph/Main.hs),
+[shared Runtime example](../examples/shared-runtime/Main.hs) and
+[typed-value example](../examples/typed-values/Main.hs) use only public
+exports. Their source and output are checked against the source archive by
+the [consumer check](../scripts/check_sdist.py).
 
 Private graph, framing and transport modules are implementation details.
-They do not constitute an available client API; see [status](status.md).
+The source layout does not define visibility: Cabal's `exposed-modules`
+controls the installed API. See [status](status.md) for remaining work.

@@ -12,10 +12,52 @@ tests :: TestTree
 tests = localOption (mkTimeout 500000) $ testGroup "logical admission"
   [ testCase "ordinary admission preserves inspection capacity" $ do
       scheduler <- S.newScheduler
-      _ <- atomically (replicateM 63 (S.admit scheduler S.Waiting))
+      group <- S.newGroup
+      other <- S.newGroup
+      _ <- atomically (replicateM 63 (S.admitIn scheduler group S.Waiting))
       refused S.OrdinaryFull (S.admit scheduler S.Mutation)
+      refused S.OrdinaryFull (S.admitIn scheduler other S.Mutation)
       _ <- atomically (S.admit scheduler S.Inspection)
-      refused S.AdmissionFull (S.admit scheduler S.Inspection)
+      refused S.AdmissionFull (S.admitIn scheduler other S.Inspection)
+  , testCase "groups retain identity independently of logical retirement" $ do
+      scheduler <- S.newScheduler
+      firstGroup <- S.newGroup
+      secondGroup <- S.newGroup
+      first <- atomically (S.admitIn scheduler firstGroup S.ScalarRead)
+      ungrouped <- atomically (S.admit scheduler S.Waiting)
+      second <- atomically (S.admitIn scheduler secondGroup S.ScalarRead)
+      queued <- atomically (S.admitIn scheduler firstGroup S.Inspection)
+      claimIs scheduler first
+      atomically (S.markDispatched scheduler first)
+      atomically (S.markUnknown scheduler first) >>= (@?= True)
+      atomically (S.outstandingIn scheduler firstGroup) >>= \rows ->
+        map fst rows @?= [first, queued]
+      atomically (S.outstandingIn scheduler secondGroup) >>= \rows ->
+        map fst rows @?= [second]
+      S.memberOf firstGroup first @?= True
+      S.memberOf secondGroup first @?= False
+      S.memberOf firstGroup ungrouped @?= False
+      atomically (S.detachResponsibility scheduler first) >>= (@?= True)
+      S.memberOf firstGroup first @?= True
+      atomically (S.outstandingIn scheduler firstGroup) >>= \rows ->
+        map fst rows @?= [queued]
+      atomically (S.cancelQueued scheduler second) >>= (@?= True)
+      S.memberOf secondGroup second @?= True
+      atomically (S.outstandingIn scheduler secondGroup) >>= (@?= [])
+      atomically (S.outstanding scheduler) >>= \rows ->
+        map fst rows @?= [ungrouped, queued]
+  , testCase "a deferred group fails before reserving logical ownership" $ do
+      scheduler <- S.newScheduler
+      result <- try @ErrorCall (atomically
+        (S.admitIn scheduler (error "deferred group") S.Waiting))
+      case result of
+        Left _ -> pure ()
+        Right _ -> assertFailure "admitted an unevaluated ownership group"
+      atomically (S.outstanding scheduler) >>= (@?= [])
+      group <- S.newGroup
+      operation <- atomically (S.admitIn scheduler group S.Waiting)
+      atomically (S.outstandingIn scheduler group) >>= \rows ->
+        map fst rows @?= [operation]
   , testCase "a saturated waiting lane does not obstruct later inspection" $ do
       scheduler <- S.newScheduler
       waiting <- atomically (replicateM 5 (S.admit scheduler S.Waiting))

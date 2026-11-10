@@ -14,6 +14,7 @@ import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
+import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin
 import ProcessGate qualified as G
 import System.Exit (ExitCode (..))
@@ -26,7 +27,70 @@ import Test.Tasty.HUnit
 
 tests :: TestTree
 tests = testGroup "provisional Runtime ownership"
-  [ testCase "client quota is reserved before endpoint adoption" $
+  [ testGroup "provisional owner acquisition"
+      [ testCase "foreign ownership refuses before creating any pin path" $
+          withRuntime $ \runtime fixture ->
+            bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \foreignRuntime -> do
+              owner <- R.newServerOwner foreignRuntime
+              checkpoints <- newIORef (0 :: Int)
+              let observe _ _ = modifyIORef' checkpoints (+ 1)
+              try @R.ReadError (R.adoptServerOwnerWith observe runtime owner
+                (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)) >>= \case
+                  Left R.ForeignServer -> pure ()
+                  _ -> assertFailure "foreign provisional owner was admitted"
+              readIORef checkpoints >>= (@?= 0)
+              touched <- newIORef False
+              try @R.ReadError (Scope.runServerScope runtime owner (writeIORef touched True)) >>= \case
+                Left R.ForeignServer -> pure ()
+                _ -> assertFailure "foreign owner scope was admitted"
+              readIORef touched >>= (@?= False)
+              atomically (R.usage runtime) >>= (@?= B.Usage True 0 0 0)
+              atomically (R.usage foreignRuntime) >>= (@?= B.Usage True 1 0 0)
+
+      , testCase "closed ownership refuses before attempting to reuse the pin" $
+          withRuntime $ \runtime fixture -> do
+            owner <- R.newServerOwner runtime
+            _ <- R.shutdownServerOwner runtime owner
+            checkpoints <- newIORef (0 :: Int)
+            let observe _ _ = modifyIORef' checkpoints (+ 1)
+            try @P.OwnerError (R.adoptServerOwnerWith observe runtime owner
+              (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)) >>= \case
+                Left P.PoolClosed -> pure ()
+                _ -> assertFailure "closed provisional owner was admitted"
+            readIORef checkpoints >>= (@?= 0)
+            atomically (R.usage runtime) >>= (@?= B.Usage True 0 0 0)
+
+      -- Pin acquisition holds its owner while both cleanup phases expire.
+      , testCase "selected closure during pin acquisition refuses publication while peers remain open" $
+          withRuntime $ \runtime fixture -> do
+            healthy <- adopt runtime fixture
+            owner <- R.newServerOwner runtime
+            ready <- newEmptyTMVarIO
+            release <- newEmptyTMVarIO
+            let checkpoint point directory = when (point == BeforePublish) $ do
+                  atomically (putTMVar ready directory)
+                  atomically (readTMVar release)
+            withAsync (R.adoptServerOwnerWith checkpoint runtime owner
+              (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)) $ \worker ->
+                flip finally (atomically (tryPutTMVar release ()) >> pure ()) $ do
+                  directory <- atomically (readTMVar ready)
+                  report <- R.shutdownServerOwner runtime owner
+                  length report.pending @?= 1
+                  atomically (R.usage runtime) >>= (@?= B.Usage True 2 0 0)
+                  request <- R.readServerPid runtime healthy (Ascii.pack fixture.executable) R.ScalarRead
+                  R.awaitRead request >>= \case
+                    R.ReadValue pid -> assertBool "neighbor returned an invalid PID" (pid > 0)
+                    other -> assertFailure ("neighbor was unavailable: " <> show other)
+                  atomically (putTMVar release ())
+                  waitCatch worker >>= \case
+                    Left problem -> fromException problem @?= Just P.PoolClosed
+                    Right _ -> assertFailure "closed provisional owner published a handle"
+                  _ <- R.shutdownServerOwner runtime owner
+                  Files.fileExist directory >>= (@?= False)
+                  atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+      ]
+
+  , testCase "client quota is reserved before endpoint adoption" $
       withRuntime $ \runtime fixture -> do
         clients <- replicateM 8 (adopt runtime fixture)
         checkpoints <- newIORef (0 :: Int)
@@ -36,10 +100,19 @@ tests = testGroup "provisional Runtime ownership"
           Right _ -> assertFailure "ninth client was admitted"
         readIORef checkpoints >>= (@?= 0)
         atomically (R.usage runtime) >>= (@?= B.Usage True 8 0 0)
+        beforeRegistration <- try @SomeException $ mask $ \restore -> do
+          owner <- R.newServerOwner runtime
+          Scope.runServerScope runtime owner (restore (throwIO (userError "registration unexpectedly succeeded")))
+        case beforeRegistration of
+          Left problem -> do
+            fromException problem @?= Just (B.Exhausted B.Clients 1 8 8)
+            length (Scope.cleanupRecoveries problem) @?= 0
+          Right (_ :: ()) -> assertFailure "exhausted registration installed a scope"
+        atomically (R.usage runtime) >>= (@?= B.Usage True 8 0 0)
         _ <- R.requestClose runtime
         R.awaitCleanup runtime
         atomically (R.inspect runtime) >>= assertEmpty
-        forM_ clients $ \client -> Files.fileExist (pinPath (R.clientPin client)) >>= (@?= False)
+        forM_ clients $ \client -> Files.fileExist (pinPath (R.serverPin client)) >>= (@?= False)
 
   , testCase "cancelled partial adoption retains its cleanup owner and credit" $
       withRuntime $ \runtime fixture -> do
@@ -59,8 +132,8 @@ tests = testGroup "provisional Runtime ownership"
             try @PinError (R.awaitCleanup runtime) >>= \case
               Left (SocketPinCleanupFailed _) -> pure ()
               _ -> assertFailure "partial pin cleanup failure was lost"
-            P.awaitCleanup (R.clientPool healthy)
-            Files.fileExist (pinPath (R.clientPin healthy)) >>= (@?= False)
+            P.awaitCleanup (R.serverPool healthy)
+            Files.fileExist (pinPath (R.serverPin healthy)) >>= (@?= False)
             atomically (R.usage runtime) >>= (@?= B.Usage False 1 0 0)
             atomically (R.inspect runtime) >>= assertPending 1
             Files.fileExist directory >>= (@?= True)
@@ -105,18 +178,18 @@ tests = testGroup "provisional Runtime ownership"
           client <- adopt runtime fixture
           atomically (R.inspect runtime) >>= assertPending 1
           let tmux = Ascii.pack fixture.executable
-              spec = N.spec tmux [tmux, "-u", "-N", "-S", pinPath (R.clientPin client),
+              spec = N.spec tmux [tmux, "-u", "-N", "-S", pinPath (R.serverPin client),
                 "display-message", "-p", "#{pid}"]
-          result <- P.submit B.Inspection P.defaultHooks (R.clientPool client) spec "" >>= P.await
+          result <- P.submit B.Inspection P.defaultHooks (R.serverPool client) spec "" >>= P.await
           result.exit @?= Just (N.Exited 0)
           result.output @?= Lazy.toStrict expected
           result.errors @?= ""
-          _ <- R.closeClient client
-          P.awaitCleanup (R.clientPool client)
-          _ <- R.closeClient client
+          _ <- R.closeServerHandle client
+          P.awaitCleanup (R.serverPool client)
+          _ <- R.closeServerHandle client
           atomically (R.inspect runtime) >>= assertEmpty
           atomically (R.usage runtime) >>= (@?= B.Usage True 0 0 0)
-          Files.fileExist (pinPath (R.clientPin client)) >>= (@?= False)
+          Files.fileExist (pinPath (R.serverPin client)) >>= (@?= False)
 
   , testCase "failed cleanup restart is reported before waiting and remains retryable" $ do
       refuse <- newIORef False
@@ -133,7 +206,7 @@ tests = testGroup "provisional Runtime ownership"
         client <- adopt runtime fixture
         healthy <- adopt runtime fixture
         let tmux = Ascii.pack fixture.executable
-            spec = N.spec tmux [tmux, "-u", "-N", "-S", pinPath (R.clientPin client),
+            spec = N.spec tmux [tmux, "-u", "-N", "-S", pinPath (R.serverPin client),
               "display-message", "-p", "#{pid}"]
             hooks = P.defaultHooks
               { P.afterStart = throwIO (userError "injected Runtime worker failure")
@@ -141,7 +214,7 @@ tests = testGroup "provisional Runtime ownership"
                   True -> throwIO (userError "injected Runtime child cleanup failure")
                   False -> N.signalChild child 9
               }
-        ticket <- P.submit B.Ordinary hooks (R.clientPool client) spec ""
+        ticket <- P.submit B.Ordinary hooks (R.serverPool client) spec ""
         try @IOException (P.await ticket) >>= \case
           Left _ -> pure ()
           Right _ -> assertFailure "worker failure was lost"
@@ -152,7 +225,7 @@ tests = testGroup "provisional Runtime ownership"
           Just (Left problem) -> ioeGetErrorString problem @?= "injected Runtime cleanup restart failure"
           Just (Right ()) -> assertFailure "failed cleanup was reported complete"
           Nothing -> assertFailure "known cleanup restart failure became a blocked wait"
-        P.awaitCleanup (R.clientPool healthy)
+        P.awaitCleanup (R.serverPool healthy)
         atomically (R.inspect runtime) >>= \report -> do
           assertPending 1 report
           length report.closeFailures @?= 1
@@ -169,8 +242,8 @@ tests = testGroup "provisional Runtime ownership"
           Fixture.withFixture $ \fixture -> bracket (R.newRuntime fork) R.awaitCleanup $ \runtime ->
             G.withGate $ \gate -> do
               client <- adopt runtime fixture
-              let pool = R.clientPool client
-                  path = pinPath (R.clientPin client)
+              let pool = R.serverPool client
+                  path = pinPath (R.serverPin client)
                   hooks = P.defaultHooks {P.launchNative = G.launch G.BeforeLaunch gate}
               (code, expected, errors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
               code @?= ExitSuccess
@@ -204,7 +277,7 @@ tests = testGroup "provisional Runtime ownership"
           withRuntime $ \runtime fixture -> do
             client <- adopt runtime fixture
             born <- newEmptyTMVarIO
-            let pool = R.clientPool client
+            let pool = R.serverPool client
                 hooks = P.defaultHooks {P.afterStart = atomically (putTMVar born ())}
             ticket <- P.submit B.Ordinary hooks pool (native fixture client ["wait-for", "shutdown-grace"]) ""
             atomically (readTMVar born)
@@ -231,7 +304,7 @@ tests = testGroup "provisional Runtime ownership"
             repeated <- R.shutdown runtime
             assertEmpty repeated
             atomically (R.usage runtime) >>= (@?= B.Usage False 0 0 0)
-            Files.fileExist (pinPath (R.clientPin client)) >>= (@?= False)
+            Files.fileExist (pinPath (R.serverPin client)) >>= (@?= False)
 
       , testCase "failed supervisor allocation closes admission and permits a retained retry" $ do
           refuse <- newIORef False
@@ -242,7 +315,7 @@ tests = testGroup "provisional Runtime ownership"
           Fixture.withFixture $ \fixture -> bracket (R.newRuntime fork) R.awaitCleanup $ \runtime ->
             G.withGate $ \gate -> do
               client <- adopt runtime fixture
-              let pool = R.clientPool client
+              let pool = R.serverPool client
                   hooks = P.defaultHooks {P.launchNative = G.launch G.BeforeLaunch gate}
               _ <- P.submit B.Ordinary hooks pool (native fixture client ["display-message", "-p", "#{pid}"]) ""
               G.awaitGate gate
@@ -268,17 +341,17 @@ withRuntime :: (R.Runtime -> Fixture.Fixture -> IO a) -> IO a
 withRuntime action = Fixture.withFixture $ \fixture ->
   bracket (R.newRuntime P.normalFork) R.awaitCleanup (\runtime -> action runtime fixture)
 
-adopt :: R.Runtime -> Fixture.Fixture -> IO R.Client
+adopt :: R.Runtime -> Fixture.Fixture -> IO R.ServerHandle
 adopt runtime fixture = R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
 
-adoptWith :: (PinCheckpoint -> Bytes.ByteString -> IO ()) -> R.Runtime -> Fixture.Fixture -> IO R.Client
+adoptWith :: (PinCheckpoint -> Bytes.ByteString -> IO ()) -> R.Runtime -> Fixture.Fixture -> IO R.ServerHandle
 adoptWith checkpoint runtime fixture =
   R.adoptWith checkpoint runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
 
-native :: Fixture.Fixture -> R.Client -> [Bytes.ByteString] -> N.Spec
+native :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> N.Spec
 native fixture client arguments =
   let tmux = Ascii.pack fixture.executable
-  in N.spec tmux ([tmux, "-u", "-N", "-S", pinPath (R.clientPin client)] <> arguments)
+  in N.spec tmux ([tmux, "-u", "-N", "-S", pinPath (R.serverPin client)] <> arguments)
 
 assertPending :: Int -> R.Report -> Assertion
 assertPending expected report = length report.pending @?= expected

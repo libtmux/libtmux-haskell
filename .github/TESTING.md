@@ -94,11 +94,18 @@ they do not qualify terminal/PTY interaction or independent client focus.
 Their scopes also check callback failure and actual asynchronous cancellation.
 The final `required` job fails if any planned job fails, cancels or skips.
 
+The checks job selects cached tmux 3.8 for the documented programs and
+source-archive consumer. The integration jobs select 3.3a and 3.8; live
+examples do not use an uncontrolled distribution package. Scope cases
+preserve primary failures and recovery context across cleanup failure,
+cancellation and failed worker allocation.
+
 Cabal caches contain the dependency store and package index. tmux cache keys
 include its pinned archive, runner image/version, architecture, compiler,
 library packages and build recipe. A restored executable must match its
-recorded hash and version; invalid cache content is rebuilt. The owned
-integration suite must pass before a fresh tmux build is saved.
+recorded hash and version; invalid cache content is rebuilt. Fresh builds
+are saved after the owning job's verification steps. A cache hit does not
+replace the integration checks required by the aggregate job.
 
 These checks qualify the existing implementation subset. The complete
 capture/runtime/workspace and release gates remain separate work.
@@ -111,11 +118,27 @@ rejects unregistered programs and Haskell fences, including nested guides.
 Its regression cases introduce missing examples, stale snippets and invalid
 catalogue entries in disposable copies.
 
-CI runs the literal checkout command and then builds the same public program
+CI runs each literal checkout command and then builds every declared public program
 from the source archive in an independent application. Both check exit
 status, exact stdout and empty stderr. The archive consumer also executes
 the `>>>` examples from the public module documentation. Keep all these
 routes passing when changing an example, manifest or public signature.
+
+The shared Runtime program reuses the capture fixture with its declared
+executable and expected output. The catalogue checks both bindings, and the
+archive consumer executes the installed program with an independent fixture.
+It checks generation separation, selected closure, continued capture and
+detached navigation.
+
+The capture runner owns a foreground daemon before session creation. Its
+critical failure cases independently observe pidfds after setup failure,
+callback failure and cancellation. A waiting after-new-session hook also
+exercises interruption before the pane receipt. The runner joins the command
+client and preserves the interruption. It reports unestablished pane ownership
+in a cleanup note, even when the test independently observes the pane's exit;
+that test observation does not establish the runner's ownership receipt.
+A failed response followed by failed command retirement also preserves the
+primary failure. Daemon shutdown precedes the remaining bounded command wait.
 
 A real-tmux capability program must include its own setup and cleanup,
 explicit target, feature floor and observable result. Run it end to end;

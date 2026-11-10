@@ -1,6 +1,7 @@
 module Main (main) where
 
 import IdSpec qualified
+import FixtureSpec qualified
 import Test.Hspec (hspec)
 import ValueSpec qualified
 import VersionSpec qualified
@@ -10,3 +11,4 @@ main = hspec $ do
   VersionSpec.spec
   ValueSpec.spec
   IdSpec.spec
+  FixtureSpec.spec

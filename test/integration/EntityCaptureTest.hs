@@ -1,8 +1,9 @@
 module EntityCaptureTest (tests) where
 
-import Control.Concurrent.Async (cancel, withAsync)
+import Control.Concurrent.Async (Async, AsyncCancelled (..), cancel, race, waitCatch, withAsync)
 import Control.Concurrent.STM
-import Control.Exception (bracket, bracket_, try)
+import Control.Exception (SomeException, bracket, bracket_, finally, fromException, throwIO, try)
+import Control.Monad (forM_)
 import Data.ByteString.Char8 qualified as Bytes
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef
@@ -17,10 +18,13 @@ import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
+import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin (pinPath, pinGeneration)
 import LibTmux.Internal.TmuxText qualified as Label
 import LibTmux.Version qualified as V
+import ProcessGate qualified as Gate
 import System.Exit (ExitCode (..))
+import System.IO.Error (ioeGetErrorString)
 import System.OsString.Posix qualified as Os
 import System.Posix.Directory.ByteString qualified as Directory
 import System.Posix.Files qualified as Files
@@ -88,7 +92,7 @@ tests = testGroup "entity capture"
               (started, ended, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
               assertBool "reversed Snapshot interval" (started <= ended)
               let info = G.serverInfo snapshot
-              info.generation @?= pinGeneration (R.clientPin client)
+              info.generation @?= pinGeneration (R.serverPin client)
               info.socketPath @?= Os.fromBytestring (Bytes.pack fixture.socket)
               reported <- rawCommand client fixture ["display-message", "-p", "-F", "#{pid} #{start_time} #{version}"]
               reported @?= Bytes.pack (show info.pid <> " " <> show info.startedAt <> " ")
@@ -136,7 +140,7 @@ tests = testGroup "entity capture"
                   (_, _, graph) <- capture runtime client fixture
                   length (G.graphPanes graph) @?= 2
                   ident <- either (fail . show) pure (Id.parsePaneId (Utf8.decodeUtf8 paneId))
-                  pane <- either (fail . show) pure (G.lookupPane graph (G.PaneRef (pinGeneration (R.clientPin client)) ident))
+                  pane <- either (fail . show) pure (G.lookupPane graph (G.PaneRef (pinGeneration (R.serverPin client)) ident))
                   label <- if release >= cleanedNames then pure Nothing else do
                     named <- raw ["new-window", "-d", "-n", rawWindowName, "-P", "-F",
                       "#{window_id} #{pane_pid}", "/bin/cat", "-"]
@@ -146,7 +150,7 @@ tests = testGroup "entity capture"
                           (_, _, namedGraph) <- capture runtime client fixture
                           windowIdent <- either (fail . show) pure (Id.parseWindowId (Utf8.decodeUtf8 namedWindow))
                           window <- either (fail . show) pure (G.lookupWindow namedGraph
-                            (G.WindowRef (pinGeneration (R.clientPin client)) windowIdent))
+                            (G.WindowRef (pinGeneration (R.serverPin client)) windowIdent))
                           pure (Just window.name)
                       other -> assertFailure ("invalid named-window receipt: " <> show other) >> pure Nothing
                   pure (pane, if release < cleanedNames then processName else "", path, label)
@@ -191,14 +195,147 @@ tests = testGroup "entity capture"
             atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 (64 * 1024 * 1024))
             cancel worker
             atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+  , testCase "capture receipts recover repeated malformed responses in the same Runtime" $
+      withRuntime $ \runtime client fixture -> do
+        bracket_ (command fixture ["set-hook", "-g", "after-display-message", "display-message -p extra"])
+          (command fixture ["set-hook", "-gu", "after-display-message"]) $
+          forM_ [1 .. 4 :: Int] $ \_ -> do
+            failed <- try @SomeException (C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000)
+            case failed of
+              Left problem -> do
+                case fromException problem of
+                  Just (R.InvalidRecordFrame _) -> pure ()
+                  _ -> assertFailure (show problem)
+                recovery <- oneRecovery problem
+                observed <- atomically (C.inspectRecovery recovery)
+                observed.logical.outcome @?= Just S.OutcomeUnknown
+                observed.logical.retained @?= True
+                observed.nativeOwned @?= False
+                observed.workerOwned @?= False
+                R.receiptGeneration (C.recoveryReceipt recovery) @?= pinGeneration (R.serverPin client)
+                atomically (C.detachRecovery recovery) >>= (@?= True)
+              Right _ -> assertFailure "malformed complete capture succeeded"
+        (_, _, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
+        length (G.graphPanes (G.entities snapshot)) @?= 1
+  , testCase "capture receipts survive refusal before the request handle is returned" $ do
+      counter <- newIORef (0 :: Int)
+      let fork :: P.Fork
+          fork action = do
+            number <- atomicModifyIORef' counter (\n -> (n + 1, n + 1))
+            if number == 1 then throwIO (userError "capture worker allocation refused")
+              else P.normalFork action
+      withRuntimeUsing fork $ \runtime client fixture -> do
+        failed <- try @SomeException (C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000)
+        case failed of
+          Left problem -> do
+            case fromException problem of
+              Just io -> ioeGetErrorString io @?= "capture worker allocation refused"
+              Nothing -> assertFailure "capture replaced the allocation exception"
+            recovery <- oneRecovery problem
+            observed <- atomically (C.inspectRecovery recovery)
+            observed.logical @?= S.Status S.Queued (Just S.NotDispatched) False
+            observed.workerOwned @?= False
+            observed.nativeOwned @?= False
+            atomically (C.detachRecovery recovery) >>= (@?= False)
+          Right _ -> assertFailure "capture allocation was not refused"
+        (_, _, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
+        length (G.graphPanes (G.entities snapshot)) @?= 1
+  , acceptedCapture "cancellation" 1000000 True
+  , acceptedCapture "deadline conversion" 50000 False
+  , testCase "capture deadlines retain receipts before request publication" $ do
+      entered <- newEmptyTMVarIO
+      counter <- newIORef (0 :: Int)
+      let fork :: P.Fork
+          fork action = do
+            number <- atomicModifyIORef' counter (\n -> (n + 1, n + 1))
+            if number == 1 then atomically (putTMVar entered ()) >> atomically retry
+              else P.normalFork action
+      withRuntimeUsing fork $ \runtime client fixture -> do
+        recovery <- withAsync (C.captureSnapshot runtime client (Bytes.pack fixture.executable) 50000) $ \worker -> do
+          awaitCaptureReady (atomically (takeTMVar entered)) worker
+          waitCatch worker >>= \case
+            Left problem -> do
+              case fromException problem of
+                Just C.CaptureDeadline -> pure ()
+                _ -> assertFailure (show problem)
+              oneRecovery problem
+            Right _ -> assertFailure "registered capture escaped a held fork" >> fail "deadline required"
+        observed <- atomically (C.inspectRecovery recovery)
+        observed.logical @?= S.Status S.Queued (Just S.NotDispatched) False
+        observed.workerOwned @?= False
+        observed.nativeOwned @?= False
+        (_, _, snapshot) <- C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000
+        length (G.graphPanes (G.entities snapshot)) @?= 1
   ]
 
-capture :: R.Runtime -> R.Client -> Fixture.Fixture -> IO C.CapturedGraph
+-- The gate holds a real native launch after child creation, before its return
+-- to Haskell. A deadline is only the failure under test, never a readiness wait.
+acceptedCapture :: String -> Int -> Bool -> TestTree
+acceptedCapture label duration cancelled = testCase ("accepted capture " <> label <> " retains correlated recovery") $
+  withRuntime $ \runtime client fixture -> Gate.withGate $ \gate -> do
+    let executable = Bytes.pack fixture.executable
+        hooks = P.defaultHooks {P.launchNative = Gate.launch Gate.AfterLaunch gate}
+    recovery <- flip finally (Gate.releaseGate gate) $
+      withAsync (C.captureSnapshotWith hooks runtime client executable duration) $ \worker -> do
+        awaitCaptureReady (Gate.awaitGate gate) worker
+        if cancelled then cancel worker else pure ()
+        failed <- waitCatch worker
+        problem <- case failed of
+          Left problem -> pure problem
+          Right _ -> assertFailure "capture returned while its native launch was held" >> fail "capture failed"
+        if cancelled then case fromException problem of
+          Just AsyncCancelled -> pure ()
+          _ -> assertFailure "capture replaced asynchronous cancellation"
+        else case fromException problem of
+          Just C.CaptureDeadline -> pure ()
+          _ -> assertFailure ("deadline conversion lost its error: " <> show problem)
+        recovery <- oneRecovery problem
+        observed <- atomically (C.inspectRecovery recovery)
+        observed.logical.outcome @?= Just S.OutcomeUnknown
+        observed.logical.retained @?= True
+        observed.workerOwned @?= True
+        observed.nativeOwned @?= True
+        atomically (R.usage runtime) >>= (@?= B.Usage True 1 1
+          (64 * 1024 * 1024 + P.childBytes + P.retainedBytes))
+        request <- R.readServerPid runtime client executable R.InspectionRead
+        R.awaitRead request >>= \case
+          R.ReadValue pid -> assertBool "inspection PID invalid" (pid > 0)
+          other -> assertFailure (show other)
+        pure recovery
+    (recovered, detached) <- atomically $ do
+      observed <- C.inspectRecovery recovery
+      check (not observed.workerOwned && not observed.nativeOwned)
+      detached <- C.detachRecovery recovery
+      pure (observed, detached)
+    recovered.logical.outcome @?= Just S.OutcomeUnknown
+    detached @?= recovered.logical.retained
+    if recovered.logical.retained then pure ()
+      else recovered.logical.stage @?= S.OperationComplete
+    C.resumeRecovery recovery
+    (_, _, snapshot) <- C.captureSnapshot runtime client executable 2000000
+    length (G.graphPanes (G.entities snapshot)) @?= 1
+    atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
+oneRecovery :: SomeException -> IO C.CaptureRecovery
+oneRecovery problem = case C.captureRecoveries problem of
+  [recovery] -> pure recovery
+  other -> assertFailure ("expected one correlated capture recovery: " <> show other) >> fail "missing recovery"
+
+awaitCaptureReady :: IO () -> Async value -> IO ()
+awaitCaptureReady ready worker = race ready (waitCatch worker) >>= \case
+  Left () -> pure ()
+  Right (Left problem) -> assertFailure ("capture failed before its checkpoint: " <> show problem)
+  Right (Right _) -> assertFailure "capture completed before its checkpoint"
+
+capture :: R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO C.CapturedGraph
 capture runtime client fixture = C.captureGraph runtime client (Bytes.pack fixture.executable) 2000000
 
-withRuntime :: (R.Runtime -> R.Client -> Fixture.Fixture -> IO a) -> IO a
-withRuntime action = Fixture.withFixture $ \fixture ->
-  bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+withRuntime :: (R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO a) -> IO a
+withRuntime = withRuntimeUsing P.normalFork
+
+withRuntimeUsing :: P.Fork -> (R.Runtime -> R.ServerHandle -> Fixture.Fixture -> IO a) -> IO a
+withRuntimeUsing fork action = Fixture.withFixture $ \fixture ->
+  bracket (R.newRuntime fork) R.awaitCleanup $ \runtime -> do
     client <- R.adopt runtime (Bytes.pack fixture.socket) (Bytes.pack fixture.directory)
     action runtime client fixture
 
@@ -207,10 +344,10 @@ command fixture args = do
   (code, _, errors) <- Fixture.command fixture args
   assertEqual (show errors) ExitSuccess code
 
-rawCommand :: R.Client -> Fixture.Fixture -> [Bytes.ByteString] -> IO Bytes.ByteString
+rawCommand :: R.ServerHandle -> Fixture.Fixture -> [Bytes.ByteString] -> IO Bytes.ByteString
 rawCommand client fixture args = do
   let executable = Bytes.pack fixture.executable
-      spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.clientPin client)] <> args)
-  result <- P.submit B.Ordinary P.defaultHooks (R.clientPool client) spec "" >>= P.await
+      spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.serverPin client)] <> args)
+  result <- P.submit B.Ordinary P.defaultHooks (R.serverPool client) spec "" >>= P.await
   (result.exit, result.errors) @?= (Just (N.Exited 0), "")
   pure result.output

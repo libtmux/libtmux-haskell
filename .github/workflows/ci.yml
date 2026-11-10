@@ -41,10 +41,23 @@ jobs:
       - name: Provision dependencies
         run: |
           sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get install --yes --no-install-recommends tmux
+          sudo apt-get install --yes --no-install-recommends build-essential libevent-dev libncurses-dev pkg-config bison
           cabal update
           cabal build all --only-dependencies
           cabal build all --enable-documentation --only-dependencies
+      - name: Identify example tmux build
+        id: tmux
+        run: python3 scripts/ci_tmux.py plan 3.8
+      - name: Restore example tmux build
+        id: tmux-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.tmux.outputs.prefix }}
+          key: ${{ steps.tmux.outputs.key }}
+      - name: Validate example tmux build
+        env:
+          CACHE_HIT: ${{ steps.tmux-cache.outputs.cache-hit }}
+        run: python3 scripts/ci_tmux.py prepare 3.8
       - name: Record toolchain and dependency plan
         run: |
           ghc --numeric-version
@@ -55,21 +68,32 @@ jobs:
           cabal test specs --offline --test-show-details=direct --test-options='--strict --fail-on=empty'
           cabal test unit --offline --test-show-details=direct
       - name: Documented example command
+        env:
+          LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: |
           python3 scripts/test_check_docs.py
+          python3 examples/capture-graph/test_run.py
           python3 scripts/check_docs.py --run
       - name: Public type contracts
         run: scripts/check-types
       - name: Build-cache regressions
         env:
-          CI_TEST_TMUX: /usr/bin/tmux
+          CI_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: python3 -B scripts/test_ci_tmux.py
       - name: Metadata and API documentation
         run: |
           cabal check
           cabal haddock lib:libtmux-haskell --offline
       - name: Isolated source-archive consumer
+        env:
+          LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: python3 scripts/check_sdist.py
+      - name: Save example tmux build
+        if: steps.tmux-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.tmux.outputs.prefix }}
+          key: ${{ steps.tmux.outputs.key }}
       - name: Required exact tmux releases
         id: matrix
         run: python3 scripts/ci_tmux.py matrix

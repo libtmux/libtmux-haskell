@@ -6,21 +6,28 @@
 -- cleanup owned here. 'inspect' retires only successfully cleaned entries;
 -- 'awaitCleanup' may wait without a deadline. 'shutdown' bounds its two
 -- observation phases while retaining incomplete cleanup. Typed framed server
--- reads bind logical admission and deadlines to native ownership. Other
--- command bindings and the public Server scope remain unfinished.
+-- reads bind logical admission and deadlines to native ownership. The common
+-- Server scope is public; shared scopes and other command bindings remain open.
 module LibTmux.Internal.Runtime
-  ( Runtime, Client, Report (..), newRuntime, adopt, adoptWith
-  , clientPool, clientPin, usage, inspect, closeClient, requestClose, awaitCleanup, shutdown
+  ( Runtime, ServerHandle, ServerOwner, Report (..), newRuntime, adopt, adoptWith
+  , newServerOwner, adoptServerOwnerWith, inspectServerOwner, shutdownServerOwner
+  , awaitServerOwnerCleanup, detachServerOwnerOperation
+  , serverPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
+  , inspectServerHandle, shutdownServerHandle
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
   , readServerVersion, readServerVersionWith
   , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, readSnapshotWith, withCaptureBudget
+  , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, receiptOperation, inspectReceipt, resumeReceipt
+  , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
   ) where
 
 import Control.Concurrent.STM
 import Control.DeepSeq (force)
 import Control.Exception
+import Control.Exception.Annotation (ExceptionAnnotation)
+import Control.Exception.Context qualified as Context
 import Control.Monad (forM, forM_, unless, void, when)
 import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
@@ -29,6 +36,7 @@ import Data.ByteString.Char8 qualified as Ascii
 import Data.IntMap.Strict qualified as Map
 import Data.Maybe (catMaybes)
 import Data.Text.Encoding qualified as Utf8
+import Data.Unique (Unique, newUnique)
 import Data.Word (Word64)
 import Foreign.C.Types (CInt)
 import GHC.Clock (getMonotonicTimeNSec)
@@ -48,13 +56,18 @@ import LibTmux.Version qualified as Version
 import System.Timeout (timeout)
 
 data Runtime = Runtime
-  { budget :: !B.Budget, entries :: !(TVar (Map.IntMap Entry)), nextKey :: !(TVar Int)
+  { identity :: !Unique
+  , budget :: !B.Budget, entries :: !(TVar (Map.IntMap ServerOwner)), nextKey :: !(TVar Int)
   , forker :: P.Fork
   , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
   , scheduler :: !S.Scheduler, reads :: !(TVar [ReadOwner])
   }
-data Entry = Entry {pool :: !P.Pool, closeFailure :: !(TVar (Maybe SomeException))}
-data Client = Client !Entry !SocketPin
+data ServerOwner = ServerOwner
+  { key :: !Int, group :: !S.Group, pool :: !P.Pool
+  , closeFailure :: !(TVar (Maybe SomeException))
+  , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
+  }
+data ServerHandle = ServerHandle !ServerOwner !SocketPin
 
 -- | Physical cleanup, owned read workers and logical uncertainty are separate.
 -- An empty 'pending' list alone does not establish complete Runtime cleanup.
@@ -69,9 +82,28 @@ data Report = Report
 data ReadClass = InspectionRead | ScalarRead
   deriving stock (Eq, Show)
 
--- | A typed observation handle with no reference to its t'Runtime', t'Client',
+-- | A typed observation handle with no reference to its t'Runtime', t'ServerHandle',
 -- native ticket or input buffers. 'awaitRead' also works after cleanup.
-data Request value = Request !S.Operation !(TMVar (ReadResult value))
+data Request value = Request !ReadReceipt !(TMVar (ReadResult value))
+
+-- | Correlation metadata only: no Runtime, pool, ticket or result payload.
+-- The native key remains useful after its decoder owner has retired.
+data ReadReceipt = ReadReceipt !Unique !Graph.Generation !S.Operation !(TVar (Maybe Int))
+  deriving stock (Eq)
+instance Show ReadReceipt where
+  showsPrec precedence (ReadReceipt _ _ operation _) =
+    showParen (precedence > 10) (showString "ReadReceipt " . shows operation)
+instance ExceptionAnnotation ReadReceipt
+
+-- | Logical responsibility and this read's physical owners, observed together.
+-- A released native child does not establish a daemon-side command outcome.
+data ReadRecovery = ReadRecovery
+  { logical :: !S.Status -- ^ Logical progress, original result and retained responsibility.
+  , workerOwned :: !Bool -- ^ A decoder or recovery worker still owns this read.
+  , workerFailure :: !(Maybe SomeException) -- ^ Retained decoder or recovery failure.
+  , nativeOwned :: !Bool -- ^ A native child or its cleanup remains owned.
+  , nativeFailure :: !(Maybe SomeException) -- ^ Retained native cleanup failure.
+  } deriving stock (Show)
 -- | A checked positive server PID, observed by 'readServerPid'.
 type PidRead = Request Integer
 -- | A stable release identity, observed by 'readServerVersion'.
@@ -96,7 +128,7 @@ data EntityField
   deriving stock (Eq, Show)
 
 data ReadError
-  = ForeignClient | InvalidReadDeadline !Int | ReadClockOverflow
+  = ForeignServer | InvalidReadDeadline !Int | ReadClockOverflow
   | ReadExpired | ReadCancelled | ReadClosing
   | InvalidReadFrame !F.FrameError | InvalidServerPid
   | InvalidRecordFrame !Record.RecordError
@@ -111,6 +143,7 @@ data Submission = NotSubmitted | Registering !P.Ticket | Submitted !P.Ticket | S
 data ReadOwner where
   ReadOwner ::
     { operation :: !S.Operation
+    , receipt :: !ReadReceipt
     , command :: !(ReadCommand value), result :: !(TMVar (ReadResult value))
     , nonce :: !F.Nonce, deadline :: !Word64
     , envelope :: !B.ByteLease, submission :: !(TVar Submission)
@@ -120,47 +153,69 @@ data ReadOwner where
 
 newRuntime :: P.Fork -> IO Runtime
 newRuntime forker = do
+  identity <- newUnique
   budget <- B.newBudget P.inspectionBytes
   entries <- newTVarIO Map.empty
   nextKey <- newTVarIO 0
   shutdownRun <- newTVarIO Nothing
   scheduler <- S.newScheduler
   readOwners <- newTVarIO []
-  pure Runtime {budget, entries, nextKey, forker, shutdownRun, scheduler, reads = readOwners}
+  pure Runtime {identity, budget, entries, nextKey, forker, shutdownRun, scheduler, reads = readOwners}
 
 -- | Adopt one endpoint through a private socket pin. Reserve a client credit
 -- before filesystem acquisition. Cancellation preserves its original exception
 -- while the Runtime retains cleanup; use 'requestClose' and 'awaitCleanup'.
-adopt :: Runtime -> ByteString -> ByteString -> IO Client
+adopt :: Runtime -> ByteString -> ByteString -> IO ServerHandle
 adopt = adoptWith (\_ _ -> pure ())
 
 -- | Adoption with the socket pin's existing deterministic checkpoints.
-adoptWith :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ByteString -> ByteString -> IO Client
-adoptWith checkpoint runtime@Runtime {forker} source parent = mask $ \restore -> do
+adoptWith :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ByteString -> ByteString -> IO ServerHandle
+adoptWith checkpoint runtime source parent = mask $ \restore -> do
+  entry <- newServerOwner runtime
+  let abandon = void (try @SomeException (closeEntry entry))
+  restore (adoptServerOwnerWith checkpoint runtime entry source parent) `onException` abandon
+
+-- | Reserve and register one provisional owner before acquiring filesystem
+-- resources. A caller installing its own scope policy must mask the handoff.
+newServerOwner :: Runtime -> IO ServerOwner
+newServerOwner runtime@Runtime {forker} = mask_ $ do
   owner <- newPinOwner
-  entry <- atomically $ do
+  group <- S.newGroup
+  atomically $ do
     _ <- inspect runtime
     key <- readTVar runtime.nextKey
     when (key == maxBound) (throwSTM P.ResourceLimit)
     pool <- P.newPoolSTM runtime.budget forker owner 16
-    entry <- Entry pool <$> newTVar Nothing
+    closeFailure <- newTVar Nothing
+    shutdownRun <- newTVar Nothing
+    let entry = ServerOwner {key, group, pool, closeFailure, shutdownRun}
     writeTVar runtime.nextKey (key + 1)
     modifyTVar' runtime.entries (Map.insert key entry)
     pure entry
-  let abandon = void (try @SomeException (closeEntry entry))
-  (do
-    pin <- restore (acquirePinWith checkpoint owner source parent)
-    atomically $ do
-      current <- usage runtime
-      closed <- readTVar entry.pool.closing
-      when (not current.accepting || closed) (throwSTM P.PoolClosed)
-    pure (Client entry pin)) `onException` abandon
 
-clientPool :: Client -> P.Pool
-clientPool (Client entry _) = entry.pool
+-- | Acquire a complete handle for an already registered owner. Its caller
+-- retains responsibility for cleanup when acquisition fails or is cancelled.
+-- Foreign or closed ownership refuses before filesystem acquisition; admission
+-- is checked again before publishing the handle.
+adoptServerOwnerWith
+  :: (PinCheckpoint -> ByteString -> IO ()) -> Runtime -> ServerOwner
+  -> ByteString -> ByteString -> IO ServerHandle
+adoptServerOwnerWith checkpoint runtime entry source parent = mask $ \restore -> do
+  let requireOpen = atomically $ do
+        validateEntry runtime entry
+        current <- usage runtime
+        closed <- readTVar entry.pool.closing
+        when (not current.accepting || closed) (throwSTM P.PoolClosed)
+  requireOpen
+  pin <- restore (acquirePinWith checkpoint entry.pool.pinOwner source parent)
+  requireOpen
+  pure (ServerHandle entry pin)
 
-clientPin :: Client -> SocketPin
-clientPin (Client _ pin) = pin
+serverPool :: ServerHandle -> P.Pool
+serverPool (ServerHandle entry _) = entry.pool
+
+serverPin :: ServerHandle -> SocketPin
+serverPin (ServerHandle _ pin) = pin
 
 usage :: Runtime -> STM B.Usage
 usage runtime = B.usage runtime.budget
@@ -180,8 +235,7 @@ inspect runtime = do
   current <- usage runtime
   unresolved <- S.outstanding runtime.scheduler
   owners <- readTVar runtime.reads
-  readWorkers <- forM owners $ \owner ->
-    (owner.operation,) <$> readTVar owner.failure
+  readWorkers <- mapM workerStatus owners
   pure Report {accepting = current.accepting,
     pending = [(key, status) | (key, _, status, _) <- retained],
     closeFailures = catMaybes [fmap (key,) problem | (key, _, _, problem) <- retained],
@@ -190,10 +244,96 @@ inspect runtime = do
     complete P.CleanupComplete = True
     complete _ = False
 
-closeClient :: Client -> IO P.CloseReport
-closeClient (Client entry _) = closeEntry entry >>= either throwIO pure
+-- | Observe only this handle's physical owners and logical group. Membership
+-- survives either kind of retirement; a foreign handle changes no state.
+inspectServerHandle :: Runtime -> ServerHandle -> STM Report
+inspectServerHandle runtime (ServerHandle entry _) = inspectServerOwner runtime entry
 
-closeEntry :: Entry -> IO (Either SomeException P.CloseReport)
+inspectServerOwner :: Runtime -> ServerOwner -> STM Report
+inspectServerOwner runtime entry = do
+  validateEntry runtime entry
+  status <- P.report entry.pool
+  failure <- readTVar entry.closeFailure
+  current <- usage runtime
+  closed <- readTVar entry.pool.closing
+  unresolved <- S.outstandingIn runtime.scheduler entry.group
+  readWorkers <- serverReads runtime entry >>= mapM workerStatus
+  let finished = case status of P.CleanupComplete -> True; _ -> False
+  pure Report
+    { accepting = current.accepting && not closed
+    , pending = [(entry.key, status) | not finished]
+    , closeFailures = [(entry.key, problem) | not finished, Just problem <- [failure]]
+    , unresolved, readWorkers
+    }
+
+validateEntry :: Runtime -> ServerOwner -> STM ()
+validateEntry runtime entry =
+  unless (entry.pool.budget == runtime.budget) (throwSTM ForeignServer)
+
+serverReads :: Runtime -> ServerOwner -> STM [ReadOwner]
+serverReads runtime entry =
+  filter (S.memberOf entry.group . (.operation)) <$> readTVar runtime.reads
+
+workerStatus :: ReadOwner -> STM (S.Operation, Maybe SomeException)
+workerStatus ReadOwner {operation, failure} = (operation,) <$> readTVar failure
+
+-- | Close one handle and settle its queued reads in the same STM cut.
+-- Other groups keep their admission, lane permits and first outcomes.
+closeServerAdmission :: Runtime -> ServerOwner -> STM ()
+closeServerAdmission runtime entry = do
+  validateEntry runtime entry
+  writeTVar entry.pool.closing True
+  owners <- serverReads runtime entry
+  forM_ owners $ \owner -> do
+    cancelled <- S.cancelQueued runtime.scheduler owner.operation
+    when cancelled (publishUnavailable owner (toException ReadClosing))
+
+requestServerClose :: Runtime -> ServerOwner -> IO Report
+requestServerClose runtime entry = mask_ $ do
+  atomically (closeServerAdmission runtime entry)
+  _ <- closeEntry entry
+  atomically (serverReads runtime entry) >>= mapM_ (resumeRead runtime)
+  atomically (inspectServerOwner runtime entry)
+
+-- | Bound one handle's physical cleanup under the Runtime's shared limits.
+-- Concurrent callers join its owned attempt; cancelling a waiter leaves it
+-- running. Logical uncertainty remains in the scoped and global reports.
+shutdownServerHandle :: Runtime -> ServerHandle -> IO Report
+shutdownServerHandle runtime (ServerHandle entry _) = shutdownServerOwner runtime entry
+
+shutdownServerOwner :: Runtime -> ServerOwner -> IO Report
+shutdownServerOwner runtime@Runtime {forker} entry =
+  runShutdown forker entry.shutdownRun
+    (closeServerAdmission runtime entry) (inspectServerOwner runtime entry)
+    (shutdownServerPhases runtime entry)
+
+-- | Join only the selected owner's physical cleanup. Logical uncertainty is
+-- still explicit; cancellation leaves the registered owner available.
+awaitServerOwnerCleanup :: Runtime -> ServerOwner -> IO ()
+awaitServerOwnerCleanup runtime entry = do
+  report <- requestServerClose runtime entry
+  case report.closeFailures of
+    (_, problem) : _ -> throwIO problem
+    [] -> pure ()
+  atomically $ do
+    owners <- serverReads runtime entry
+    forM_ owners $ \owner -> readTVar owner.failure >>= mapM_ throwSTM
+    check (null owners)
+  P.awaitCleanup entry.pool
+  void (atomically (inspectServerOwner runtime entry))
+
+-- | Relinquish only this owner's logical debt, including after pool cleanup.
+-- Runtime and immutable group checks precede any operation-state change.
+detachServerOwnerOperation :: Runtime -> ServerOwner -> S.Operation -> STM Bool
+detachServerOwnerOperation runtime entry operation = do
+  validateEntry runtime entry
+  unless (S.memberOf entry.group operation) (throwSTM ForeignServer)
+  detachOperation runtime operation
+
+closeServerHandle :: ServerHandle -> IO P.CloseReport
+closeServerHandle (ServerHandle entry _) = closeEntry entry >>= either throwIO pure
+
+closeEntry :: ServerOwner -> IO (Either SomeException P.CloseReport)
 closeEntry entry = mask_ $ do
   outcome <- try @SomeException (P.requestClose entry.pool)
   case outcome of
@@ -248,18 +388,24 @@ awaitCleanup runtime = do
 -- with pending cleanup. Supervisor allocation failure throws without losing
 -- its registered owners. Cleanup-request failures remain in 'closeFailures'.
 shutdown :: Runtime -> IO Report
-shutdown runtime@Runtime {forker} = mask $ \restore -> do
+shutdown runtime@Runtime {forker} = runShutdown forker runtime.shutdownRun
+  (B.closeAdmission runtime.budget) (inspect runtime) (shutdownPhases runtime)
+
+runShutdown
+  :: P.Fork -> TVar (Maybe (TMVar (Either SomeException ())))
+  -> STM () -> STM Report -> IO () -> IO Report
+runShutdown forker attempt closeAdmission inspectTarget phases = mask $ \restore -> do
   (start, selected) <- atomically $ do
-    B.closeAdmission runtime.budget
-    previous <- readTVar runtime.shutdownRun
+    closeAdmission
+    previous <- readTVar attempt
     running <- case previous of
       Nothing -> pure False
       Just run -> isEmptyTMVar run
     if running then pure (False, previous) else do
-      report <- inspect runtime
+      report <- inspectTarget
       if null report.pending && null report.readWorkers then pure (False, Nothing) else do
         run <- newEmptyTMVar
-        writeTVar runtime.shutdownRun (Just run)
+        writeTVar attempt (Just run)
         pure (True, Just run)
   forM_ selected $ \run -> do
     when start $ do
@@ -267,15 +413,15 @@ shutdown runtime@Runtime {forker} = mask $ \restore -> do
             atomically (putTMVar run (Left problem))
             throwIO problem
       void (forker (\unmask -> do
-        result <- try @SomeException (unmask (shutdownPhases runtime))
+        result <- try @SomeException (unmask phases)
         atomically (putTMVar run result))) `catch` failed
     restore (atomically (readTMVar run)) >>= either throwIO pure
-  atomically (inspect runtime)
+  atomically inspectTarget
 
 shutdownPhases :: Runtime -> IO ()
 shutdownPhases runtime = do
   _ <- requestClose runtime
-  graceful <- observe
+  graceful <- observeCleanup (inspect runtime)
   case graceful of
     Just () -> pure ()
     Nothing -> do
@@ -283,14 +429,87 @@ shutdownPhases runtime = do
       entries <- atomically (Map.elems <$> readTVar runtime.entries)
       forM_ entries (P.abortAll . (.pool))
       _ <- requestClose runtime
-      void observe
-  where
-    observe = timeout 250000 $ atomically $ do
-      report <- inspect runtime
-      check (null report.pending && null report.readWorkers)
+      void (observeCleanup (inspect runtime))
+
+shutdownServerPhases :: Runtime -> ServerOwner -> IO ()
+shutdownServerPhases runtime entry = do
+  _ <- requestServerClose runtime entry
+  graceful <- observeCleanup (inspectServerOwner runtime entry)
+  case graceful of
+    Just () -> pure ()
+    Nothing -> do
+      atomically (serverReads runtime entry) >>= mapM_ (cancelOwner runtime ReadClosing)
+      P.abortAll entry.pool
+      _ <- requestServerClose runtime entry
+      void (observeCleanup (inspectServerOwner runtime entry))
+
+observeCleanup :: STM Report -> IO (Maybe ())
+observeCleanup inspectTarget = timeout 250000 $ atomically $ do
+  report <- inspectTarget
+  check (null report.pending && null report.readWorkers)
 
 readOperation :: Request value -> S.Operation
-readOperation (Request operation _) = operation
+readOperation (Request (ReadReceipt _ _ operation _) _) = operation
+
+readReceipt :: Request value -> ReadReceipt
+readReceipt (Request receipt _) = receipt
+
+receiptGeneration :: ReadReceipt -> Graph.Generation
+receiptGeneration (ReadReceipt _ generation _ _) = generation
+
+receiptOperation :: ReadReceipt -> S.Operation
+receiptOperation (ReadReceipt _ _ operation _) = operation
+
+validateReceipt :: Runtime -> ServerHandle -> ReadReceipt -> STM ()
+validateReceipt runtime client (ReadReceipt identity generation _ _) =
+  unless (identity == runtime.identity && (serverPool client).budget == runtime.budget
+    && generation == pinGeneration (serverPin client)) (throwSTM ForeignServer)
+
+-- | Inspect only the originating operation, even after its decoder retires.
+-- Another handle to the same endpoint cannot inspect or detach this receipt.
+inspectReceipt :: Runtime -> ServerHandle -> ReadReceipt -> STM ReadRecovery
+inspectReceipt runtime client receipt@(ReadReceipt _ _ operation key) = do
+  validateReceipt runtime client receipt
+  logical <- S.status operation
+  owners <- readTVar runtime.reads
+  let matching = filter ((== operation) . (.operation)) owners
+  workerFailure <- case matching of
+    owner : _ -> readTVar owner.failure
+    [] -> pure Nothing
+  selected <- readTVar key
+  jobs <- readTVar (serverPool client).jobs
+  let ticket = selected >>= (`Map.lookup` jobs)
+  nativeFailure <- maybe (pure Nothing) (readTVar . (.cleanupFailure)) ticket
+  pure ReadRecovery {logical, workerOwned = not (null matching), workerFailure,
+    nativeOwned = maybe False (const True) ticket, nativeFailure}
+
+-- | Retry existing cleanup and decoder ownership without redispatching tmux.
+-- This leaves admission open. Allocation failure retains the original owners.
+resumeReceipt :: Runtime -> ServerHandle -> ReadReceipt -> IO ()
+resumeReceipt runtime client receipt@(ReadReceipt _ _ operation key) = mask_ $ do
+  (ticket, owners) <- atomically $ do
+    validateReceipt runtime client receipt
+    selected <- readTVar key
+    jobs <- readTVar (serverPool client).jobs
+    owners <- filter ((== operation) . (.operation)) <$> readTVar runtime.reads
+    pure (selected >>= (`Map.lookup` jobs), owners)
+  mapM_ (P.resumeCleanup (serverPool client)) ticket
+  mapM_ (resumeRead runtime) owners
+  observed <- atomically (inspectReceipt runtime client receipt)
+  mapM_ throwIO observed.workerFailure
+
+-- | Request cancellation of the correlated read, retaining unresolved debt.
+cancelReceipt :: Runtime -> ServerHandle -> ReadReceipt -> IO ()
+cancelReceipt runtime client receipt@(ReadReceipt _ _ operation _) = atomically $ do
+  validateReceipt runtime client receipt
+  cancelOperation runtime operation
+
+-- | Relinquish only this receipt's logical responsibility. Native cleanup and
+-- decoder ownership remain registered until their own completion.
+detachReceipt :: Runtime -> ServerHandle -> ReadReceipt -> STM Bool
+detachReceipt runtime client receipt@(ReadReceipt _ _ operation _) = do
+  validateReceipt runtime client receipt
+  detachOperation runtime operation
 
 readStatus :: Request value -> STM S.Status
 readStatus = S.status . readOperation
@@ -302,42 +521,42 @@ awaitRead (Request _ result) = atomically (readTMVar result)
 
 -- | Acquire a fresh, nonce-framed PID using a one-second deadline. This fixed
 -- read is the first private logical/physical binding, not a raw command API.
-readServerPid :: Runtime -> Client -> ByteString -> ReadClass -> IO PidRead
+readServerPid :: Runtime -> ServerHandle -> ByteString -> ReadClass -> IO PidRead
 readServerPid = readServerPidWith P.defaultHooks 1000000
 
 -- | Use existing process checkpoints and a checked 1..10000000 microsecond
 -- deadline. The same expiration governs queueing, submission and validation.
-readServerPidWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO PidRead
+readServerPidWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO PidRead
 readServerPidWith = startRead ReadPid
 
 -- | Observe a stable release identity through the pinned server. Use
 -- 'Version.requireSupported' separately for minimum-version admission;
 -- this observation establishes no feature capabilities.
-readServerVersion :: Runtime -> Client -> ByteString -> ReadClass -> IO VersionRead
+readServerVersion :: Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
 readServerVersion = readServerVersionWith P.defaultHooks 1000000
 
 -- | The same owned deadline and checkpoints as 'readServerPidWith'.
-readServerVersionWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO VersionRead
+readServerVersionWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
 readServerVersionWith = startRead ReadVersion
 
-readTopologyWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request ByteString)
+readTopologyWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request ByteString)
 readTopologyWith = startRead ReadTopology
 
-readEntityFieldWith :: EntityField -> P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request ByteString)
+readEntityFieldWith :: EntityField -> P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request ByteString)
 readEntityFieldWith field = startRead (ReadEntityField field)
 
 -- | Read the physical/link profile in one tagged format expansion. Its
 -- registered owner retains the capture reservation through decoding and
 -- forcing, including after caller cancellation. This does not acquire clients.
-readGraphWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> IO (Request Graph.EntityGraph)
+readGraphWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> IO (Request Graph.EntityGraph)
 readGraphWith hooks duration runtime client executable =
-  startRead (ReadGraph (pinGeneration (clientPin client))) hooks duration runtime client executable ScalarRead
+  startRead (ReadGraph (pinGeneration (serverPin client))) hooks duration runtime client executable ScalarRead
 
 -- | Acquire the finite metadata, physical and attached-client profile in one
 -- owned command queue. It retains ordinary graph credit through publication.
-readSnapshotWith :: P.Hooks -> Int -> Runtime -> Client -> ByteString -> IO (Request Graph.Snapshot)
+readSnapshotWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> IO (Request Graph.Snapshot)
 readSnapshotWith hooks duration runtime client executable =
-  startRead (ReadSnapshot (pinGeneration (clientPin client))) hooks duration runtime client executable ScalarRead
+  startRead (ReadSnapshot (pinGeneration (serverPin client))) hooks duration runtime client executable ScalarRead
 
 -- | Retain the complete capture envelope while fields and graphs accumulate.
 -- Native requests keep their independent child/parent reservations.
@@ -378,10 +597,10 @@ commandTarget :: ReadCommand value -> [ByteString]
 commandTarget (ReadEntityField field) = let (target, _, _) = entityField field in ["-t", target]
 commandTarget _ = []
 
-startRead :: ReadCommand value -> P.Hooks -> Int -> Runtime -> Client -> ByteString -> ReadClass -> IO (Request value)
-startRead command hooks duration runtime@Runtime {forker} client executable allocation = mask_ $ do
-  let pool = clientPool client
-  unless (pool.budget == runtime.budget) (throwIO ForeignClient)
+startRead :: ReadCommand value -> P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request value)
+startRead command hooks duration runtime@Runtime {forker} client@(ServerHandle entry _) executable allocation = mask_ $ do
+  let pool = serverPool client
+  unless (pool.budget == runtime.budget) (throwIO ForeignServer)
   when (duration < 1 || duration > 10000000) (throwIO (InvalidReadDeadline duration))
   token <- Entropy.freshToken32
   let hex = "0123456789abcdef" :: ByteString
@@ -389,7 +608,7 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
         [Bytes.index hex (fromIntegral (shiftR byte 4)),
          Bytes.index hex (fromIntegral (byte .&. 15))]) (Bytes.unpack token))
   nonce <- either (throwIO . InvalidReadFrame) pure (F.parseNonce encoded)
-  let spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (clientPin client)]
+  let spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (serverPin client)]
         <> commandArguments nonce command)
       (lane, resourceClass) = case allocation of
         InspectionRead -> (S.Inspection, B.Inspection)
@@ -400,7 +619,7 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
   when (now > maxBound - delta) (throwIO ReadClockOverflow)
   (owner, request) <- atomically $ do
     readTVar pool.closing >>= flip when (throwSTM P.PoolClosed)
-    operation <- S.admit runtime.scheduler lane
+    operation <- S.admitIn runtime.scheduler entry.group lane
     let parentBytes = case command of
           -- The caller may stop waiting while the worker still constructs the
           -- graph. Keep the former capture lease with that registered owner.
@@ -413,18 +632,21 @@ startRead command hooks duration runtime@Runtime {forker} client executable allo
     cancelled <- newTVar False
     busy <- newTVar True
     failure <- newTVar Nothing
-    let owner = ReadOwner {operation, command, result, nonce, deadline = now + delta, envelope,
+    key <- newTVar Nothing
+    let receipt = ReadReceipt runtime.identity (pinGeneration (serverPin client)) operation key
+        owner = ReadOwner {operation, receipt, command, result, nonce, deadline = now + delta, envelope,
           submission, cancelled, busy, failure}
     modifyTVar' runtime.reads (<> [owner])
-    pure (owner, Request operation result)
-  allocated <- try @SomeException $ do
+    pure (owner, Request receipt result)
+  allocated <- tryWithContext @SomeException $ do
     copied <- N.copySpec spec
     void (forker (\unmask -> readWorker unmask runtime owner
       (readAction unmask runtime owner pool resourceClass hooks copied)))
   case allocated of
-    Left problem -> do
+    Left (ExceptionWithContext context problem) -> do
       atomically (retireRefusal runtime owner problem)
-      throwIO problem
+      let !receipt = owner.receipt
+      rethrowIO (ExceptionWithContext (Context.addExceptionAnnotation receipt context) problem)
     Right () -> pure request
 
 remaining :: ReadOwner -> IO Int
@@ -455,6 +677,10 @@ readAction unmask runtime owner pool resourceClass hooks spec = do
       else do
         let register ticket = do
               writeTVar owner.submission (Registering ticket)
+              let ReadReceipt _ _ _ key = owner.receipt
+                  -- A lazy projection here would keep the entire ticket alive.
+                  !nativeKey = ticket.key
+              writeTVar key (Just nativeKey)
               readTVar owner.cancelled >>= \flag ->
                 when flag (writeTVar ticket.cancelled True)
         created <- try @SomeException (P.submitRegistered register resourceClass hooks pool spec "")
@@ -624,10 +850,13 @@ releaseRead runtime owner = do
 -- | Publish cancellation intent without claiming the external command stopped.
 -- Cancelling an ordinary 'awaitRead' waiter does not invoke this operation.
 cancelRead :: Runtime -> Request value -> IO ()
-cancelRead runtime request = atomically $ do
-  _ <- S.cancelQueued runtime.scheduler (readOperation request)
+cancelRead runtime request = atomically (cancelOperation runtime (readOperation request))
+
+cancelOperation :: Runtime -> S.Operation -> STM ()
+cancelOperation runtime operation = do
+  _ <- S.cancelQueued runtime.scheduler operation
   owners <- readTVar runtime.reads
-  forM_ (filter ((== readOperation request) . (.operation)) owners)
+  forM_ (filter ((== operation) . (.operation)) owners)
     (cancelOwnerSTM runtime ReadCancelled)
 
 cancelOwner :: Runtime -> ReadError -> ReadOwner -> IO ()

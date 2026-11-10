@@ -1,9 +1,9 @@
 # Contributing
 
-The native Haskell implementation is in progress. Version admission, typed
-IDs, checked scalar values and the owned tmux fixture have tests. The
-complete public API, installed consumers and compatibility matrix remain
-unqualified.
+The native Haskell implementation is in progress. The public Server and shared
+Runtime scopes, detached observations, typed values and owned tmux fixtures have tests and
+source-archive consumers. Queries, commands, events, workspace tooling and
+complete adoption qualification remain open.
 
 Read [AGENTS.md](../AGENTS.md) for change discipline and
 [WRITING.md](WRITING.md) for prose and commit conventions.
@@ -130,8 +130,8 @@ These tests start real daemons and check teardown:
 $ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration --offline --test-show-details=direct
 ```
 
-Check the public scalar API's positive and intended negative compilation
-cases in the outer tier. The runner requires Bash and `jq`, and checks the
+Check public record access and scalar types with positive and intended negative
+compilation cases in the outer tier. The runner requires Bash and `jq`, and checks the
 specific GHC diagnostic rather than accepting any compiler failure:
 
 ```console

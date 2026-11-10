@@ -15,9 +15,9 @@ class DocumentationChecks(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="libtmux-haskell-docs-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for directory in ["docs", ".github", "examples", "src", "internal", "scripts", "test"]:
+        for directory in ["docs", ".github", "examples", "bench", "src", "internal", "scripts", "test"]:
             shutil.copytree(check_docs.ROOT / directory, self.root / directory,
-                            ignore=shutil.ignore_patterns("__pycache__"))
+                            ignore=shutil.ignore_patterns("__pycache__", "dist-newstyle"))
         for filename in ["README.md", "AGENTS.md", "LICENSE", ".tool-versions"]:
             shutil.copy2(check_docs.ROOT / filename, self.root / filename)
         for name, value in [("ROOT", self.root), ("CATALOGUE", self.root / "examples/catalogue.json")]:
@@ -26,7 +26,8 @@ class DocumentationChecks(unittest.TestCase):
             self.addCleanup(context.stop)
 
     def test_registered_program_is_valid(self):
-        self.assertEqual(len(check_docs.check()), 1)
+        self.assertEqual({entry["id"] for entry in check_docs.check()},
+                         {"typed-values", "capture-graph", "offline-graph", "shared-runtime"})
 
     def test_unregistered_haskell_fence_is_rejected(self):
         with (self.root / "README.md").open("a") as document:
@@ -47,7 +48,7 @@ class DocumentationChecks(unittest.TestCase):
             check_docs.check()
 
     def test_stale_snippet_is_rejected(self):
-        path = self.root / "README.md"
+        path = self.root / "docs/values.md"
         path.write_text(path.read_text().replace('parseWindowId "@17"', 'parseWindowId "@18"'))
         with self.assertRaisesRegex(ValueError, "differs from its source"):
             check_docs.check()
@@ -88,6 +89,43 @@ class DocumentationChecks(unittest.TestCase):
                 document["examples"][0]["verification"][key] = value
                 path.write_text(json.dumps(document))
                 with self.assertRaisesRegex(ValueError, "Example workflow"):
+                    check_docs.check()
+
+    def test_runner_and_command_stay_bound_to_the_example(self):
+        path = self.root / "examples/catalogue.json"
+        original = json.loads(path.read_text())
+        for key, value, message in [
+            ("runner", "scripts/check_docs.py", "runner must belong"),
+            ("command", ["python3", "scripts/check_docs.py"], "command must execute"),
+        ]:
+            with self.subTest(key=key):
+                document = json.loads(json.dumps(original))
+                document["examples"][1][key] = value
+                path.write_text(json.dumps(document))
+                with self.assertRaisesRegex(ValueError, message):
+                    check_docs.check()
+
+    def test_shared_runner_binds_the_declared_program_and_output(self):
+        path = self.root / "examples/catalogue.json"
+        document = json.loads(path.read_text())
+        entry = document["examples"][2]
+        entry["runner"] = "examples/capture-graph/run.py"
+        entry["command"] = ["python3", entry["runner"], "--executable", entry["executable"],
+                            "--expected-output", entry["stdout"]]
+        original = json.dumps(document)
+        path.write_text(original)
+        try:
+            check_docs.check()
+        except ValueError as problem:
+            self.fail(f"Declared shared fixture was rejected: {problem}")
+
+        for index, value in [(3, "capture-graph"),
+                             (5, "examples/capture-graph/expected.stdout")]:
+            with self.subTest(argument=index):
+                changed = json.loads(original)
+                changed["examples"][2]["command"][index] = value
+                path.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError, "command must execute"):
                     check_docs.check()
 
 
