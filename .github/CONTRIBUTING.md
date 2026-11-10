@@ -78,7 +78,10 @@ Run public specifications and properties without network access. Strict mode
 rejects pending/focused examples and empty selections:
 
 ```console
-$ cabal test specs --offline --test-show-details=direct --test-options='--strict --fail-on=empty'
+$ cabal test specs \
+    --offline \
+    --test-show-details=direct \
+    --test-options='--strict --fail-on=empty'
 ```
 
 Run the Tasty unit tree, including direct QuickCheck graph properties:
@@ -114,7 +117,9 @@ Run the outer integration tier against an explicitly selected tmux binary.
 These tests start real daemons and check teardown:
 
 ```console
-$ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration --offline --test-show-details=direct
+$ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration \
+    --offline \
+    --test-show-details=direct
 ```
 
 Check public record access, scalar types and typed queries with positive and

@@ -1,7 +1,7 @@
 name: docs
 
-# Manual builds remain separate from CI while the shared-site integration is
-# under review. Keep both reusable workflows pinned to the same docs commit.
+# Manual builds and publication use reviewed shared-workflow pins.
+# Keep both reusable workflows pinned to the same docs commit.
 on:
   workflow_dispatch:
     inputs:

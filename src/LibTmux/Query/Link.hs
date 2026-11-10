@@ -36,6 +36,6 @@ session = Q.LinkSession
 window :: ToOne WindowLink Window
 window = Q.LinkWindow
 
--- | Follow this link to its physical panes. One quantifier tests one child.
+-- | Physical panes reached through this link, ordered by pane index.
 panes :: ToMany WindowLink Pane
 panes = Q.LinkPanes

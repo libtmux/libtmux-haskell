@@ -1,4 +1,4 @@
-"""Build and execute a public consumer from the core source archive."""
+"""Build and execute public consumers from the core source archive."""
 
 from pathlib import Path
 import json

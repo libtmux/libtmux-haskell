@@ -20,6 +20,7 @@ and explicit `IO`. Capture once, then use ordinary records and collections.
 
 Use a current GHC and Cabal that satisfy the [package bounds](libtmux-haskell.cabal).
 [Toolchain pins](.tool-versions) record the reproducible CI setup.
+Native operations require the [Linux host capabilities](docs/installation.md#native-backend-host-requirements).
 The tmux support range is 3.3a through 3.8 inclusive; CI tests the endpoints.
 [Add the source dependency](docs/installation.md) to a Cabal application,
 or run the example from a provisioned checkout.

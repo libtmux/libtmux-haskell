@@ -152,7 +152,7 @@ fieldKey field = case descriptor field of Descriptor key _ _ _ -> key
 formatVariable :: Field row value -> ByteString
 formatVariable field = case descriptor field of Descriptor _ variable _ _ -> variable
 
--- | Type evidence for decoding and future typed query interpretation.
+-- | Type evidence for scalar decoding and typed query interpretation.
 wireType :: Field row value -> WireType value
 wireType field = case descriptor field of Descriptor _ _ valueType _ -> valueType
 
@@ -173,7 +173,7 @@ data FieldFailure = InvalidSyntax | InvalidEncoding | UnexpectedNul | ValueTooLa
   deriving stock (Eq, Show)
 
 -- | Validate decoded scalar bytes, retaining exact byte-bearing values.
--- One MiB is the current scalar payload ceiling. Numeric ranges follow tmux
+-- One MiB is the scalar payload ceiling. Numeric ranges follow tmux
 -- storage domains; the public mathematical newtypes have separate constructors.
 decodeField :: Field row value -> ByteString -> Either FieldError value
 decodeField field bytes

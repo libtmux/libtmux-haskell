@@ -1,4 +1,9 @@
 -- | Private literal mutations and their closed native acknowledgment profile.
+--
+-- 'compileMutation' preserves operand bytes through tmux's command and format
+-- parsers. 'decodeControlReply' applies only to these synchronous handlers,
+-- whose primary success response is empty. The Runtime owns the client until
+-- normal exit; later hook output remains opaque to this decoder.
 module LibTmux.Internal.Command
   ( Mutation (..), ArgumentError (..), compileMutation
   , MutationReply (..), ReplyError (..), decodeControlReply
@@ -40,6 +45,8 @@ instance NFData MutationReply where
 data ReplyError = UnexpectedReply | ReplyTooLarge
   deriving stock (Eq, Show)
 
+-- | Interpret fully drained streams and normal exit status for one t'Mutation'.
+-- This is not a general control-mode decoder or evidence for waiting commands.
 decodeControlReply :: Maybe Int -> ByteString -> ByteString -> Either ReplyError MutationReply
 decodeControlReply exit output errors
   | Bytes.length output > 1048576 || Bytes.length errors > 1048576 = Left ReplyTooLarge

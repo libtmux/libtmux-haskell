@@ -5,9 +5,9 @@
 -- adoption can create filesystem names. Failed or cancelled adoption leaves
 -- cleanup owned here. 'inspect' retires only successfully cleaned entries;
 -- 'awaitCleanup' may wait without a deadline. 'shutdown' bounds its two
--- observation phases while retaining incomplete cleanup. Typed framed server
--- reads bind logical admission and deadlines to native ownership. The common
--- Server scope is public; shared scopes and other command bindings remain open.
+-- observation phases while retaining incomplete cleanup. Read and mutation
+-- requests bind logical admission and deadlines to native ownership.
+-- "LibTmux.Server" exposes the Server and shared Runtime scopes.
 module LibTmux.Internal.Runtime
   ( Runtime, ServerHandle, ServerOwner, Report (..), newRuntime, adopt, adoptWith
   , newServerOwner, adoptServerOwnerWith, inspectServerOwner, shutdownServerOwner
@@ -71,7 +71,7 @@ data ServerOwner = ServerOwner
   }
 data ServerHandle = ServerHandle !ServerOwner !SocketPin
 
--- | Physical cleanup, owned read workers and logical uncertainty are separate.
+-- | Physical cleanup, operation workers and logical uncertainty are separate.
 -- An empty 'pending' list alone does not establish complete Runtime cleanup.
 data Report = Report
   { accepting :: !Bool, pending :: ![(Int, P.CloseReport)]
@@ -97,11 +97,11 @@ instance Show ReadReceipt where
     showParen (precedence > 10) (showString "ReadReceipt " . shows operation)
 instance ExceptionAnnotation ReadReceipt
 
--- | Logical responsibility and this read's physical owners, observed together.
+-- | Logical responsibility and an operation's physical owners, observed together.
 -- A released native child does not establish a daemon-side command outcome.
 data ReadRecovery = ReadRecovery
   { logical :: !S.Status -- ^ Logical progress, original result and retained responsibility.
-  , workerOwned :: !Bool -- ^ A decoder or recovery worker still owns this read.
+  , workerOwned :: !Bool -- ^ A decoder or recovery worker still owns this operation.
   , workerFailure :: !(Maybe SomeException) -- ^ Retained decoder or recovery failure.
   , nativeOwned :: !Bool -- ^ A native child or its cleanup remains owned.
   , nativeFailure :: !(Maybe SomeException) -- ^ Retained native cleanup failure.
@@ -114,7 +114,6 @@ type VersionRead = Request Version.TmuxVersion
 data ReadResult value = ReadValue !value | ReadUnavailable !S.Outcome !(Maybe SomeException)
   deriving stock (Show)
 
--- Pair each fixed wire format with its decoded result type.
 data ReadCommand value where
   ReadPid :: ReadCommand Integer
   ReadVersion :: ReadCommand Version.TmuxVersion
@@ -290,7 +289,7 @@ serverReads runtime entry =
 workerStatus :: NativeOwner -> STM (S.Operation, Maybe SomeException)
 workerStatus NativeOwner {operation, failure} = (operation,) <$> readTVar failure
 
--- | Close one handle and settle its queued reads in the same STM cut.
+-- | Close one handle and settle its queued operations in the same STM cut.
 -- Other groups keep their admission, lane permits and first outcomes.
 closeServerAdmission :: Runtime -> ServerOwner -> STM ()
 closeServerAdmission runtime entry = do
@@ -374,7 +373,7 @@ requestClose runtime = mask_ $ do
 
 -- | Close admission and wait for every retained pool. A cleanup failure throws
 -- without deleting its owner; repair the obstacle and retry. This wait has no
--- hard deadline. It joins read workers but does not await uncertain logical
+-- hard deadline. It joins operation workers but does not await uncertain logical
 -- outcomes; inspect 'unresolved' afterward rather than inferring job completion.
 awaitCleanup :: Runtime -> IO ()
 awaitCleanup runtime = do
@@ -511,7 +510,7 @@ resumeReceipt runtime client receipt@(ReadReceipt _ _ operation key) = mask_ $ d
   observed <- atomically (inspectReceipt runtime client receipt)
   mapM_ throwIO observed.workerFailure
 
--- | Request cancellation of the correlated read, retaining unresolved debt.
+-- | Request cancellation of the correlated operation, retaining unresolved debt.
 cancelReceipt :: Runtime -> ServerHandle -> ReadReceipt -> IO ()
 cancelReceipt runtime client receipt@(ReadReceipt _ _ operation _) = atomically $ do
   validateReceipt runtime client receipt
@@ -527,13 +526,12 @@ detachReceipt runtime client receipt@(ReadReceipt _ _ operation _) = do
 readStatus :: Request value -> STM S.Status
 readStatus = S.status . readOperation
 
--- | Wait only for this read's first result. Caller cancellation changes no
+-- | Wait only for this operation's first result. Caller cancellation changes no
 -- ownership. Use 'cancelRead' to request cancellation of the owned operation.
 awaitRead :: Request value -> IO (ReadResult value)
 awaitRead (Request _ result) = atomically (readTMVar result)
 
--- | Acquire a fresh, nonce-framed PID using a one-second deadline. This fixed
--- read is the first private logical/physical binding, not a raw command API.
+-- | Acquire a fresh, nonce-framed PID using a one-second deadline.
 readServerPid :: Runtime -> ServerHandle -> ByteString -> ReadClass -> IO PidRead
 readServerPid = readServerPidWith P.defaultHooks 1000000
 
@@ -549,7 +547,7 @@ mutateWith hooks duration runtime client executable mutation =
   startNative (Mutate mutation) hooks duration runtime client executable ScalarRead
 
 -- | Observe a stable release identity through the pinned server. Use
--- 'Version.requireSupported' separately for minimum-version admission;
+-- 'Version.requireSupported' separately for supported-range admission;
 -- this observation establishes no feature capabilities.
 readServerVersion :: Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
 readServerVersion = readServerVersionWith P.defaultHooks 1000000
@@ -650,8 +648,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
     readTVar pool.closing >>= flip when (throwSTM P.PoolClosed)
     operation <- S.admitIn runtime.scheduler entry.group lane
     let parentBytes = case decoder of
-          -- The caller may stop waiting while the worker still constructs the
-          -- graph. Keep the former capture lease with that registered owner.
+          -- Retain graph construction credit with its worker after caller cancellation.
           ObservationResult (ReadGraph _) -> P.retainedBytes + 64 * 1024 * 1024
           ObservationResult (ReadSnapshot _) -> P.retainedBytes + 64 * 1024 * 1024
           MutationResult -> P.retainedBytes + fromIntegral N.vectorLimitBytes

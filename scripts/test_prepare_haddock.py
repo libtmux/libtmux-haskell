@@ -1,4 +1,4 @@
-"""Critical navigation and ownership checks for prepared Haddock artifacts."""
+"""Navigation and ownership checks for prepared Haddock artifacts."""
 
 import hashlib
 import importlib.util

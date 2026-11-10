@@ -35,6 +35,6 @@ fromBytes = TmuxText . Short.toShort
 toBytes :: TmuxText -> ByteString
 toBytes (TmuxText bytes) = Short.fromShort bytes
 
--- | Decode explicitly, retaining the original label on 'UnicodeException'.
+-- | Decode as UTF-8; invalid bytes return 'UnicodeException' without replacement.
 decodeUtf8 :: TmuxText -> Either UnicodeException Text
 decodeUtf8 = Utf8.decodeUtf8' . toBytes

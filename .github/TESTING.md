@@ -20,7 +20,10 @@ specifications through Hspec's native runner.
 Run them with strict qualification policies:
 
 ```console
-$ cabal test specs --offline --test-show-details=direct --test-options='--strict --fail-on=empty'
+$ cabal test specs \
+    --offline \
+    --test-show-details=direct \
+    --test-options='--strict --fail-on=empty'
 ```
 
 ## Design properties
@@ -51,7 +54,9 @@ $ cabal test unit --offline --test-show-details=direct
 Integration selects an explicit tmux binary and owns every daemon and socket:
 
 ```console
-$ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration --offline --test-show-details=direct
+$ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration \
+    --offline \
+    --test-show-details=direct
 ```
 
 Startup cancellation cases stop before session dispatch or after its response

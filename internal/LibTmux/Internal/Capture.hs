@@ -86,7 +86,7 @@ captureSnapshotWith hooks runtime client executable duration = withinDeadline ru
   owned runtime receipt (R.readSnapshotWith hooks left runtime client executable)
 
 -- | Serial comparison path with a checkpoint before its final topology read.
--- The tagged default above does not use these scalar hydration boundaries.
+-- The production capture path uses one tagged envelope instead.
 captureGraphWith :: IO () -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraphWith checkpoint runtime client executable duration =
   withinDeadline runtime client duration (\receipt deadline -> R.withCaptureBudget runtime (attempt receipt deadline 2))
@@ -119,8 +119,7 @@ captureGraphWith checkpoint runtime client executable duration =
             bytes <- owned runtime receipt (R.readTopologyWith P.defaultHooks left runtime client executable R.ScalarRead)
             charge (4 * toInteger (Bytes.length bytes))
             graph <- either throwIO pure (T.decodeTopology generation bytes)
-            -- Both topology graphs coexist during validation. Reserve metadata
-            -- conservatively as well as wire and decoded payloads.
+            -- Both topology graphs coexist; reserve their metadata and payloads.
             charge (1024 * toInteger (length (G.graphSessions graph) + length (G.graphWindows graph)
               + length (G.graphPanes graph) + length (G.graphLinks graph)))
             pure graph
