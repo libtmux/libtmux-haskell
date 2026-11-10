@@ -150,9 +150,10 @@ Logical detachment validates the operation's Runtime and group before changing
 responsibility. It releases no physical ownership.
 
 This ownership layer is private. The fixed server reads and closed mutations
-below bind logical and physical ownership. Public captures use the Server
-scope; public mutation and subscription APIs remain unimplemented. Physical shutdown does not resolve
-logical unknown outcomes or establish completion of a daemon job.
+below bind logical and physical ownership. Public captures and
+[rename/title operations](../mutations.md) use the Server scope. Subscription
+APIs remain unimplemented. Physical shutdown does not resolve logical unknown
+outcomes or establish completion of a daemon job.
 
 ## Public scope outcomes
 
@@ -174,13 +175,15 @@ Exception-context annotations retain recovery owners. Integrated scope tests
 cover cancellation, double failure and failed worker allocation. The public
 `tryTmux` specializes base's `tryWithContext`, returning the typed failure together
 with its exception context. Retain that context when converting errors;
-`cleanupRecoveries` and `captureRecoveries` read their owners from it.
+`cleanupRecoveries`, `captureRecoveries` and `mutationRecoveries` read their
+owners from it.
 An ordinary typed `try` discards those annotations. The GHC 9.14.1 probe and
 the public cleanup-failure integration case qualify the chosen catch boundary.
 [base exception API](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext).
 
-The advanced caller-owned Runtime scope remains unimplemented; the common
-`withServer` scope creates and owns its Runtime.
+`withRuntime` supplies caller-owned Runtime scopes to `withServerIn`; the common
+`withServer` scope creates and owns its Runtime. See the
+[shared Runtime guide](../shared-runtime.md).
 
 Correlate capture
 failure with operation ID, endpoint/generation, physical cleanup status,
@@ -287,8 +290,9 @@ uncertain logical responsibility requiring proof or detach.
 The private Runtime binds session renames, window renames and pane-title
 changes to the existing native owner. These handlers return synchronously;
 configured after-hooks may still wait or fail. This is not a general command,
-waiting-job or control-observer interface. Public mutation methods remain
-unimplemented.
+waiting-job or control-observer interface. The
+[public rename/title methods](../mutations.md) validate references and apply a
+single deadline across submission and response waiting.
 
 Literal lowering produces one checked argument vector. The complete executable,
 socket and command vector is validated before admission. Mutation work uses
@@ -319,9 +323,11 @@ The detached result distinguishes:
   client exit, retaining bounded following diagnostics. The primary effect
   already happened; this does not imply rollback.
 
-Cancellation of a waiter changes no ownership. Explicit request cancellation
-settles queued work as not dispatched or accepted work as unknown, and requests
-native cleanup. Physical cleanup and logical responsibility remain separate.
+Cancellation of a raw Runtime waiter changes no ownership. The synchronous
+public mutation wrapper explicitly requests cancellation when its wait is
+interrupted. Request cancellation settles queued work as not dispatched or
+accepted work as unknown, and requests native cleanup. Physical cleanup and
+logical responsibility remain separate.
 Recovery never resubmits the command; explicit logical detachment releases no
 native resource and cannot change the original caller outcome. The native
 integration cases cover waiting hooks, error after effect, opaque control-shaped
