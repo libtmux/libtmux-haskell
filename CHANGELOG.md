@@ -23,6 +23,13 @@
 
 ### Documentation
 
+- Run the capture, query and shared Runtime examples through Cabal, with
+  private-server setup, expected output, teardown and per-package guides.
+  Installation guidance distinguishes package requirements from CI toolchain
+  pins. ([#9])
+- Read linked module and ownership documentation with explicit failure and
+  recovery contracts. Native source listings support keyboard scrolling,
+  with type annotations kept inside the viewport. ([#9])
 - Browse native Haddock with distinct links for record owners, instance
   methods and source identifiers. Wide API sections scroll within narrow
   screens; CI retains the original output alongside the checked browser. ([#5])
@@ -60,3 +67,4 @@
 [#6]: https://github.com/libtmux/libtmux-haskell/pull/6
 [#7]: https://github.com/libtmux/libtmux-haskell/pull/7
 [#8]: https://github.com/libtmux/libtmux-haskell/pull/8
+[#9]: https://github.com/libtmux/libtmux-haskell/pull/9

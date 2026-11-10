@@ -1,3 +1,10 @@
+-- | Target one local tmux socket inode through a private hard-link alias.
+--
+-- Register a t'PinOwner' before 'acquirePin' can create filesystem names.
+-- 'closePin' removes only owned names after identity checks; failed cleanup
+-- retains its journal for retry. Paths preserve POSIX bytes, and acquisition
+-- requires trusted directories on the socket's filesystem.
+-- 'pinGeneration' combines the endpoint identity with a fresh adoption token.
 module LibTmux.Internal.SocketPin
   ( PinOwner, SocketPin, PinError (..), PinReason (..), PinCheckpoint (..)
   , newPinOwner, acquirePin, acquirePinWith, closePin, pinPath, pinGeneration
@@ -53,12 +60,16 @@ data SocketPin = SocketPin !ByteString !Generation
 data PinCheckpoint = DirectoryRegistered | BeforeLink | LinkRegistered | BeforeEntropy | BeforePublish
   deriving stock (Eq, Show)
 
+-- | Create a single-use ownership journal before filesystem acquisition.
 newPinOwner :: IO PinOwner
 newPinOwner = PinOwner <$> newMVar () <*> newIORef Fresh
 
+-- | Create an alias for the existing socket. The owner retains cleanup
+-- responsibility after failure or cancellation; retire it with 'closePin'.
 acquirePin :: PinOwner -> ByteString -> ByteString -> IO SocketPin
 acquirePin = acquirePinWith (\_ _ -> pure ())
 
+-- | Acquisition with deterministic failure and cancellation checkpoints.
 acquirePinWith :: (PinCheckpoint -> ByteString -> IO ()) -> PinOwner -> ByteString -> ByteString -> IO SocketPin
 acquirePinWith checkpoint owner source parent = withOwner SocketPinUnavailable owner $ \owned -> do
   readIORef owned >>= \case
@@ -114,6 +125,8 @@ acquirePinWith checkpoint owner source parent = withOwner SocketPinUnavailable o
           checkpoint BeforePublish directory
           pure (SocketPin alias (Generation (identity linked) token))
 
+-- | Remove owned names after identity checks. Failure retains the journal
+-- for retry; closing an already retired owner succeeds without filesystem IO.
 closePin :: PinOwner -> IO ()
 closePin owner = withOwner SocketPinCleanupFailed owner $ \owned -> readIORef owned >>= \case
   Fresh -> writeIORef owned Closed
@@ -141,9 +154,11 @@ closePin owner = withOwner SocketPinCleanupFailed owner $ \owned -> readIORef ow
       ignoreMissing (removeDirectory names.directory)
       writeIORef owned Closed
 
+-- | Private alias for process targeting. Use while its owner retains the pin.
 pinPath :: SocketPin -> ByteString
 pinPath (SocketPin path _) = path
 
+-- | Endpoint identity and fresh adoption token, without contacting tmux.
 pinGeneration :: SocketPin -> Generation
 pinGeneration (SocketPin _ generation) = generation
 

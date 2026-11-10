@@ -3,6 +3,7 @@ name: libtmux-typed-values
 version: 0.0.0
 build-type: Simple
 license: MIT
+extra-doc-files: README.md
 
 executable typed-values
   main-is: Main.hs

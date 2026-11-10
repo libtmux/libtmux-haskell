@@ -1,4 +1,4 @@
-"""Run the public capture example against one owned tmux endpoint."""
+"""Verify public examples against one owned tmux endpoint."""
 
 import argparse
 from contextlib import ExitStack, contextmanager
@@ -15,7 +15,7 @@ import time
 
 
 def exited(descriptors):
-    """Observe every owned process through pidfd readiness, without polling."""
+    """Observe owned process exits through pidfd readiness."""
     pending = set(descriptors)
     watch = select.poll()
     for descriptor in pending:

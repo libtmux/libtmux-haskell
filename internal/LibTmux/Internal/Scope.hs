@@ -31,9 +31,9 @@ instance Exception TmuxException
 -- | Local observations of the selected physical and logical responsibility.
 -- Each inspection returns new metadata; it performs no tmux operation.
 data CleanupStatus = CleanupStatus
-  { complete :: !Bool -- ^ All physical owners, read workers and logical responsibility have retired.
+  { complete :: !Bool -- ^ All physical owners, operation workers and logical responsibility have retired.
   , pendingHandles :: !Int -- ^ Server handles still awaiting physical retirement.
-  , pendingReads :: !Int -- ^ Decoder or recovery workers retaining read envelopes.
+  , pendingReads :: !Int -- ^ Decoder or recovery workers retaining operation envelopes.
   , unresolved :: ![(S.Operation, S.Status)] -- ^ Retained logical operations with their observed status.
   , failures :: ![SomeException] -- ^ Currently observed pin, worker or cleanup-request failures.
   }

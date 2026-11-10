@@ -1,7 +1,7 @@
 -- | Nonce boundaries and lossless scalar bytes for tmux format output.
 --
--- 'escapedFieldFormat' protects literal backslashes before releases that
--- apply vis escaping print the value. 'decodeEscapedScalar' validates both
+-- 'escapedFieldFormat' doubles literal backslashes before tmux's printing
+-- layer can apply vis escaping. 'decodeEscapedScalar' validates both
 -- framing and decoded bounds. Numeric-only formats may use 'decodeScalar'.
 module LibTmux.Internal.Frame
   ( Nonce
@@ -53,7 +53,7 @@ escapedFieldFormat field = "#{s/\\\\/\\\\\\\\/:" <> field <> "}"
 recordMarker :: Nonce -> ByteString
 recordMarker (Nonce token) = "g" <> token
 
--- | Look up a trusted variable once, protecting slashes before escaping @g@.
+-- | Look up a trusted variable once, protecting backslashes before escaping @g@.
 -- Encoded values contain no literal @g@, so cannot contain a 'recordMarker'.
 escapedRecordFieldFormat :: ByteString -> ByteString
 escapedRecordFieldFormat field = "#{s/\\\\/\\\\\\\\/;s/g/\\\\147/:" <> field <> "}"

@@ -2,6 +2,9 @@
 --
 -- Window labels use 'TmuxText'; process names and paths preserve POSIX bytes.
 -- Reading an observation or navigating the graph performs no IO.
+-- 'assembleEntityGraph' validates references, unique positions and selections
+-- for its ordered views and lookup indexes. 'assembleSnapshot' joins
+-- metadata and attached clients, then forces the complete detached value.
 module LibTmux.Internal.Graph
   ( EndpointIdentity (..), Generation (..)
   , SessionRef (..), WindowRef (..), PaneRef (..)

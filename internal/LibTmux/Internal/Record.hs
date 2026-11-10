@@ -99,6 +99,8 @@ rowFormat nonce tag (Row layout _) = marker <> ":" <> tag <> "\n"
       <> ":" <> Frame.escapedRecordFieldFormat (Field.formatVariable selected)
       <> ":" <> marker <> "\n" <> fields rest
 
+-- | One command queue with explicit metadata, entity and attached-client sections.
+-- Fixed templates are parsed before any reported values expand inside them.
 snapshotCommands :: G.Generation -> Frame.Nonce -> [ByteString]
 snapshotCommands generation nonce =
   [ "display-message", "-p", "-F", marker <> ":O:1\n" <> rowFormat nonce "I" (serverRow generation)

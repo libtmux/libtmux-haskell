@@ -32,7 +32,7 @@ belong in the workspace package. MCP is outside this port's scope. See the
 
 ## Compatibility evidence
 
-CI uses GHC 9.14.1, GHC2024 and Cabal 3.18.2.0 on Linux x86_64. Its current
+CI uses the [recorded toolchain](../.tool-versions) on Linux x86_64. Its current
 integration subset exercises owned fixtures, scalar framing, private socket
 pins, public capture, scope recovery and process ownership with one and two
 RTS capabilities on exact tmux

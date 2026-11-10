@@ -15,6 +15,22 @@ of calling it fast. Distinguish planned, implemented, tested, and published
 behavior. A README must not offer installation or API examples before they
 work.
 
+## Version claims
+
+State a minimum version only when a used feature or package constraint requires
+it. CI pins describe tested configurations, not exact installation requirements.
+Keep pins in the toolchain file and link to it instead of repeating patch versions
+across guides. Do not invent an upper compiler bound or imply that an untested
+version passed. Preserve meaningful tmux ranges, protocol versions and versioned
+source citations.
+
+Keep Cabal's package API compatibility bounds separate from these prose claims.
+An exact `tested-with` entry records a tested build; it is not a compiler pin
+imposed on users.
+
+Reader examples use the language's native runner. Keep test harnesses and
+documentation validators out of the application entry point.
+
 ## Reader paths
 
 Keep the README ordered around the caller's task: purpose, installation,

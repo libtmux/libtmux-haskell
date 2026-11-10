@@ -96,7 +96,7 @@ data Quantifier = Some | Every | None
 type role Expr nominal
 -- | A pure predicate description for one row type. Field and relationship
 -- tokens retain their identity; arbitrary application functions stay outside
--- this portable representation. Constructors and cross-row coercions are hidden.
+-- this portable representation. Nominal roles prevent cross-row coercion.
 data Expr row where
   Equal :: Eq value => F.Field row value -> value -> Expr row
   OneOf :: Eq value => F.Field row value -> [value] -> Expr row
@@ -229,7 +229,7 @@ windowLinks = Query WindowLinksSource (All []) [] Nothing
 -- | Pane appearances in link order, then pane-index order within each window.
 paneOccurrences :: Query G.PaneOccurrence
 paneOccurrences = Query Occurrences (All []) [] Nothing
--- | Captured client observations in the snapshot's bytewise name order.
+-- | Captured clients in bytewise name order, then PID.
 clients :: Query G.Client
 clients = Query Clients (All []) [] Nothing
 -- | The single captured daemon-metadata observation.

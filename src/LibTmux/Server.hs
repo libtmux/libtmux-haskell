@@ -69,7 +69,7 @@ import System.OsPath.Posix qualified as Path
 import System.OsString qualified as Platform
 import System.OsString.Posix qualified as Os
 
--- | One pinned endpoint and connection generation. The constructor is hidden.
+-- | One pinned endpoint and connection generation.
 -- Retaining this value after 'withServer' or 'withServerIn' keeps no admission open.
 data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int
 

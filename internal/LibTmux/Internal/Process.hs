@@ -125,8 +125,8 @@ retainedBytes, inspectionBytes :: Word64
 retainedBytes = fromIntegral (4 * streamLimitBytes)
 inspectionBytes = childBytes + retainedBytes
 
--- | Return a detached caller-owned t'Ticket'. Reserve shared child/byte credits
--- before copying or forking; allocation failure rolls back both credits.
+-- | Return a result t'Ticket'; the t'Pool' retains physical ownership. Reserve
+-- shared child/byte credits before copying or forking; allocation failure rolls back both.
 -- Ordinary work leaves the pool's final position for inspection. A pool with
 -- capacity one therefore admits inspections only; Runtime pools use sixteen.
 -- Internal consumers precharge a separate parent envelope in
@@ -140,7 +140,7 @@ submitRegistered :: (Ticket -> STM ()) -> B.Class -> Hooks -> Pool -> N.Spec -> 
 submitRegistered register allocation hooks pool spec input =
   submitInputRegistered register allocation hooks pool spec (BytesInput input)
 
--- | KeepInputOpen supplies no bytes and retains its writer until child exit.
+-- | 'KeepInputOpen' supplies no bytes and retains its writer until child exit.
 -- Early EOF can make a control client exit before its synchronous hooks finish.
 submitInputRegistered :: (Ticket -> STM ()) -> B.Class -> Hooks -> Pool -> N.Spec -> Input -> IO Ticket
 submitInputRegistered register allocation hooks pool spec input = mask_ $ do
@@ -300,7 +300,7 @@ stop ticket = withMVar ticket.signalLock $ \_ -> mask_ $ do
         modifyTVar' ticket.signalErrorCount (\n -> if n == maxBound then n else n + 1)
     Just _ -> pure ()
 
--- | Close stream endpoints, terminate if still owned, then retain the reap.
+-- | Signal an owned, unreaped child before closing streams, then consume its status.
 cleanup :: Ticket -> IO ()
 cleanup ticket = do
   stop ticket
@@ -308,7 +308,7 @@ cleanup ticket = do
     Nothing -> pure ()
     Just child -> do
       mapM_ (retire ticket) [child.input, child.output, child.errors]
-      -- Recovery skips experiment hooks and gates; cached status is authoritative.
+      -- Recovery bypasses injected hooks; cached child status remains authoritative.
       let recovery = ticket {hooks = ticket.hooks {afterReap = pure (), waitNative = N.waitChild}}
       _ <- reap recovery
       pure ()

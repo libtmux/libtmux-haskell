@@ -1,4 +1,4 @@
-"""Critical cache reuse and ownership checks; no network or compilation."""
+"""Cache reuse and ownership checks using the CI_TEST_TMUX executable."""
 
 import hashlib
 import json

@@ -1,7 +1,7 @@
 -- | Captured tmux client fields for "LibTmux.Query".
 --
 -- t'Client' means an observed tmux client, not the operational Server handle.
--- The tmux 3.3a baseline currently captures attached clients. 'tty' can be
+-- The tmux 3.3a baseline captures attached clients. 'tty' can be
 -- absent for a control client; bytes retain endpoint path semantics.
 module LibTmux.Query.Client (name, pid, tty, attachment) where
 

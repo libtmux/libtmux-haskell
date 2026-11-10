@@ -1,4 +1,8 @@
--- | The numeric-only entity topology protocol, before text-field hydration.
+-- | Numeric topology for the serial capture comparison path.
+--
+-- 'decodeTopology' leaves textual fields unhydrated. Its graph must not be
+-- published as a complete observation. "LibTmux.Internal.Record" supplies the
+-- tagged production profile, including text fields and their boundaries.
 module LibTmux.Internal.Topology (TopologyError (..), topologyFormat, decodeTopology) where
 
 import Control.Exception (Exception)

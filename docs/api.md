@@ -72,6 +72,11 @@ several lines offers those lines. Missing hidden-module instance attributions
 retain their text and valid Source links. No private API page is added.
 In the default theme, long module headings wrap and wide constructor,
 instance and symbol-index sections scroll within the page on narrow screens.
+Source listings use the mobile viewport and keep horizontal scrolling inside
+a keyboard-focusable code region. Type annotations remain visible outside
+the scrolling region and stay within the viewport. Native annotation behavior
+remains available without the source enhancement. Source text and identifier
+targets retain their native contents.
 
 `navigation.json` records raw and prepared file digests and edit counts.
 The check rejects missing local targets, browser assets and unexpected duplicate

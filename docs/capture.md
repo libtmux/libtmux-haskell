@@ -6,21 +6,20 @@ Use [`withServer`](../src/LibTmux/Server.hs) to adopt an existing endpoint and
 [README](../README.md) filters ordinary pane records, traverses relationships
 and prints its result after the handle closes. Its
 [source](../examples/capture-graph/Main.hs) and
-[fixture runner](../examples/capture-graph/run.py) are checked from the source
-archive, with the expected output asserted and owned process exits observed.
+[owned fixture verification](../scripts/check_sdist.py) are checked from the
+source archive, with output asserted and owned process exits observed.
 
-From a provisioned checkout, run the owned fixture:
-
-```console
-$ python3 examples/capture-graph/run.py
-```
-
-To inspect your own running server, pass its socket and executable paths to
-the Haskell program. Replace both arguments with paths on your machine:
+Create the [private demonstration server](../README.md) from the README, then
+run the Haskell executable from a provisioned checkout:
 
 ```console
-$ cabal run --verbose=0 capture-graph -- /tmp/tmux-1000/default /usr/bin/tmux
+$ cabal run --verbose=0 capture-graph -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
 ```
+
+To inspect your own running server, pass its actual socket and executable
+paths instead. The program observes that daemon; it does not create or stop it.
 
 The library requires a trusted absolute socket path and a writable pin
 directory on that socket's filesystem. The default pin directory is the

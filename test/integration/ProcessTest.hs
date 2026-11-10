@@ -670,7 +670,7 @@ tests getChild = testGroup "private process owner"
           try @SomeException (O.await second) >>= assertCancelled
           atomically (B.usage pool.budget) >>= (@?= B.Usage True 1 2 (2 * O.childBytes))
           let rescue = do
-                -- Only the negative version leaves ticket two claimed without a fork.
+                -- Recover teardown if the injected fork failure leaves a claimed ticket.
                 attempts <- readIORef forks
                 when (attempts == 4) (atomically (writeTVar second.busy False))
                 _ <- O.requestClose pool

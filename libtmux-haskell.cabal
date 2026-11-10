@@ -73,11 +73,13 @@ extra-source-files:
   bench/results/capture-2026-11-08.json
   examples/catalogue.json
   examples/typed-values/Main.hs
+  examples/typed-values/README.md
   examples/typed-values/expected.stdout
   examples/typed-values/libtmux-typed-values.cabal
   examples/typed-values/cabal.project
   examples/typed-values/cabal.project.vcs
   examples/capture-graph/Main.hs
+  examples/capture-graph/README.md
   examples/capture-graph/expected.stdout
   examples/capture-graph/libtmux-capture-graph.cabal
   examples/capture-graph/cabal.project
@@ -85,16 +87,19 @@ extra-source-files:
   examples/capture-graph/run.py
   examples/capture-graph/test_run.py
   examples/offline-graph/Main.hs
+  examples/offline-graph/README.md
   examples/offline-graph/expected.stdout
   examples/offline-graph/libtmux-offline-graph.cabal
   examples/offline-graph/cabal.project
   examples/offline-graph/cabal.project.vcs
   examples/shared-runtime/Main.hs
+  examples/shared-runtime/README.md
   examples/shared-runtime/expected.stdout
   examples/shared-runtime/libtmux-shared-runtime.cabal
   examples/shared-runtime/cabal.project
   examples/shared-runtime/cabal.project.vcs
   examples/query-graph/Main.hs
+  examples/query-graph/README.md
   examples/query-graph/expected.stdout
   examples/query-graph/libtmux-query-graph.cabal
   examples/query-graph/cabal.project

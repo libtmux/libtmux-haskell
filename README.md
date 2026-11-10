@@ -18,18 +18,52 @@ and explicit `IO`. Capture once, then use ordinary records and collections.
 
 </div>
 
-Use GHC 9.14.1 with GHC2024 and Cabal 3.18.2.0 on Linux x86_64.
+Use a current GHC and Cabal that satisfy the [package bounds](libtmux-haskell.cabal).
+[Toolchain pins](.tool-versions) record the reproducible CI setup.
+Native operations require the [Linux host capabilities](docs/installation.md#native-backend-host-requirements).
 The tmux support range is 3.3a through 3.8 inclusive; CI tests the endpoints.
 [Add the source dependency](docs/installation.md) to a Cabal application,
-or run this example from a provisioned checkout with Python 3 available:
+or run the example from a provisioned checkout.
+
+Create a private demonstration server:
 
 ```console
-$ python3 examples/capture-graph/run.py
+$ export LIBTMUX_DEMO_DIR="$(mktemp -d -t libtmux-haskell-demo.XXXXXX)"
 ```
 
-The runner creates a private tmux server, links one window at two indices,
-checks the output, and observes the owned server and pane exit during cleanup.
-The Haskell program accepts an existing socket and tmux executable:
+```console
+$ env -u TMUX -u TMUX_PANE tmux \
+    -S "$LIBTMUX_DEMO_DIR/s" \
+    -f /dev/null \
+    new-session \
+    -d \
+    -s demo \
+    -n editor \
+    -x 120 \
+    -y 40 \
+    /bin/cat -
+```
+
+Link its window at a second index to demonstrate physical and contextual identity:
+
+```console
+$ env -u TMUX -u TMUX_PANE tmux \
+    -N \
+    -S "$LIBTMUX_DEMO_DIR/s" \
+    link-window \
+    -s demo:0 \
+    -t demo:4
+```
+
+Run the Haskell executable through Cabal:
+
+```console
+$ cabal run --verbose=0 capture-graph -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
+```
+
+The complete program accepts an existing socket and tmux executable:
 
 <!-- example: capture-graph -->
 ```haskell
@@ -99,6 +133,19 @@ values after the scope has closed. Closing the handle leaves the daemon running.
 Operational exceptions retain their recovery context; see [capture and recovery](docs/capture.md).
 For independent handle lifetimes under one resource budget, use the tested
 [shared Runtime program](docs/shared-runtime.md).
+
+Stop the demonstration server and remove only its temporary directory:
+
+```console
+$ env -u TMUX -u TMUX_PANE tmux \
+    -N \
+    -S "$LIBTMUX_DEMO_DIR/s" \
+    kill-server
+```
+
+```console
+$ rm -r -- "$LIBTMUX_DEMO_DIR"
+```
 
 | Task | Start here |
 | --- | --- |

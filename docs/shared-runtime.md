@@ -5,14 +5,14 @@ resource and cleanup owner. Open their endpoints with
 [`withServerIn`](../src/LibTmux/Server.hs). Closing one Server scope releases
 that handle while the others remain usable under the shared limits.
 
-From a provisioned checkout, run this complete program against an owned tmux
-fixture. The runner builds the executable, asserts its output and observes
-the daemon and initial pane exiting during teardown:
+Create the [private demonstration server](../README.md) from the README, then
+run this complete program from a provisioned checkout. CI also runs it from
+an installed package, checks output and observes owned process cleanup:
 
 ```console
-$ python3 examples/capture-graph/run.py \
-    --executable shared-runtime \
-    --expected-output examples/shared-runtime/expected.stdout
+$ cabal run --verbose=0 shared-runtime -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
 ```
 
 <!-- example: shared-runtime -->
@@ -99,6 +99,7 @@ name: libtmux-shared-runtime
 version: 0.0.0
 build-type: Simple
 license: MIT
+extra-doc-files: README.md
 
 executable shared-runtime
   main-is: Main.hs
