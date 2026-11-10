@@ -109,13 +109,16 @@ entity before sending a command.
 
 Window names use [`TmuxText`](../src/LibTmux/Snapshot.hs), retaining bytes with
 an explicit fallible text conversion. String literals work with
-`OverloadedStrings`; `labelFromBytes` accepts byte-oriented labels. tmux may
+[OverloadedStrings](https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/overloaded_strings.html);
+`labelFromBytes` accepts byte-oriented labels. tmux may
 reject a name its release does not accept. Session names and pane titles use
-`Text`. NUL and oversized encoded commands fail before admission. The pane's
+[`Text`](https://hackage-content.haskell.org/package/text-2.1.3/docs/Data-Text.html#t:Text).
+NUL and oversized encoded commands fail before admission. The pane's
 application can replace a title later.
 
 The default deadline is one second, covering submission and response waiting.
-The `With` variants take [`MutationOptions`](../src/LibTmux/Server.hs) first.
+Forms such as [`renameWindowWith`](../src/LibTmux/Server.hs) take
+[`MutationOptions`](../src/LibTmux/Server.hs) first.
 For example, pass `Tmux.defaultMutationOptions {Tmux.timeout = 2}` to
 `renameWindowWith`. Positive timeouts up to ten seconds are accepted. These
 are deadline controls, not a promise that configured hooks finish in that time.
@@ -141,8 +144,10 @@ does not establish that background jobs started by a hook have finished.
 ## Keep recovery ownership reachable
 
 Read [`mutationRecoveries`](../src/LibTmux/Server.hs) from the exception context
-returned by `tryTmux` or `Control.Exception.tryWithContext`. Each owner has a
-`mutationOperation` and `mutationGeneration`; its receipt retains metadata,
+returned by `tryTmux` or
+[`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext).
+Each owner has a `mutationOperation` and `mutationGeneration`; its receipt
+retains metadata,
 not the command operands or result. No recovery owner is needed before an
 operation is admitted.
 

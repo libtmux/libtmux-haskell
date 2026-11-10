@@ -29,6 +29,8 @@
 
 ### Documentation
 
+- Follow Haskell language and standard-library references from the mutation
+  guide, including operand text and exception-context recovery. ([#11])
 - Follow a native Cabal example from typed target selection to mutation and
   fresh capture. Read the deadline, partial-change and recovery contracts
   alongside the linked API declarations. ([#10])
@@ -72,6 +74,7 @@
 
 [#2]: https://github.com/libtmux/libtmux-haskell/pull/2
 [#10]: https://github.com/libtmux/libtmux-haskell/pull/10
+[#11]: https://github.com/libtmux/libtmux-haskell/pull/11
 [#4]: https://github.com/libtmux/libtmux-haskell/pull/4
 [#5]: https://github.com/libtmux/libtmux-haskell/pull/5
 [#6]: https://github.com/libtmux/libtmux-haskell/pull/6
