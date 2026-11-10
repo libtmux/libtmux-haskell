@@ -31,6 +31,7 @@ name: libtmux-capture-graph
 version: 0.0.0
 build-type: Simple
 license: MIT
+extra-doc-files: README.md
 
 executable capture-graph
   main-is: Main.hs

@@ -99,6 +99,7 @@ name: libtmux-shared-runtime
 version: 0.0.0
 build-type: Simple
 license: MIT
+extra-doc-files: README.md
 
 executable shared-runtime
   main-is: Main.hs

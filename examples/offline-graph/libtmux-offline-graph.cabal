@@ -3,6 +3,7 @@ name: libtmux-offline-graph
 version: 0.0.0
 build-type: Simple
 license: MIT
+extra-doc-files: README.md
 
 executable offline-graph
   main-is: Main.hs
