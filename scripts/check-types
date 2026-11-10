@@ -16,6 +16,7 @@ compile() {
 compile test/compile-pass/ValueApi.hs
 compile test/compile-pass/ObservationApi.hs
 compile test/compile-pass/QueryApi.hs
+compile test/compile-pass/MutationApi.hs
 
 reject() {
     local source=$1 code=$2 expected=$3
@@ -44,4 +45,5 @@ reject test/compile-fail/QueryBooleanNumber.hs 83865 'Expected: Q.Field Pane Int
 reject test/compile-fail/QueryNumericText.hs 83865 'Actual: Q.Field Pane LibTmux.Value.Dimension'
 reject test/compile-fail/QueryExprCoercion.hs 18872 'coerce'
 reject test/compile-fail/QuerySourceCoercion.hs 18872 'coerce'
-printf 'PASS: public API (3 positive and 10 intended negative compilation cases)\n'
+reject test/compile-fail/MutationWrongEntity.hs 83865 'WindowRef'
+printf 'PASS: public API (4 positive and 11 intended negative compilation cases)\n'

@@ -25,7 +25,9 @@ import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scope (TmuxException (..))
 import System.Timeout (timeout)
 
--- Metadata only: the Runtime retains outstanding native and logical owners.
+-- | Reachable ownership for one failed or cancelled mutation. The receipt
+-- retains metadata only; the Runtime retains outstanding native and logical
+-- owners. Recovery never repeats the command. See "LibTmux.Server".
 data MutationRecovery = MutationRecovery !R.Runtime !R.ServerHandle !R.ReadReceipt
 instance Show MutationRecovery where
   showsPrec precedence (MutationRecovery _ _ receipt) =
