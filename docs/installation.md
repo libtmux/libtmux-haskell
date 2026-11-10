@@ -1,8 +1,11 @@
 # Add the package to a Cabal application
 
-Use GHC 9.14.1, GHC2024 and Cabal 3.18.2.0. The package targets this compiler
-series on Linux x86_64 only. Install the pinned tools through the
-[contributor setup](../.github/CONTRIBUTING.md#toolchain) if needed.
+The [package manifest](../libtmux-haskell.cabal) declares the language edition
+and dependency compatibility bounds. Use a current GHC and Cabal that satisfy
+those bounds. The native backend requires Linux x86_64; see its
+[host requirements](#native-backend-host-requirements).
+[Contributor setup](../.github/CONTRIBUTING.md#toolchain) links the CI pins for
+reproducing the tested configuration.
 
 Pin the reviewed source revision in your application's `cabal.project`:
 
@@ -47,11 +50,13 @@ download the package index before the first build:
 $ cabal update
 ```
 
-Build and run the example against an existing endpoint, replacing the socket
-and executable paths with yours:
+Use the [private demonstration server](../README.md) from the README, then
+run the Haskell executable:
 
 ```console
-$ cabal run --verbose=0 capture-graph -- /tmp/tmux-1000/default /usr/bin/tmux
+$ cabal run --verbose=0 capture-graph -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
 ```
 
 The [capture guide](capture.md) explains the object graph, pure lookups and

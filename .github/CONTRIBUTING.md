@@ -37,47 +37,34 @@ count. Qualify cancellation and cleanup before changing those boundaries.
 
 ## Toolchain
 
-Target the newest stable GHC series only. As verified on 2026-11-06, that
-is [GHC 9.14.1](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/9.14.1-notes.html),
-paired with [Cabal 3.18.2.0](https://downloads.haskell.org/cabal/cabal-install-3.18.2.0/).
-[.tool-versions](../.tool-versions) pins both tools.
+Follow [Cabal's dependency-range guidance](https://cabal.readthedocs.io/en/stable/cabal-package-description-file.html#build-depends)
+and the [Package Versioning Policy](https://pvp.haskell.org/) for package API
+bounds. Retain compatible ranges rather than exact dependency pins. Record only
+actually exercised compilers in `tested-with`; Cabal treats that field as test
+metadata, not a solver constraint. Keep reproducibility pins in the toolchain
+file and project configuration.
 
-Use the [GHC2024 language edition](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/control.html#extension-GHC2024),
-the newest stable edition despite its year suffix. Every component uses
-`default-language: GHC2024` and bounds `base` to the 4.22 series shipped
-with GHC 9.14.
+Use a current GHC and Cabal that satisfy the [package bounds](../libtmux-haskell.cabal).
+The package declares its language edition and dependency minimums there.
+[.tool-versions](../.tool-versions) records the exact configuration exercised
+by CI; it does not restrict users to those patch versions.
 
-Older GHC versions, compatibility shims, and older-compiler CI jobs are
-outside the support scope. Future stable-series upgrades replace this
-baseline after verification instead of expanding the support matrix.
-
-Install [GHCup](https://www.haskell.org/ghcup/install/) and the system
-dependencies it lists for your platform. From the repository root, install
-the pinned compiler:
+Install the tools with [GHCup](https://www.haskell.org/ghcup/install/) or your
+existing tool manager. Select the recorded pins when reproducing a CI failure.
+Confirm the active tools before checking the package:
 
 ```console
-$ ghcup install ghc 9.14.1
-```
-
-Install the pinned Cabal client:
-
-```console
-$ ghcup install cabal 3.18.2.0
-```
-
-Select those versions through GHCup or your existing tool manager and make
-`ghc-9.14.1` and `cabal` available on `PATH`. Confirm the selected versions:
-
-```console
-$ ghc-9.14.1 --numeric-version
+$ ghc --numeric-version
 ```
 
 ```console
 $ cabal --numeric-version
 ```
 
-Keep the installation commands in sync with `.tool-versions`. Installation
-and dependency downloads happen before timed checks.
+Keep support claims separate from test evidence. Newer versions that satisfy
+the package bounds are allowed; a successful run on one configuration does
+not establish that every newer version has been tested. Installation and
+dependency downloads happen before timed checks.
 
 ## Checks
 

@@ -18,7 +18,7 @@ class DocumentationChecks(unittest.TestCase):
         for directory in ["docs", ".github", "examples", "bench", "src", "internal", "scripts", "test"]:
             shutil.copytree(check_docs.ROOT / directory, self.root / directory,
                             ignore=shutil.ignore_patterns("__pycache__", "dist-newstyle"))
-        for filename in ["README.md", "AGENTS.md", "LICENSE", ".tool-versions"]:
+        for filename in ["README.md", "AGENTS.md", "LICENSE", ".tool-versions", "libtmux-haskell.cabal"]:
             shutil.copy2(check_docs.ROOT / filename, self.root / filename)
         for name, value in [("ROOT", self.root), ("CATALOGUE", self.root / "examples/catalogue.json")]:
             context = patch.object(check_docs, name, value)

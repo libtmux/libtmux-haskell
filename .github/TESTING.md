@@ -4,12 +4,10 @@ Hspec expresses the public ID, value and version requirements. QuickCheck
 generates inputs and shrinks counterexamples. Tasty assembles the internal
 unit and owned-tmux integration trees, including direct QuickCheck properties.
 
-The `specs` executable uses Hspec 2.11.18 and QuickCheck 2.19.0.0. The `unit`
-and `integration` executables use Tasty 1.5.5; `unit` also uses
-tasty-quickcheck 0.11.1. GHC 9.14.1 and GHC2024 apply to every component.
-As checked on 2026-11-07, the published tasty-hspec adapter excludes this GHC
-and QuickCheck combination in its [bounds][adapter]. These runners therefore
-remain separate executables.
+Each runner has its own component and dependencies in the
+[package manifest](../libtmux-haskell.cabal). They remain separate executables;
+applications need neither test runner. The [toolchain file](../.tool-versions)
+records the tested compiler and Cabal configuration.
 
 ## Author specifications
 
@@ -162,9 +160,6 @@ A real-tmux capability program must include its own setup and cleanup,
 explicit target, feature floor and observable result. Run it end to end;
 a compile-only test or a private test helper does not qualify the shared
 [showcase](https://github.com/libtmux/docs/issues/243).
-
-[adapter]: https://hackage-content.haskell.org/package/tasty-hspec-1.2.0.4/revision/8.cabal
-
 
 ## Private process tests
 

@@ -12,17 +12,18 @@ uniqueness, follows session-to-link-to-pane relationships, and inspects the
 required fields. The fixture links one window at indices 0 and 4: one
 physical pane therefore appears twice in the contextual source.
 
-From a [provisioned checkout](../.github/CONTRIBUTING.md#toolchain), run:
+Create the [private demonstration server](../README.md) from the README. From a
+[provisioned checkout](../.github/CONTRIBUTING.md#toolchain), run:
 
 ```console
-$ python3 examples/capture-graph/run.py \
-    --executable query-graph \
-    --expected-output examples/query-graph/expected.stdout
+$ cabal run --verbose=0 query-graph -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
 ```
 
-The shared runner creates the owned daemon and fixture, asserts exact output
-and empty stderr, and observes the server and initial pane exiting afterward.
-The program itself accepts an existing socket and tmux executable. Every
+CI runs the installed program against an owned fixture, asserts output and
+empty stderr, and observes the server and initial pane exiting afterward.
+The program accepts an existing socket and tmux executable. Every
 query construction and selection below is pure except the explicitly named
 [`capture`](../src/LibTmux/Server.hs) and [`fetch`](../src/LibTmux/Query.hs).
 
