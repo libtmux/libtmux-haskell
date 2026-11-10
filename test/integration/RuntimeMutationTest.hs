@@ -1,7 +1,9 @@
 module RuntimeMutationTest (tests) where
 
 import Control.Concurrent.STM
+import Control.Concurrent.Async (asyncThreadId, wait, withAsync)
 import Control.Exception
+import Control.Exception.Context qualified as Context
 import Control.Monad (forM, forM_)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -10,10 +12,12 @@ import Fixture qualified
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
+import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
 import LibTmux.Internal.TmuxText qualified as Label
 import ProcessGate qualified as G
@@ -23,7 +27,132 @@ import Test.Tasty.HUnit
 
 tests :: TestTree
 tests = testGroup "owned Runtime mutations"
-  [ testCase "completed mutation values survive closure and release admission" $ do
+  [ testCase "synchronous malformed replies retain uncertainty until explicit detach" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        window <- require (Id.parseWindowId "@0")
+        let hooks = P.defaultHooks {P.launchNative = \_ -> N.launch
+              (N.spec "/bin/printf" ["/bin/printf", "not-a-control-response\n"])}
+        forM_ [1 :: Int, 2] $ \_ -> do
+          tryWithContext @R.ReadError (M.performMutation hooks 1000000 runtime client
+            (Ascii.pack fixture.executable) (C.RenameWindow window "unconfirmed")) >>= \case
+              Left (ExceptionWithContext context (R.InvalidCommandReply _)) ->
+                case Context.getExceptionAnnotations @M.MutationRecovery context of
+                  [recovery] -> do
+                    observed <- bounded (M.awaitRecovery recovery)
+                    observed.logical.outcome @?= Just S.OutcomeUnknown
+                    observed.logical.retained @?= True
+                    atomically (M.detachRecovery recovery) >>= (@?= True)
+                  _ -> assertFailure "malformed reply lost its recovery owner"
+              _ -> assertFailure "malformed reply was accepted"
+        M.performMutation P.defaultHooks 1000000 runtime client (Ascii.pack fixture.executable)
+          (C.RenameWindow window "after-malformed")
+        field fixture client "window_name" >>= (@?= "after-malformed\n")
+
+  , testCase "synchronous cancellation keeps its class and an exact recovery owner" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        window <- require (Id.parseWindowId "@0")
+        configured fixture client ["set-hook", "-g", "after-rename-window",
+          "wait-for -S libtmux-call-entered ; wait-for libtmux-call-release"]
+        let release = do
+              configured fixture client ["wait-for", "-S", "libtmux-call-release"]
+              configured fixture client ["set-hook", "-gu", "after-rename-window"]
+        flip finally release $
+          withAsync (configured fixture client ["wait-for", "libtmux-call-entered"]) $ \entered ->
+            withAsync (tryWithContext @SomeException (M.performMutation P.defaultHooks 1000000
+              runtime client (Ascii.pack fixture.executable) (C.RenameWindow window "accepted-call"))) $ \worker -> do
+              bounded (wait entered)
+              throwTo (asyncThreadId worker) ThreadKilled
+              bounded (wait worker) >>= \case
+                Left (ExceptionWithContext context problem) -> do
+                  fromException @AsyncException problem @?= Just ThreadKilled
+                  case Context.getExceptionAnnotations @M.MutationRecovery context of
+                    [recovery] -> do
+                      R.receiptGeneration (M.recoveryReceipt recovery) @?= Pin.pinGeneration (R.serverPin client)
+                      observed <- bounded (M.awaitRecovery recovery)
+                      observed.logical.outcome @?= Just S.OutcomeUnknown
+                      observed.logical.retained @?= True
+                      M.resumeRecovery recovery
+                      release
+                      atomically (M.detachRecovery recovery) >>= (@?= True)
+                      M.performMutation P.defaultHooks 1000000 runtime client (Ascii.pack fixture.executable)
+                        (C.RenameWindow window "after-recovery")
+                      field fixture client "window_name" >>= (@?= "after-recovery\n")
+                    _ -> assertFailure "cancelled call lost its exact recovery owner"
+                Right () -> assertFailure "cancelled mutation returned success"
+
+  , testCase "synchronous worker-allocation failure retains pre-Request correlation" $ do
+      failed <- newIORef False
+      let fork :: P.Fork
+          fork action = atomicModifyIORef' failed (\old -> (True, old)) >>= \case
+            False -> throwIO ThreadKilled
+            True -> P.normalFork action
+      withRuntime fork $ \runtime client fixture -> do
+        window <- require (Id.parseWindowId "@0")
+        tryWithContext @SomeException (M.performMutation P.defaultHooks 1000000 runtime client
+          (Ascii.pack fixture.executable) (C.RenameWindow window "never-dispatched")) >>= \case
+            Left (ExceptionWithContext context problem) -> do
+              fromException @AsyncException problem @?= Just ThreadKilled
+              case Context.getExceptionAnnotations @M.MutationRecovery context of
+                [recovery] -> do
+                  observed <- bounded (M.awaitRecovery recovery)
+                  observed.logical.outcome @?= Just S.NotDispatched
+                  observed.logical.retained @?= False
+                _ -> assertFailure "allocation failure lost its operation"
+            Right () -> assertFailure "failed allocation returned success"
+
+  , testCase "synchronous deadline includes allocation before Request handoff" $ do
+      allocating <- newEmptyTMVarIO
+      first <- newIORef True
+      let fork :: P.Fork
+          fork action = atomicModifyIORef' first (\old -> (False, old)) >>= \case
+            True -> atomically (readTMVar allocating) >> fail "unexpected allocation"
+            False -> P.normalFork action
+      withRuntime fork $ \runtime client fixture -> do
+        window <- require (Id.parseWindowId "@0")
+        bounded (tryWithContext @Scope.TmuxException (M.performMutation P.defaultHooks 20000 runtime client
+          (Ascii.pack fixture.executable) (C.RenameWindow window "deadline-before-handoff"))) >>= \case
+            Left (ExceptionWithContext context Scope.MutationTimedOut) ->
+              case Context.getExceptionAnnotations @M.MutationRecovery context of
+                [recovery] -> do
+                  observed <- bounded (M.awaitRecovery recovery)
+                  observed.logical.outcome @?= Just S.NotDispatched
+                  observed.logical.retained @?= False
+                _ -> assertFailure "timeout conversion lost the operation"
+            _ -> assertFailure "allocation was not bounded by the mutation deadline"
+
+  , testCase "synchronous mutation distinguishes rejection from an applied hook failure" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        window <- require (Id.parseWindowId "@0")
+        missing <- require (Id.parseWindowId "@999999")
+        let mutate = M.performMutation P.defaultHooks 1000000 runtime client (Ascii.pack fixture.executable)
+        mutate (C.RenameWindow window "observed-change")
+        field fixture client "window_name" >>= (@?= "observed-change\n")
+        try @Scope.TmuxException (mutate (C.RenameWindow missing "absent")) >>= \case
+          Left (Scope.MutationRejected diagnostic) -> assertBool "missing rejection diagnostic" (not (Bytes.null diagnostic))
+          _ -> assertFailure "missing target did not report primary rejection"
+        configured fixture client ["set-hook", "-g", "after-rename-window", "has-session -t =libtmux-missing"]
+        flip finally (configured fixture client ["set-hook", "-gu", "after-rename-window"]) $ do
+          try @Scope.TmuxException (mutate (C.RenameWindow window "applied-before-error")) >>= \case
+            Left (Scope.MutationAppliedWithErrors diagnostic) -> assertBool "missing hook diagnostic" (not (Bytes.null diagnostic))
+            _ -> assertFailure "hook error lost the applied result"
+          field fixture client "window_name" >>= (@?= "applied-before-error\n")
+
+  , testCase "synchronous invalid operand and deadline checks admit no operations" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        window <- require (Id.parseWindowId "@0")
+        let mutate duration = M.performMutation P.defaultHooks duration runtime client (Ascii.pack fixture.executable)
+        try @Scope.TmuxException (mutate 1000000 (C.RenameWindow window (Label.fromBytes "x\NULy"))) >>= \case
+          Left (Scope.InvalidMutationArgument "window.name contains NUL") -> pure ()
+          _ -> assertFailure "NUL operand was admitted"
+        forM_ [0, -1, 10000001] $ \duration ->
+          try @Scope.TmuxException (mutate duration (C.RenameWindow window "invalid-timeout")) >>= \case
+            Left (Scope.InvalidConfiguration _) -> pure ()
+            _ -> assertFailure "invalid mutation timeout was admitted"
+        atomically (R.inspect runtime) >>= \report -> do
+          length report.readWorkers @?= 0
+          length report.unresolved @?= 0
+
+  , testCase "completed mutation values survive closure and release admission" $ do
       detached <- withRuntime P.normalFork $ \runtime client fixture -> do
         session <- require (Id.parseSessionId "$0")
         window <- require (Id.parseWindowId "@0")

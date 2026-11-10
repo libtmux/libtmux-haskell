@@ -9,6 +9,7 @@ import Control.Concurrent.STM (STM, atomically)
 import Control.Exception
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context qualified as Context
+import Data.ByteString (ByteString)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import LibTmux.Internal.Process qualified as P
@@ -23,6 +24,11 @@ data TmuxException
   | RuntimeClosed -- ^ Admission through the retained Runtime has closed.
   | InvalidConfiguration !Text -- ^ Configuration failed before acquisition.
   | InvalidObservation !Text -- ^ Acquired metadata failed final validation.
+  | InvalidTarget !Text -- ^ Target belongs to a different connection or an offline fixture.
+  | InvalidMutationArgument !Text -- ^ Invalid command operand; no command was admitted.
+  | MutationRejected !ByteString -- ^ tmux rejected the primary command; bounded diagnostic bytes.
+  | MutationAppliedWithErrors !ByteString -- ^ The primary command ran, then a command hook failed.
+  | MutationTimedOut -- ^ The deadline elapsed; a correlated recovery may retain an unknown outcome.
   | OperationFailed !SomeException -- ^ Known backend failure with its original cause.
   | CleanupFailed !CleanupStatus !(Maybe SomeException) -- ^ Cleanup remained incomplete or its worker could not start.
   deriving stock (Show)
