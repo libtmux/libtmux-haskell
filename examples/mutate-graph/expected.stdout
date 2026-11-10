@@ -1,0 +1,6 @@
+session: demo -> workspace
+window: editor -> api #{pid};
+pane title: editor-ready
+physical window links: 2
+same target identities: True
+old snapshot values: demo, editor

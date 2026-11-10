@@ -1,7 +1,8 @@
 # Implementation status
 
 Use the current source for detached observations and typed input values.
-The package is unpublished. Public mutation commands are not implemented.
+The package is unpublished. Public mutations currently cover session/window
+rename and pane titles, with generation checks and correlated recovery.
 
 | Component | Available to consumers |
 | --- | --- |
@@ -13,13 +14,15 @@ The package is unpublished. Public mutation commands are not implemented.
 | Validated offline fixtures | Implemented through `LibTmux.Snapshot.Fixture` |
 | Shared Runtime ownership | Implemented through `withRuntime` and `withServerIn`; see [the complete program](shared-runtime.md) |
 | Typed predicates, relationships, ordering and cardinality | Implemented through `LibTmux.Query`; see [the complete program](query.md) |
-| Mutation commands, query interchange and backend optimization | Not implemented |
+| Session/window rename and pane title | Implemented through `LibTmux.Server`; see [the complete program](mutations.md) |
+| Creation, pane input and contextual window operations | Not implemented |
+| Query interchange and backend optimization | Not implemented |
 | Control events, streams and cancellation API | Not implemented |
 | Workspace library/CLI | Planned as a separate Cabal package using the core |
 | MCP integration | Excluded from this port |
 
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
-interface. Mutation, interchange, event and workspace contracts remain separate
+interface. Additional commands, interchange, event and workspace contracts remain separate
 qualification work.
 The [behavior inventory](contracts/README.md) records the intended scope.
 
@@ -34,7 +37,7 @@ belong in the workspace package. MCP is outside this port's scope. See the
 
 CI uses the [recorded toolchain](../.tool-versions) on Linux x86_64. Its current
 integration subset exercises owned fixtures, scalar framing, private socket
-pins, public capture, scope recovery and process ownership with one and two
+pins, public capture/mutations, scope recovery and process ownership with one and two
 RTS capabilities on exact tmux
 releases 3.3a and 3.8. The supported range includes all intermediate releases;
 CI tests its endpoints.

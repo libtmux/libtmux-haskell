@@ -5,7 +5,7 @@ The public modules are:
 | Module | Read it for |
 | --- | --- |
 | [LibTmux](../src/LibTmux.hs) | Common observation, Server and scalar entry point |
-| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, configuration, capture, failures and recovery |
+| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, rename/title commands, deadlines and recovery |
 | [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
 | [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
 | [LibTmux.Id](../src/LibTmux/Id.hs) | Distinct entity IDs, canonical parsing, rendering and `IdError` |
@@ -24,6 +24,8 @@ The public modules are:
 Import query sources and field modules qualified, as the [query program](query.md)
 does. The common `LibTmux` module keeps snapshot collection access separate
 from query descriptions.
+The [mutation program](mutations.md) selects physical targets before issuing
+commands and compares their detached observations afterward.
 
 Build the native Haddock browser from a checkout:
 

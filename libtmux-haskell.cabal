@@ -7,7 +7,9 @@ description:
   physical windows, panes and contextual links with ordinary Haskell values.
   Scoped handles retain cleanup ownership after cancellation and failure.
   Typed queries inspect captured values with explicit cardinality and ordering.
-  Commands and workspace tooling remain under development.
+  Rename sessions and physical windows and set pane titles with checked
+  references, bounded deadlines and correlated recovery. Creation, pane input,
+  events and workspace tooling remain under development.
 license: MIT
 license-file: LICENSE
 author: libtmux contributors
@@ -21,6 +23,7 @@ extra-doc-files:
   docs/capture.md
   docs/shared-runtime.md
   docs/query.md
+  docs/mutations.md
   docs/fixtures.md
   docs/performance.md
   README.md
@@ -104,6 +107,12 @@ extra-source-files:
   examples/query-graph/libtmux-query-graph.cabal
   examples/query-graph/cabal.project
   examples/query-graph/cabal.project.vcs
+  examples/mutate-graph/Main.hs
+  examples/mutate-graph/README.md
+  examples/mutate-graph/expected.stdout
+  examples/mutate-graph/libtmux-mutate-graph.cabal
+  examples/mutate-graph/cabal.project
+  examples/mutate-graph/cabal.project.vcs
   scripts/ci_tmux.py
   scripts/test_ci_tmux.py
   .github/tmux-releases.json

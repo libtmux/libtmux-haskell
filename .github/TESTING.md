@@ -146,6 +146,14 @@ The [query program](../docs/query.md) uses that fixture to compare a typed
 predicate with native Haskell over one detached snapshot. It also checks
 physical versus contextual cardinality, nested relationships, ordering,
 limits, requirement inspection and an explicitly separate fresh capture.
+
+The [mutation program](../docs/mutations.md) checks cardinality before sending
+session/window rename and pane-title commands, then compares old and fresh
+observations. The archive check also compiles the public mutation integration
+cases as an external executable against the archived library. Those cases
+import no private library modules and exercise accepted cancellation, custom
+deadlines, correlated recovery, reference rejection and later progress.
+
 Pure unit tests exercise unavailable capabilities before short-circuiting,
 empty relationships, numeric bounds, retained bytes and generated predicates
 against an independent interpreter. Public type checks reject wrong rows,
@@ -242,7 +250,7 @@ Version values agree with the selected fixture binary's independent release
 receipt and survive cleanup. Mixed PID/version requests share queued cancellation
 and expiry checks. The result type is preserved through the owned registry.
 These are [private read contracts](../docs/contracts/process.md#framed-server-read-ownership),
-not qualification of other commands, capture or the public Client.
+not qualification of other commands, capture or the public Server.
 
 A deliberately held signal has a 250 ms watchdog to detect premature pidfd
 retirement. Native gate observations also have bounded watchdogs. These
