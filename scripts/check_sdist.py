@@ -7,6 +7,7 @@ import subprocess
 import tarfile
 import tempfile
 from check_docs import check as check_docs
+from prepare_haddock import _modules
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "libtmux-haskell.cabal"
@@ -35,8 +36,13 @@ def main():
                         raise ValueError(f"Archive member differs from source: {local.name}")
             prefix = f"libtmux-haskell-{version}/"
             doctests = []
-            for path in ["src/LibTmux/Id.hs", "src/LibTmux/Value.hs", "src/LibTmux/Version.hs"]:
-                doctests.extend(haddock_examples(source.extractfile(prefix + path).read().decode()))
+            doctest_modules = []
+            for module in sorted(_modules(MANIFEST)[0]):
+                path = "src/" + module.replace(".", "/") + ".hs"
+                examples_in_module = haddock_examples(source.extractfile(prefix + path).read().decode())
+                if examples_in_module:
+                    doctest_modules.append(module)
+                    doctests.extend(examples_in_module)
             for index, entry in enumerate(examples):
                 consumer = directory / entry["id"]
                 consumer.mkdir()
@@ -58,7 +64,7 @@ def main():
                 if result.stdout != expected or result.stderr:
                     raise ValueError("Archive example produced unexpected output")
                 if index == 0:
-                    check_haddock_examples(consumer, doctests)
+                    check_haddock_examples(consumer, doctest_modules, doctests)
         print("PASS: archive members, documented public example and Haddock examples")
 
 
@@ -78,7 +84,7 @@ def haddock_examples(source):
     return examples
 
 
-def check_haddock_examples(consumer, examples):
+def check_haddock_examples(consumer, modules, examples):
     if not examples or not any(not command.startswith(":") for command, _ in examples):
         raise ValueError("No executable Haddock examples")
     plan = json.loads((consumer / "dist-newstyle/cache/plan.json").read_text())
@@ -89,7 +95,7 @@ def check_haddock_examples(consumer, examples):
     command = ["cabal", "exec", "--offline", "-v0", "--", "ghc", "-v0", "-ignore-dot-ghci",
                "-XGHC2024", "-hide-all-packages", "-package-id", units["base"][0],
                "-package-id", units["libtmux-haskell"][0], "-e",
-               ":module + LibTmux.Id LibTmux.Value LibTmux.Version"]
+               ":module + " + " ".join(modules)]
     for expression, _ in examples:
         if expression.startswith(":") and expression != ":set -XOverloadedStrings":
             raise ValueError("Unknown Haddock setup directive")

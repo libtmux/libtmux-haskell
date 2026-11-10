@@ -80,8 +80,9 @@ new-window name validation also changes at that boundary. Verify the reported
 value against the qualified release; do not infer the original argv from it.
 
 The public Snapshot modules expose these observations. Installed record and
-offline-fixture examples exercise their access and validation. Query and
-wire-profile extensions remain planned.
+offline-fixture examples exercise their access and validation.
+[Typed queries](../query.md) also read these owned values. Wire-profile
+extensions remain planned.
 
 ## Attached-client profile
 
@@ -123,9 +124,9 @@ The former `items` operation becomes an ordinary list of `(key, row)` pairs
 using an explicit key projection. Preserve duplicate keys and source order;
 converting to a map would change its behavior.
 
-### Planned query and cardinality APIs
+### Query and cardinality APIs
 
-Typed queries will validate every field, relationship and evaluator requirement
+Typed queries validate every field, relationship and evaluator requirement
 against the snapshot before evaluating any branch. The result is
 `Either QueryError [row]`. Filtering preserves source order and multiplicity;
 sorting and limits are explicit and follow membership evaluation.

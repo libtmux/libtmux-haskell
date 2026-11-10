@@ -1,8 +1,8 @@
 # Contributing
 
 The native Haskell implementation is in progress. The public Server and shared
-Runtime scopes, detached observations, typed values and owned tmux fixtures have tests and
-source-archive consumers. Queries, commands, events, workspace tooling and
+Runtime scopes, detached observations, typed values and typed queries have
+tests and source-archive consumers. Commands, events, workspace tooling and
 complete adoption qualification remain open.
 
 Read [AGENTS.md](../AGENTS.md) for change discipline and
@@ -130,9 +130,10 @@ These tests start real daemons and check teardown:
 $ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration --offline --test-show-details=direct
 ```
 
-Check public record access and scalar types with positive and intended negative
-compilation cases in the outer tier. The runner requires Bash and `jq`, and checks the
-specific GHC diagnostic rather than accepting any compiler failure:
+Check public record access, scalar types and typed queries with positive and
+intended negative compilation cases in the outer tier. The runner requires
+Bash and `jq`, and checks the specific GHC diagnostic rather than accepting
+any compiler failure:
 
 ```console
 $ scripts/check-types

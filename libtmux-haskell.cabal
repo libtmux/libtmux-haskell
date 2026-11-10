@@ -6,7 +6,8 @@ description:
   Capture a validated tmux graph in IO, then inspect immutable sessions,
   physical windows, panes and contextual links with ordinary Haskell values.
   Scoped handles retain cleanup ownership after cancellation and failure.
-  Commands, queries and workspace tooling remain under development.
+  Typed queries inspect captured values with explicit cardinality and ordering.
+  Commands and workspace tooling remain under development.
 license: MIT
 license-file: LICENSE
 author: libtmux contributors
@@ -19,6 +20,7 @@ tested-with: GHC ==9.14.1
 extra-doc-files:
   docs/capture.md
   docs/shared-runtime.md
+  docs/query.md
   docs/fixtures.md
   docs/performance.md
   README.md
@@ -92,6 +94,11 @@ extra-source-files:
   examples/shared-runtime/libtmux-shared-runtime.cabal
   examples/shared-runtime/cabal.project
   examples/shared-runtime/cabal.project.vcs
+  examples/query-graph/Main.hs
+  examples/query-graph/expected.stdout
+  examples/query-graph/libtmux-query-graph.cabal
+  examples/query-graph/cabal.project
+  examples/query-graph/cabal.project.vcs
   scripts/ci_tmux.py
   scripts/test_ci_tmux.py
   .github/tmux-releases.json
@@ -129,7 +136,10 @@ library
   import: modern
   hs-source-dirs: src internal
   exposed-modules: LibTmux LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
-  other-modules: LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+    LibTmux.Query LibTmux.Query.Pane LibTmux.Query.Session LibTmux.Query.Window
+    LibTmux.Query.Link LibTmux.Query.Occurrence LibTmux.Query.Client
+    LibTmux.Query.ClientAttachment LibTmux.Query.ServerInfo
+  other-modules: LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -168,7 +178,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
+  other-modules: QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,

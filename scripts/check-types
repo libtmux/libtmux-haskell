@@ -15,6 +15,7 @@ compile() {
 
 compile test/compile-pass/ValueApi.hs
 compile test/compile-pass/ObservationApi.hs
+compile test/compile-pass/QueryApi.hs
 
 reject() {
     local source=$1 code=$2 expected=$3
@@ -37,4 +38,10 @@ reject test/compile-fail/DimensionLiteral.hs 39999 'Num Dimension'
 reject test/compile-fail/MixedIndices.hs 83865 'Expected: PaneIndex -> WindowIndex'
 reject test/compile-fail/MixedIds.hs 83865 'Expected: PaneId -> WindowId'
 reject test/compile-fail/FixtureOriginCoercion.hs 18872 'LibTmux.Snapshot.Fixture.FixtureOrigin'
-printf 'PASS: public API (2 positive and 4 intended negative compilation cases)\n'
+reject test/compile-fail/QueryMixedRows.hs 83865 'Expected: Q.Field Pane Integer'
+reject test/compile-fail/QueryWrongOperand.hs 83865 'Bool'
+reject test/compile-fail/QueryBooleanNumber.hs 83865 'Expected: Q.Field Pane Integer'
+reject test/compile-fail/QueryNumericText.hs 83865 'Actual: Q.Field Pane LibTmux.Value.Dimension'
+reject test/compile-fail/QueryExprCoercion.hs 18872 'coerce'
+reject test/compile-fail/QuerySourceCoercion.hs 18872 'coerce'
+printf 'PASS: public API (3 positive and 10 intended negative compilation cases)\n'

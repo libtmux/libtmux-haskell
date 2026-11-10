@@ -1,4 +1,4 @@
-packages: . examples/typed-values examples/capture-graph examples/offline-graph examples/shared-runtime
+packages: . examples/typed-values examples/capture-graph examples/offline-graph examples/shared-runtime examples/query-graph
 
 index-state: 2026-11-06T00:00:00Z
 tests: True

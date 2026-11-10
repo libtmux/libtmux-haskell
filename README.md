@@ -104,6 +104,7 @@ For independent handle lifetimes under one resource budget, use the tested
 | --- | --- |
 | Install in an application | [Cabal source dependency](docs/installation.md) |
 | Capture, filter and navigate linked windows | [Observations and recovery](docs/capture.md) |
+| Compose typed predicates, traverse relations and require one match | [Typed queries](docs/query.md) |
 | Share ownership across independent Server scopes | [Shared Runtime](docs/shared-runtime.md) |
 | Understand IDs, indices and validation errors | [Typed values](docs/values.md) |
 | Test graph predicates without tmux | [Validated offline fixtures](docs/fixtures.md) |
@@ -111,9 +112,9 @@ For independent handle lifetimes under one resource budget, use the tested
 | Browse declarations and module documentation | [API guide](docs/api.md) |
 | Evaluate the implemented scope and compatibility evidence | [Status](docs/status.md) |
 
-The package is unpublished. Observation and recovery are implemented; typed
-queries, mutation commands, event streams and the workspace library/CLI remain
-under development. MCP is excluded. Native operations require Linux x86_64,
+The package is unpublished. Observation, recovery and typed local queries are
+implemented. Mutation commands, event streams and the workspace library/CLI
+remain under development. MCP is excluded. Native operations require Linux x86_64,
 glibc 2.39+ and compatible pidfd support; [installation](docs/installation.md)
 describes the host contract. The [manual](docs/README.md) and
 [status](docs/status.md) distinguish available behavior from planned work.

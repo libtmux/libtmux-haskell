@@ -27,7 +27,7 @@ class DocumentationChecks(unittest.TestCase):
 
     def test_registered_program_is_valid(self):
         self.assertEqual({entry["id"] for entry in check_docs.check()},
-                         {"typed-values", "capture-graph", "offline-graph", "shared-runtime"})
+                         {"typed-values", "capture-graph", "offline-graph", "shared-runtime", "query-graph"})
 
     def test_unregistered_haskell_fence_is_rejected(self):
         with (self.root / "README.md").open("a") as document:

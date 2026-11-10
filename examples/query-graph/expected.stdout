@@ -1,0 +1,9 @@
+query agrees with native predicate: True
+unique physical pane: %0
+contextual matches: 2
+contextual uniqueness: AtLeastTwoMatches
+highest link index: 4
+sessions containing a match: 1
+required fields: ["pane.active","pane.width"]
+required relationships: ["session.windowLinks","windowLink.panes"]
+fresh capture matches: 1

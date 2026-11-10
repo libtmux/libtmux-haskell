@@ -5,7 +5,7 @@
 -- and local evaluation must not define independent field mappings.
 -- 'decodeField' consumes already unescaped bytes, without trimming or IO.
 module LibTmux.Internal.Field
-  ( Field (..), WireType (..), FieldError (..), FieldFailure (..)
+  ( Field (..), SomeField (..), catalogue, WireType (..), FieldError (..), FieldFailure (..)
   , fieldKey, formatVariable, wireType, minimumTmux, project, decodeField
   ) where
 
@@ -59,6 +59,22 @@ data Field row value where
   LinkWindow :: Field G.WindowLink Id.WindowId
   LinkIndex :: Field G.WindowLink V.WindowIndex
   LinkActive :: Field G.WindowLink Bool
+
+-- | The finite native catalogue, without erasing each descriptor's evidence.
+data SomeField where
+  SomeField :: Field row value -> SomeField
+
+catalogue :: [SomeField]
+catalogue =
+  [ SomeField ServerPid, SomeField ServerStartedAt, SomeField ServerVersion, SomeField ServerSocketPath
+  , SomeField ClientName, SomeField ClientPid, SomeField ClientTty
+  , SomeField ClientSession, SomeField ClientWindow, SomeField ClientWindowIndex, SomeField ClientPane
+  , SomeField SessionId, SomeField SessionName, SomeField SessionAttached
+  , SomeField WindowId, SomeField WindowName, SomeField WindowWidth, SomeField WindowHeight
+  , SomeField PaneId, SomeField PaneWindow, SomeField PaneIndex, SomeField PaneWidth, SomeField PaneHeight
+  , SomeField PaneActive, SomeField PaneDead, SomeField PaneTitle, SomeField PaneCommand, SomeField PanePath
+  , SomeField LinkSession, SomeField LinkWindow, SomeField LinkIndex, SomeField LinkActive
+  ]
 
 -- | Checked wire domains. POSIX path and string share a representation but
 -- retain different descriptors; neither promises local filesystem semantics.

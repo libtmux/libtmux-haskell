@@ -4,13 +4,26 @@ The public modules are:
 
 | Module | Read it for |
 | --- | --- |
-| [LibTmux](../src/LibTmux.hs) | Common entry point re-exporting the public modules |
+| [LibTmux](../src/LibTmux.hs) | Common observation, Server and scalar entry point |
 | [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, configuration, capture, failures and recovery |
 | [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
 | [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
 | [LibTmux.Id](../src/LibTmux/Id.hs) | Distinct entity IDs, canonical parsing, rendering and `IdError` |
 | [LibTmux.Value](../src/LibTmux/Value.hs) | Checked dimensions/indices, numeric access and `ValueError` |
 | [LibTmux.Version](../src/LibTmux/Version.hs) | Stable-release identity, admission and `VersionError` |
+| [LibTmux.Query](../src/LibTmux/Query.hs) | Pure typed predicates, ordering, requirements, cardinality and explicit fresh fetch |
+| [LibTmux.Query.Pane](../src/LibTmux/Query/Pane.hs) | Physical pane fields and window relationship |
+| [LibTmux.Query.Session](../src/LibTmux/Query/Session.hs) | Session fields, window links and attached clients |
+| [LibTmux.Query.Window](../src/LibTmux/Query/Window.hs) | Physical window fields, panes and contextual appearances |
+| [LibTmux.Query.Link](../src/LibTmux/Query/Link.hs) | Session/index context and navigation to physical entities |
+| [LibTmux.Query.Occurrence](../src/LibTmux/Query/Occurrence.hs) | Pane and link of a contextual appearance |
+| [LibTmux.Query.Client](../src/LibTmux/Query/Client.hs) | Captured client fields and optional attachment |
+| [LibTmux.Query.ClientAttachment](../src/LibTmux/Query/ClientAttachment.hs) | A client's selected session, window and contextual pane |
+| [LibTmux.Query.ServerInfo](../src/LibTmux/Query/ServerInfo.hs) | Captured daemon metadata fields |
+
+Import query sources and field modules qualified, as the [query program](query.md)
+does. The common `LibTmux` module keeps snapshot collection access separate
+from query descriptions.
 
 Build the native Haddock browser from a checkout:
 
@@ -57,8 +70,8 @@ distinct owner-qualified anchors, and instance methods have local targets.
 A name-only field link offers its record owners; a source identifier on
 several lines offers those lines. Missing hidden-module instance attributions
 retain their text and valid Source links. No private API page is added.
-In the default theme, wide constructor, instance and symbol-index sections
-scroll within the page on narrow screens.
+In the default theme, long module headings wrap and wide constructor,
+instance and symbol-index sections scroll within the page on narrow screens.
 
 `navigation.json` records raw and prepared file digests and edit counts.
 The check rejects missing local targets, browser assets and unexpected duplicate
@@ -68,7 +81,8 @@ an arbitrary raw directory is fresh, or publish anything. CI builds from its
 checked-out source and retains the raw and prepared artifacts separately.
 
 The complete [capture example](../examples/capture-graph/Main.hs),
-[shared Runtime example](../examples/shared-runtime/Main.hs) and
+[shared Runtime example](../examples/shared-runtime/Main.hs),
+[typed query example](../examples/query-graph/Main.hs) and
 [typed-value example](../examples/typed-values/Main.hs) use only public
 exports. Their source and output are checked against the source archive by
 the [consumer check](../scripts/check_sdist.py).
