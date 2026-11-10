@@ -72,6 +72,10 @@ client's bootstrap or cancellation contract.
 
 ## CI and caches
 
+Each tmux job provisions its own Haskell integration dependencies before
+running offline tests. It can reuse an exact or compatible compiler cache,
+but a missing or unpublished cache cannot skip dependency provisioning.
+
 The [workflow](../.github/workflows/ci.yml) checks only the selected modern
 compiler. It runs specifications, properties, public type contracts, package
 metadata, Haddock and an isolated archive consumer. Each required tmux release
