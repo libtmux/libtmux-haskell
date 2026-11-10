@@ -1,17 +1,17 @@
--- | Private literal mutation protocols and nonce-qualified queue receipts.
+-- | Private literal mutations and their closed native acknowledgment profile.
 module LibTmux.Internal.Command
-  ( Mutation (..), ArgumentError (..), compileMutation, compileScript
-  , MutationReply (..), ReplyError (..), decodeReply
+  ( Mutation (..), ArgumentError (..), compileMutation
+  , MutationReply (..), ReplyError (..), decodeControlReply
   ) where
 
 import Control.DeepSeq (NFData (rnf))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
+import Data.ByteString.Char8 qualified as Ascii
 import Data.Text (Text)
 import Data.Text.Encoding qualified as Utf8
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Field qualified as Field
-import LibTmux.Internal.Frame qualified as F
 import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Internal.TmuxText qualified as Label
 
@@ -40,40 +40,55 @@ instance NFData MutationReply where
 data ReplyError = UnexpectedReply | ReplyTooLarge
   deriving stock (Eq, Show)
 
--- | Encode one mutation and two receipt groups for @source-file -@. Octal
--- quoting protects the command-file parser; hash expansion protects formats.
--- The complete stdin bound is checked before either expansion is allocated.
-compileScript :: F.Nonce -> Mutation -> Either ArgumentError ByteString
-compileScript nonce mutation = do
-  checkCost key value minimumCost (24 * toInteger (Bytes.count 35 value))
-  pure (Bytes.intercalate " " (map quote (prefix <> [protectFormat value])) <> receipts)
-  where
-    (prefix, value, key) = mutationParts mutation
-    receipts = " ; display-message -p -F " <> F.scalarFormat nonce "applied" <> "\n"
-      <> "display-message -p -F " <> F.scalarFormat nonce "finished" <> "\n"
-    count = toInteger (length prefix + 1)
-    minimumCost = toInteger (Bytes.length receipts) + 2 * count + count - 1
-      + 4 * sum (map (toInteger . Bytes.length) prefix) + 4 * toInteger (Bytes.length value)
-
-quote :: ByteString -> ByteString
-quote value = "\"" <> Bytes.concatMap octal value <> "\""
-  where
-    octal byte = Bytes.pack [92, 48 + byte `div` 64, 48 + (byte `div` 8) `mod` 8, 48 + byte `mod` 8]
-
--- | Require an exact drained reply and compatible native exit. Extra hook
--- output is uncertainty, including text resembling control protocol lines.
-decodeReply :: F.Nonce -> Maybe Int -> ByteString -> ByteString -> Either ReplyError MutationReply
-decodeReply nonce exit output errors
+decodeControlReply :: Maybe Int -> ByteString -> ByteString -> Either ReplyError MutationReply
+decodeControlReply exit output errors
   | Bytes.length output > 1048576 || Bytes.length errors > 1048576 = Left ReplyTooLarge
-  | exit == Just 0 && output == applied <> finished && Bytes.null errors = Right Applied
-  | exit == Just 1 && not (Bytes.null errors) =
-      if output == finished then Right (Rejected (Bytes.copy errors))
-      else if output == applied <> finished then Right (AppliedWithErrors (Bytes.copy errors))
-      else Left UnexpectedReply
-  | otherwise = Left UnexpectedReply
+  | not (Bytes.null errors) = Left UnexpectedReply
+  | otherwise = do
+      packet <- maybe (Left UnexpectedReply) Right (Bytes.stripSuffix "%exit\n" output)
+      if Bytes.null packet || Bytes.last packet /= 10 then Left UnexpectedReply else pure ()
+      let (header, following) = Bytes.break (== 10) packet
+      stamp <- guardStamp header
+      body <- maybe (Left UnexpectedReply) Right (Bytes.stripPrefix "\n" following)
+      case Bytes.stripPrefix ("%end " <> stamp <> "\n") body of
+        Just tailBytes -> case exit of
+          Just 0 -> Right Applied
+          Just 1 | not (Bytes.null tailBytes) -> Right (AppliedWithErrors (Bytes.copy tailBytes))
+          _ -> Left UnexpectedReply
+        Nothing | exit == Just 1 -> do
+          (diagnostic, tailBytes) <- errorBody stamp body
+          Right (Rejected (Bytes.copy (diagnostic <> tailBytes)))
+        Nothing -> Left UnexpectedReply
+
+guardStamp :: ByteString -> Either ReplyError ByteString
+guardStamp header
+  | Bytes.length header > 64 = Left UnexpectedReply
+  | otherwise = do
+      stamp <- maybe (Left UnexpectedReply) Right (Bytes.stripPrefix "%begin " header)
+      case Ascii.words stamp of
+        [seconds, number, "0"]
+          | Bytes.intercalate " " [seconds, number, "0"] == stamp
+          , decimal 9223372036854775807 seconds && decimal 4294967295 number -> Right stamp
+        _ -> Left UnexpectedReply
   where
-    applied = F.scalarFormat nonce "applied" <> "\n"
-    finished = F.scalarFormat nonce "finished" <> "\n"
+    decimal maximumValue bytes = not (Bytes.null bytes) && Bytes.length bytes <= 20
+      && (bytes == "0" || Bytes.head bytes /= 48)
+      && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
+      && case Ascii.readInteger bytes of
+        Just (value, "") -> value <= maximumValue
+        _ -> False
+
+errorBody :: ByteString -> ByteString -> Either ReplyError (ByteString, ByteString)
+errorBody stamp body
+  | any (`Bytes.isPrefixOf` body) ["%begin ", "%end ", "%exit"] = Left UnexpectedReply
+  | Just tailBytes <- Bytes.stripPrefix closing body = Right ("", tailBytes)
+  | otherwise =
+      let boundary = "\n" <> closing
+          (diagnostic, following) = Bytes.breakSubstring boundary body
+      in if Bytes.null following then Left UnexpectedReply
+         else Right (diagnostic <> "\n", Bytes.drop (Bytes.length boundary) following)
+  where
+    closing = "%error " <> stamp <> "\n"
 
 -- | Compile one command without IO. The 64KiB bound includes every tail argv
 -- terminator; the native owner separately checks the full executable/socket

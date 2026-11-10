@@ -9,7 +9,6 @@ import Fixture qualified
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
-import LibTmux.Internal.Frame qualified as F
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
@@ -55,22 +54,21 @@ tests = testGroup "native mutation lowering"
             actual <- readField target name
             assertEqual (show mutation) (expectedResult.exit, expectedResult.errors, expected)
               (actualResult.exit, actualResult.errors, actual)
-  , testCase "sealed native queues retain rejection and errors after effects" $
+  , testCase "native control replies retain rejection and errors after effects" $
       Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
         client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
-        nonce <- require (F.parseNonce (Bytes.replicate 64 97))
         session <- require (Id.parseSessionId "$0")
         window <- require (Id.parseWindowId "@0")
         pane <- require (Id.parsePaneId "%0")
         missing <- require (Id.parseWindowId "@999999")
         let raw = invoke fixture client
             run mutation = do
-              source <- require (C.compileScript nonce mutation)
-              completed <- invokeInput fixture client ["source-file", "-"] source
+              arguments <- require (C.compileMutation mutation)
+              completed <- invokeWithInput fixture client ("-C" : arguments) P.KeepInputOpen
               let exited = case completed.exit of
                     Just (N.Exited status) -> Just (fromIntegral status)
                     _ -> Nothing
-              require (C.decodeReply nonce exited completed.output completed.errors)
+              require (C.decodeControlReply exited completed.output completed.errors)
             inspect target name = do
               completed <- raw ["display-message", "-p", "-t", target, "-F", "#{" <> name <> "}"]
               (completed.exit, completed.errors) @?= (Just (N.Exited 0), "")
@@ -114,13 +112,13 @@ tests = testGroup "native mutation lowering"
   ]
 
 invoke :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> IO P.Completion
-invoke fixture client arguments = invokeInput fixture client arguments ""
+invoke fixture client arguments = invokeWithInput fixture client arguments (P.BytesInput "")
 
-invokeInput :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> Bytes.ByteString -> IO P.Completion
-invokeInput fixture client arguments input = do
+invokeWithInput :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> P.Input -> IO P.Completion
+invokeWithInput fixture client arguments input = do
   let executable = Ascii.pack fixture.executable
       spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.serverPin client)] <> arguments)
-  ticket <- P.submit B.Ordinary P.defaultHooks (R.serverPool client) spec input
+  ticket <- P.submitInputRegistered (const (pure ())) B.Ordinary P.defaultHooks (R.serverPool client) spec input
   timeout 1000000 (P.await ticket) >>= maybe (fail "native mutation probe did not complete") pure
 
 require :: Show problem => Either problem value -> IO value
