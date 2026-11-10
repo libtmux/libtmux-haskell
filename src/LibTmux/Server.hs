@@ -1,4 +1,4 @@
--- | Observe an existing tmux daemon through an owned Server handle.
+-- | Observe and change an existing tmux daemon through an owned Server handle.
 --
 -- A t'Server' represents one adoption of one endpoint. 'withServer' owns its
 -- socket pin, native command clients and cleanup workers. Closing this scope
@@ -10,6 +10,8 @@
 -- 'capture' returns fully decoded, validated values. Field access and graph
 -- navigation are pure. Captures use an observation interval, not an atomic
 -- transaction over tmux and operating-system state.
+-- 'renameSession', 'renameWindow' and 'setPaneTitle' perform explicit mutations
+-- against generation-bound references. Earlier observations stay detached.
 --
 -- Operational failures use t'TmuxException'. 'tryTmux' catches that type only.
 -- Cancellation retains its original exception class. If bounded cleanup
@@ -18,6 +20,9 @@
 module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration
+    -- * Rename and title
+  , MutationOptions (..), defaultMutationOptions
+  , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
@@ -28,6 +33,9 @@ module LibTmux.Server
     -- * Correlated capture recovery
   , CaptureRecovery, captureRecoveries, recoveryOperation, recoveryGeneration
   , ReadRecovery (..), inspectCaptureRecovery, resumeCaptureRecovery, detachCaptureRecovery
+    -- * Correlated mutation recovery
+  , MutationRecovery, mutationRecoveries, mutationOperation, mutationGeneration
+  , inspectMutationRecovery, resumeMutationRecovery, awaitMutationRecovery, detachMutationRecovery
   , Operation, Status (..), Stage (..), Outcome (..), operationStatus
   ) where
 
@@ -39,7 +47,7 @@ import Control.Exception
   )
 import Control.Exception.Context (ExceptionContext)
 import Control.Exception.Context qualified as Context
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.Maybe (isJust)
@@ -49,7 +57,10 @@ import Data.Type.Coercion (coerceWith, sym)
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
+import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
+import LibTmux.Internal.Mutation qualified as M
+import LibTmux.Internal.Mutation (MutationRecovery)
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime (ReadRecovery (..))
@@ -62,7 +73,7 @@ import LibTmux.Internal.Scope
   )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
-import LibTmux.Snapshot (Generation, Snapshot)
+import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
 import System.OsPath.Posix (PosixPath)
 import System.OsPath.Posix qualified as Path
@@ -166,6 +177,67 @@ capture (Server runtime handle executable duration) = operational $ do
 serverGeneration :: Server -> Generation
 serverGeneration (Server _ handle _ _) = Pin.pinGeneration (R.serverPin handle)
 
+-- | Per-command deadline, checked before admission. Start from
+-- 'defaultMutationOptions' and update 'timeout' in seconds.
+data MutationOptions = MutationOptions
+  { timeout :: !NominalDiffTime -- ^ Positive seconds, at most ten; the default is one.
+  }
+  deriving stock (Eq, Show)
+
+-- | One second for command submission and its complete response.
+defaultMutationOptions :: MutationOptions
+defaultMutationOptions = MutationOptions 1
+
+-- | Rename the session targeted by a reference from this Server generation.
+-- The name is literal text. Earlier t'Snapshot' values keep their old names;
+-- call 'capture' for a new observation. Use 'renameSessionWith' for a deadline.
+renameSession :: Server -> SessionRef -> Text.Text -> IO ()
+renameSession = renameSessionWith defaultMutationOptions
+
+-- | 'renameSession' with an explicit 'timeout'. A known primary rejection raises
+-- 'MutationRejected'; an applied command with a failed hook raises
+-- 'MutationAppliedWithErrors'. Neither result implies rollback.
+renameSessionWith :: MutationOptions -> Server -> SessionRef -> Text.Text -> IO ()
+renameSessionWith options server (G.SessionRef generation ident) label =
+  mutate options server generation (Command.RenameSession ident label)
+
+-- | Rename one physical window across all its session links. The label retains
+-- bytes through t'TmuxText'; tmux may reject names its release does not accept.
+-- Format-looking text stays literal. See 'renameWindowWith' for a deadline.
+renameWindow :: Server -> WindowRef -> TmuxText -> IO ()
+renameWindow = renameWindowWith defaultMutationOptions
+
+-- | 'renameWindow' with an explicit deadline. Success confirms the primary
+-- command's response, not completion of background jobs started by hooks.
+-- 'capture' observes the current label; existing snapshots remain detached.
+renameWindowWith :: MutationOptions -> Server -> WindowRef -> TmuxText -> IO ()
+renameWindowWith options server (G.WindowRef generation ident) label =
+  mutate options server generation (Command.RenameWindow ident label)
+
+-- | Set the literal title of a pane from this Server generation. The pane's
+-- application can replace it later. Use 'setPaneTitleWith' for a deadline.
+setPaneTitle :: Server -> PaneRef -> Text.Text -> IO ()
+setPaneTitle = setPaneTitleWith defaultMutationOptions
+
+-- | 'setPaneTitle' with an explicit deadline. Missing panes fail with
+-- 'MutationRejected'. Foreign and offline references fail with 'InvalidTarget'
+-- before dispatch. No mutation retries after cancellation or timeout.
+setPaneTitleWith :: MutationOptions -> Server -> PaneRef -> Text.Text -> IO ()
+setPaneTitleWith options server (G.PaneRef generation ident) label =
+  mutate options server generation (Command.SetPaneTitle ident label)
+
+mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
+mutate options server@(Server runtime handle executable _) generation command = operational $ do
+  let seconds = toRational options.timeout
+  when (seconds <= 0 || seconds > 10)
+    (throwIO (InvalidConfiguration "mutation timeout must be positive and at most ten seconds"))
+  closed <- atomically (readTVar (R.serverPool handle).closing)
+  when closed (throwIO ServerClosed)
+  unless (generation == serverGeneration server)
+    (throwIO (InvalidTarget "reference belongs to a different Server generation or an offline fixture"))
+  let duration = fromInteger (ceiling (seconds * 1000000))
+  M.performMutation P.defaultHooks duration runtime handle executable command
+
 -- | Catch library failures with their exception context. Retain this value
 -- when handling an error so cleanup and capture owners stay reachable.
 -- Application exceptions and asynchronous cancellation propagate.
@@ -208,6 +280,43 @@ resumeCaptureRecovery = operational . C.resumeRecovery
 -- | Explicitly detach logical uncertainty while preserving native ownership.
 detachCaptureRecovery :: CaptureRecovery -> IO Bool
 detachCaptureRecovery = operational . atomically . C.detachRecovery
+
+-- | Recover the exact operation after failure, timeout or cancellation. The
+-- context comes from 'tryTmux' or 'tryWithContext'; cancellation keeps its
+-- original exception class and is not caught by 'tryTmux'.
+mutationRecoveries :: ExceptionContext -> [MutationRecovery]
+mutationRecoveries = Context.getExceptionAnnotations
+
+-- | Metadata-only identity of the original command. 'operationStatus' remains
+-- available after native cleanup; this value contains no command operands.
+mutationOperation :: MutationRecovery -> Operation
+mutationOperation = R.receiptOperation . M.recoveryReceipt
+
+-- | Server generation associated with this mutation's recovery owner.
+mutationGeneration :: MutationRecovery -> Generation
+mutationGeneration = R.receiptGeneration . M.recoveryReceipt
+
+-- | Inspect the original operation's logical and physical ownership locally.
+-- This performs no tmux command. An unknown outcome does not become success
+-- merely because the native child has exited.
+inspectMutationRecovery :: MutationRecovery -> IO ReadRecovery
+inspectMutationRecovery = atomically . M.inspectRecovery
+
+-- | Resume existing native cleanup and decoder ownership, without repeating
+-- the command. Allocation failure retains the same recovery owner.
+resumeMutationRecovery :: MutationRecovery -> IO ()
+resumeMutationRecovery = operational . M.resumeRecovery
+
+-- | Wait for the original decoder and native child to retire. This may still
+-- return retained 'OutcomeUnknown'; it does not wait for a daemon hook job.
+-- Cancellation keeps this recovery owner in the new exception context.
+awaitMutationRecovery :: MutationRecovery -> IO ReadRecovery
+awaitMutationRecovery = operational . M.awaitRecovery
+
+-- | Relinquish this operation's logical uncertainty. This neither cancels
+-- daemon work nor releases native resources, and never repeats the mutation.
+detachMutationRecovery :: MutationRecovery -> IO Bool
+detachMutationRecovery = operational . atomically . M.detachRecovery
 
 -- | Read retained operation metadata, including after its physical cleanup.
 operationStatus :: Operation -> IO Status

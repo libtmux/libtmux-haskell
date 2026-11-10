@@ -4,6 +4,12 @@
 
 ### Added
 
+- Rename sessions and physical windows and set pane titles through
+  `LibTmux.Server`, using generation-bound references, literal names and
+  per-command deadlines. ([#10])
+- Recover interrupted mutations through their original operation and cleanup
+  owner. Distinguish rejected commands from applied changes followed by hook
+  errors, without replaying an uncertain command. ([#10])
 - Capture an existing tmux daemon with `LibTmux.Server`. Detached snapshots
   expose sessions, physical windows and panes, attached clients, window links
   and pane occurrences through ordinary Haskell collections. ([#4])
@@ -23,6 +29,9 @@
 
 ### Documentation
 
+- Follow a native Cabal example from typed target selection to mutation and
+  fresh capture. Read the deadline, partial-change and recovery contracts
+  alongside the linked API declarations. ([#10])
 - Run the capture, query and shared Runtime examples through Cabal, with
   private-server setup, expected output, teardown and per-package guides.
   Installation guidance distinguishes package requirements from CI toolchain
@@ -62,6 +71,7 @@
   servers and source-archive consumers. ([#2])
 
 [#2]: https://github.com/libtmux/libtmux-haskell/pull/2
+[#10]: https://github.com/libtmux/libtmux-haskell/pull/10
 [#4]: https://github.com/libtmux/libtmux-haskell/pull/4
 [#5]: https://github.com/libtmux/libtmux-haskell/pull/5
 [#6]: https://github.com/libtmux/libtmux-haskell/pull/6
