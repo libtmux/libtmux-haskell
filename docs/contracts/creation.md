@@ -37,15 +37,17 @@ index with one response; see the [framing contract](framing.md) for its limits.
 Primary rejection, successful creation, following hook
 errors and incomplete native completion remain distinct. The decoder retains
 a complete receipt when the supplied following bytes are truncated or exceed
-its limits. Capturing that evidence during IO still needs its own journal.
+its limits. The process owner's [bounded stdout journal](process.md#streams-and-bounds)
+retains observed prefix bytes after cancellation and stream overflow.
 Complete primary rejection takes precedence over receipt-shaped diagnostic
 lines. An unknown outcome retains matching prefix evidence without establishing
 successful creation.
 
 The [owned-server cases](../../test/integration/CommandIntegrationTest.hs)
 cover duplicate names, control-shaped hook output and deletion after the
-receipt. A hook barrier permits pidfd tracking before deletion. This protocol
-does not yet supply Runtime creation admission, an IO receipt journal,
+receipt. A hook barrier permits pidfd tracking before deletion or command-client
+cancellation. These private bytes and decoded receipts do not yet supply
+Runtime creation admission, its independent recovery receipt journal,
 first-server bootstrap or a public creation operation.
 
 ## Creation and reuse

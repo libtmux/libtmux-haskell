@@ -61,6 +61,7 @@ data Ticket = Ticket
   , launchEvidence :: !(TMVar LaunchEvidence)
   , cancelled :: !(TVar Bool), exitCache :: !(TVar (Maybe N.Exit))
   , signalErrors :: !(TVar [CInt]), signalErrorCount :: !(TVar Word64), counts :: !(TVar Progress)
+  , prefix :: !(TVar ByteString)
   , descriptors :: !(IORef Set.IntSet), child :: !(IORef (Maybe N.Child))
   , signalLock :: !(MVar ())
   , busy :: !(TVar Bool), failure :: !(TVar (Maybe SomeException))
@@ -110,19 +111,20 @@ newPoolSTM budget forker pinOwner capacity = do
   pinResult <- newEmptyTMVar
   pure Pool {jobs, closing, nextKey, capacity, forker, budget, clientLease, pinOwner, pinBusy, pinResult}
 
-inputLimitBytes, streamLimitBytes :: Int
+inputLimitBytes, streamLimitBytes, prefixLimitBytes :: Int
 inputLimitBytes = 65536
 streamLimitBytes = 1048576
+prefixLimitBytes = 512
 
 -- Both stream chunk lists and concatenations coexist until forced publication.
 childBytes :: Word64
 childBytes = fromIntegral (4 * streamLimitBytes + inputLimitBytes
-  + 2 * N.vectorLimitBytes + 4 * N.chunkBytes)
+  + 2 * N.vectorLimitBytes + 4 * N.chunkBytes + 2 * prefixLimitBytes)
 
 -- Allow both completed streams and equally bounded decoded copies. Consumers
 -- must enforce those copy bounds or reserve a larger parent envelope.
 retainedBytes, inspectionBytes :: Word64
-retainedBytes = fromIntegral (4 * streamLimitBytes)
+retainedBytes = fromIntegral (4 * streamLimitBytes + prefixLimitBytes)
 inspectionBytes = childBytes + retainedBytes
 
 -- | Return a result t'Ticket'; the t'Pool' retains physical ownership. Reserve
@@ -147,7 +149,7 @@ submitInputRegistered register allocation hooks pool spec input = mask_ $ do
   N.validate spec
   when (inputSize input > inputLimitBytes) (throwIO ResourceLimit)
   ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
-    <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO (Progress 0 0) <*> newIORef Set.empty
+    <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO (Progress 0 0) <*> newTVarIO "" <*> newIORef Set.empty
     <*> newIORef Nothing <*> newMVar () <*> newTVarIO True
     <*> newTVarIO Nothing <*> newTVarIO Nothing <*> pure hooks
   registered <- atomically $ do
@@ -247,15 +249,27 @@ completion ticket problem output errors = atomically $
 readStream :: Ticket -> Bool -> CInt -> IO ByteString
 readStream ticket stdout fd = preservingFinally ticket.cleanupFailure (loop [] 0) (retire ticket fd)
   where
-    loop chunks size = N.readChunk fd >>= \case
+    loop chunks size = observed size >>= \case
       Nothing -> threadWaitRead (Fd fd) >> loop chunks size
       Just bytes | Bytes.null bytes -> pure (Bytes.concat (reverse chunks))
-      Just bytes -> do
+      Just bytes -> loop (bytes : chunks) (size + Bytes.length bytes)
+    -- Keep consumed evidence before cancellation or stream-limit refusal.
+    -- Only the nonblocking read and bounded publication run masked.
+    observed size = mask_ $ do
+      chunk <- N.readChunk fd
+      forM_ chunk $ \bytes -> unless (Bytes.null bytes) $ do
+        when stdout $ do
+          previous <- readTVarIO ticket.prefix
+          when (Bytes.length previous < prefixLimitBytes) $ do
+            let suffix = Bytes.take (prefixLimitBytes - Bytes.length previous) bytes
+                copied = if Bytes.null previous then Bytes.copy suffix else previous <> suffix
+            next <- evaluate (force copied)
+            atomically (writeTVar ticket.prefix next)
         let total = size + Bytes.length bytes
         when (total > streamLimitBytes) (throwIO ResourceLimit)
         atomically $ modifyTVar' ticket.counts $ \old ->
           if stdout then old {outputBytes = total} else old {errorBytes = total}
-        loop (bytes : chunks) total
+      pure chunk
 
 -- | Keep an action failure primary and retain a simultaneous cleanup failure.
 -- A cleanup failure on its own remains a thrown exception.
@@ -425,3 +439,8 @@ activeCount pool = Map.size <$> readTVar pool.jobs
 
 progress :: Ticket -> STM Progress
 progress ticket = readTVar ticket.counts
+
+-- | At most 512 copied stdout bytes, retained after completion or failure.
+-- These are observed bytes; they establish no native or daemon completion.
+stdoutPrefix :: Ticket -> STM ByteString
+stdoutPrefix ticket = readTVar ticket.prefix
