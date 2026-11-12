@@ -192,7 +192,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
+  other-modules: CreationTest CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
