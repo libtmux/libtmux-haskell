@@ -109,8 +109,9 @@ format parsing. Checked dimensions must fit the native command's range.
 Environment entries override session variables; tmux's configured inheritance
 and `update-environment` rules still apply. Relative paths use the calling
 client's working directory. The library captures that OS context in `IO` as
-part of the command deadline. Options omit `Show` because argv and environment
-values can contain credentials.
+part of the command deadline. Options omit
+[`Show`](https://hackage.haskell.org/package/base/docs/Prelude.html#t:Show)
+because argv and environment values can contain credentials.
 
 [`InitialProcess`](../src/LibTmux/Creation.hs) distinguishes native modes:
 
@@ -163,7 +164,8 @@ operation owner rather than searching all Runtime operations.
 
 For each owner, `creationOperation` and `creationGeneration` identify the
 request. `creationReceipt` reads any complete IDs already observed without
-contacting tmux. `Nothing` does not prove that creation had no effect.
+contacting tmux. [`Nothing`](https://hackage.haskell.org/package/base/docs/Data-Maybe.html#v:Nothing)
+does not prove that creation had no effect.
 `inspectCreationRecovery` distinguishes logical outcome from native cleanup.
 `awaitCreationRecovery` joins the original child and decoder;
 `resumeCreationRecovery` resumes existing cleanup. Neither repeats creation.
