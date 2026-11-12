@@ -65,6 +65,20 @@ tests = testGroup "session creation receipts"
       C.decodeSessionCreation nonce (Just 0) (packet line "") large @?= unknown
       C.decodeSessionCreation nonce (Just 0) large "" @?=
         C.SessionCreationUnknown Nothing C.ReplyTooLarge
+  , testCase "creation success requires a standalone exit footer" $ do
+      nonce <- require (F.parseNonce token)
+      expected <- receipt
+      C.decodeSessionCreation nonce (Just 0) (packet line "junk") "" @?=
+        C.SessionCreationUnknown (Just expected) C.UnexpectedReply
+  , testCase "creation hook errors require a standalone exit footer" $ do
+      nonce <- require (F.parseNonce token)
+      expected <- receipt
+      C.decodeSessionCreation nonce (Just 1) (packet line "junk") "" @?=
+        C.SessionCreationUnknown (Just expected) C.UnexpectedReply
+  , testCase "creation rejection requires a standalone exit footer" $ do
+      nonce <- require (F.parseNonce token)
+      C.decodeSessionCreation nonce (Just 1) (begin <> "rejected\n" <> failed <> "junk" <> footer) "" @?=
+        C.SessionCreationUnknown Nothing C.UnexpectedReply
   ]
 
 token, begin, ended, failed, footer, line :: ByteString
