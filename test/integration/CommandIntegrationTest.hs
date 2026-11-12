@@ -169,7 +169,7 @@ tests = testGroup "native mutation lowering"
           withAsync (createSessionProbe fixture client nonce name) $ \request -> do
             prepareCreation fixture client ["wait-for", ready]
             withCreatedPane fixture client name $ do
-              observed <- invoke fixture client ["display-message", "-p", "-t", "=" <> name, "-F", "#{session_id}"]
+              observed <- invoke fixture client ["display-message", "-p", "-t", "=" <> name <> ":", "-F", "#{session_id}"]
               (observed.exit, observed.errors) @?= (Just (N.Exited 0), "")
               signal
               completed <- wait request
@@ -200,7 +200,7 @@ prepareCreation fixture client arguments = do
 
 withCreatedPane :: Fixture.Fixture -> R.ServerHandle -> Bytes.ByteString -> IO a -> IO a
 withCreatedPane fixture client name action = do
-  process <- invoke fixture client ["display-message", "-p", "-t", "=" <> name, "-F", "#{pane_pid}"]
+  process <- invoke fixture client ["display-message", "-p", "-t", "=" <> name <> ":", "-F", "#{pane_pid}"]
   (process.exit, process.errors) @?= (Just (N.Exited 0), "")
   Fixture.withTrackedPane (Lazy.fromStrict process.output)
     (void (invoke fixture client ["kill-session", "-t", "=" <> name])) action
@@ -212,7 +212,7 @@ verifyCreated fixture client name receipt = do
         [name, session, Utf8.encodeUtf8 (Id.renderWindowId receipt.windowId),
          Utf8.encodeUtf8 (Id.renderPaneId receipt.paneId),
          Ascii.pack (show (Value.windowIndexValue receipt.windowIndex)), Ascii.pack (show receipt.serverPid)] <> "\n"
-  observed <- invoke fixture client ["display-message", "-p", "-t", session, "-F",
+  observed <- invoke fixture client ["display-message", "-p", "-t", session <> ":", "-F",
     "#{session_name}|#{session_id}|#{window_id}|#{pane_id}|#{window_index}|#{pid}"]
   (observed.exit, observed.output, observed.errors) @?= (Just (N.Exited 0), expected, "")
 
