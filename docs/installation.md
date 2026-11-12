@@ -56,8 +56,9 @@ $ cabal run --verbose=0 capture-graph -- \
 - The [capture guide](capture.md) covers the object graph, pure lookups and
   scope cleanup.
 
-The API is experimental. The package provides observation and rename/title
-operations. Creation, pane input and events remain under development.
+The API is experimental. The package provides observation, rename/title
+and existing-server session creation operations. First-server bootstrap,
+window/pane creation, pane input and events remain under development.
 Check [status](status.md) before choosing it for automation.
 
 Browse the [manual](https://libtmux.org/en/haskell/) and

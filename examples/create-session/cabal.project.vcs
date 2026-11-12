@@ -1,0 +1,7 @@
+packages: .
+index-state: 2026-11-06T00:00:00Z
+
+source-repository-package
+  type: git
+  location: https://github.com/libtmux/libtmux-haskell
+  tag: af80cc5872cb4ed32b8dd642cfc2816065fd8e89

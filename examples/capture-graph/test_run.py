@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 import warnings
 
-from run import fixture
+from run import fixture, exited
 
 
 class FixtureChecks(unittest.TestCase):
@@ -52,6 +52,41 @@ class FixtureChecks(unittest.TestCase):
 
     def test_callback_cancellation_observes_daemon_and_pane_exit(self):
         self.verify_failure("pane-ready", KeyboardInterrupt())
+
+    def test_additional_panes_are_owned_on_success_failure_and_cancellation(self):
+        for problem in [None, RuntimeError("created callback failed"), KeyboardInterrupt()]:
+            with self.subTest(problem=type(problem).__name__), ExitStack() as owners:
+                observed = []
+
+                def observe(descriptors):
+                    observed.append(len(descriptors))
+                    self.assertEqual(len(descriptors), 3, "daemon and both pane processes must be owned")
+                    exited(descriptors)
+
+                def body():
+                    with fixture(self.binary) as (socket, environment):
+                        created = subprocess.run(
+                            [self.binary, "-N", "-S", socket, "new-session", "-d", "-s", "extra",
+                             "-P", "-F", "#{pane_pid}", "/bin/cat", "-"],
+                            env=environment, capture_output=True, check=True, timeout=1)
+                        descriptor = os.pidfd_open(int(created.stdout))
+                        owners.callback(os.close, descriptor)
+                        if problem is not None:
+                            raise problem
+                        return descriptor
+
+                with patch("run.exited", observe):
+                    if problem is None:
+                        descriptor = body()
+                        ready = select.poll()
+                        ready.register(descriptor, select.POLLIN)
+                        self.assertEqual(len(ready.poll(0)), 1)
+                    else:
+                        with self.assertRaises(type(problem)) as result:
+                            body()
+                        self.assertIs(result.exception, problem)
+                        self.assertFalse(getattr(problem, "__notes__", []), "cleanup must be verified")
+                self.assertEqual(observed, [3])
 
     def test_creation_cancellation_reports_the_untracked_pane(self):
         with ExitStack() as owners, warnings.catch_warnings(record=True) as emitted:

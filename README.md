@@ -298,6 +298,22 @@ $ cabal run --verbose=0 mutate-graph -- \
 A new capture shows the changes; the old snapshot keeps its values. Each
 rename is its own command, and a later failure undoes nothing.
 
+## Create a session
+
+### [`createSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-createsession/): create and use its targets
+
+The [creation program](https://libtmux.org/en/haskell/latest/guides/creation/)
+uses the returned window and pane, then captures the updated graph:
+
+```console
+$ cabal run --verbose=0 create-session -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
+```
+
+It also checks duplicate-name rejection. The new session stays running until
+the demo server is stopped. More: [creation and recovery](docs/creation.md).
+
 ## Clean up
 
 Stop the demo server and remove its directory:
@@ -320,6 +336,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Install in an application | [Cabal installation](https://libtmux.org/en/haskell/latest/guides/installation/) |
 | Capture, filter and navigate linked windows | [Observations and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) |
 | Compose typed predicates, traverse relations and require one match | [Typed queries](https://libtmux.org/en/haskell/latest/guides/query/) |
+| Create a session and recover its actual targets | [Session creation](https://libtmux.org/en/haskell/latest/guides/creation/) |
 | Rename sessions/windows, set pane titles and recover interrupted commands | [Mutations](https://libtmux.org/en/haskell/latest/guides/mutations/) |
 | Share ownership across independent Server scopes | [Shared Runtime](https://libtmux.org/en/haskell/latest/guides/shared-runtime/) |
 | Understand IDs, indices and validation errors | [Typed values](https://libtmux.org/en/haskell/latest/guides/typed-values/) |
@@ -332,8 +349,8 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 ## Support and status
 
 - **Experimental.** The API may change.
-- **Works today.** Captures, typed queries, renames and pane titles.
-- **In development.** Creating sessions, pane input and event streams.
+- **Works today.** Captures, typed queries, session creation, renames and pane titles.
+- **In development.** Window/pane creation, pane input and event streams.
 - **Platform.** Linux x86_64. [Host requirements](docs/installation.md).
 - **More.** [Status](https://libtmux.org/en/haskell/latest/guides/status/) · [source guides](docs/README.md).
 

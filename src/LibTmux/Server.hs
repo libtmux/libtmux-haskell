@@ -210,7 +210,7 @@ defaultMutationOptions :: MutationOptions
 defaultMutationOptions = MutationOptions 1
 
 -- | Create a detached session through this pinned Server. Start from
--- 'Creation.defaultSessionOptions'. The result contains actual created refs,
+-- 'LibTmux.Creation.defaultSessionOptions'. The result contains actual created refs,
 -- not observed records; capture again before inspecting the new graph.
 -- After-hooks may already have renamed or destroyed these targets.
 createSession :: Server -> Creation.SessionOptions -> IO Creation.CreatedSession
@@ -319,7 +319,7 @@ detachCreationRecovery :: CreationRecovery -> IO Bool
 detachCreationRecovery = operational . atomically . Create.detachRecovery
 
 -- | Catch library failures with their exception context. Retain this value
--- when handling an error so cleanup and capture owners stay reachable.
+-- when handling an error so cleanup and operation owners stay reachable.
 -- Application exceptions and asynchronous cancellation propagate.
 tryTmux :: IO a -> IO (Either (ExceptionWithContext TmuxException) a)
 tryTmux = tryWithContext
@@ -336,7 +336,7 @@ cleanupRecoveries = Context.getExceptionAnnotations
 detachUnresolved :: CleanupRecovery -> Operation -> IO Bool
 detachUnresolved recovery = operational . Scope.detachUnresolved recovery
 
--- | Capture owners retained in an exception context, including cancellation.
+-- | Read owners retained by a capture or Server version check, including cancellation.
 captureRecoveries :: ExceptionContext -> [CaptureRecovery]
 captureRecoveries = Context.getExceptionAnnotations
 

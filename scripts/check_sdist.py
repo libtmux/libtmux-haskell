@@ -60,21 +60,24 @@ def main():
                     ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True).strip()
                 command = (["python3", str(consumer / Path(entry["runner"]).name), "--program", executable]
                            if "runner" in entry else [executable])
+                if "fixture_panes" in entry:
+                    command += ["--expected-panes", str(entry["fixture_panes"])]
                 result = subprocess.run(command, cwd=directory, check=True, capture_output=True)
                 if result.stdout != expected or result.stderr:
                     raise ValueError("Archive example produced unexpected output")
                 if index == 0:
                     check_haddock_examples(consumer, doctest_modules, doctests)
-            check_public_mutations(source, prefix, directory, version)
+            check_public_commands(source, prefix, directory, version)
         print("PASS: archive members, documented public example and Haddock examples")
 
 
-def check_public_mutations(source, prefix, directory, version):
-    """Run the public mutation cases against the archived library, without its internals."""
+def check_public_commands(source, prefix, directory, version):
+    """Run public command cases against the archive, without private imports."""
     consumer = directory / "public-mutations"
     consumer.mkdir()
     for origin, name in [
         ("test/integration/PublicMutationTest.hs", "PublicMutationTest.hs"),
+        ("test/integration/PublicCreationTest.hs", "PublicCreationTest.hs"),
         ("test-support/Fixture.hs", "Fixture.hs"),
         ("test-support/fixture-watch.c", "fixture-watch.c"),
     ]:
@@ -82,9 +85,10 @@ def check_public_mutations(source, prefix, directory, version):
     (consumer / "Main.hs").write_text(
         "module Main (main) where\n"
         "import PublicMutationTest qualified\n"
-        "import Test.Tasty (defaultMain)\n"
+        "import PublicCreationTest qualified\n"
+        "import Test.Tasty (defaultMain, testGroup)\n"
         "main :: IO ()\n"
-        "main = defaultMain PublicMutationTest.tests\n"
+        "main = defaultMain (testGroup \"installed public commands\" [PublicMutationTest.tests, PublicCreationTest.tests])\n"
     )
     (consumer / "cabal.project").write_text(
         f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"
@@ -95,14 +99,14 @@ def check_public_mutations(source, prefix, directory, version):
         "build-type: Simple\n"
         "executable public-mutations-consumer\n"
         "  main-is: Main.hs\n"
-        "  other-modules: Fixture PublicMutationTest\n"
+        "  other-modules: Fixture PublicMutationTest PublicCreationTest\n"
         "  default-language: GHC2024\n"
         "  default-extensions: OverloadedRecordDot OverloadedStrings DuplicateRecordFields NoFieldSelectors\n"
         "  ghc-options: -Wall -Werror -threaded\n"
         "  c-sources: fixture-watch.c\n"
         "  cc-options: -std=c11 -Wall -Wextra\n"
         "  build-depends: base >=4.22 && <4.23, async, bytestring, directory, filepath,\n"
-        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, typed-process, unix\n"
+        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, text, typed-process, unix\n"
     )
     target = "exe:public-mutations-consumer"
     run(["cabal", "build", target, "--offline"], consumer)
@@ -112,7 +116,7 @@ def check_public_mutations(source, prefix, directory, version):
     result = subprocess.run([executable, "--hide-successes"], cwd=directory, check=True, capture_output=True)
     if result.stderr:
         raise ValueError("Installed public mutation consumer emitted stderr")
-    print("PASS: installed public mutation behavior and recovery")
+    print("PASS: installed public command behavior and recovery")
 
 
 def haddock_examples(source):

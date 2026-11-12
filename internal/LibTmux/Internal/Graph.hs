@@ -75,6 +75,13 @@ instance NFData PaneRef where
 -- | Historical identities printed during detached new-session. A later hook
 -- may already have removed them. Resolve through a fresh captured snapshot;
 -- these references do not constitute hydrated observations or prove liveness.
+-- Read these fields with record dot; construction remains private.
+--
+-- [#v:serverPid# @serverPid@ :: 'Integer'] Daemon PID printed with the receipt.
+-- [#v:session# @session@ :: t'SessionRef'] Created session in the originating generation.
+-- [#v:window# @window@ :: t'WindowRef'] Initial physical window.
+-- [#v:pane# @pane@ :: t'PaneRef'] Initial physical pane.
+-- [#v:windowIndex# @windowIndex@ :: t'WindowIndex'] Initial link index printed by tmux.
 data CreatedSession = CreatedSession
   { serverPid :: !Integer -- ^ Daemon PID printed with the creation receipt.
   , session :: !SessionRef -- ^ Actual created session in the originating generation.
