@@ -17,7 +17,6 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.Text (Text)
 import Data.Text.Encoding qualified as Utf8
-import Foreign.C.Types (CInt)
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Frame qualified as Frame
@@ -83,8 +82,12 @@ instance NFData SessionCreationReply where
 
 -- | The line-safe identity format for detached @new-session -P -F@.
 sessionCreationFormat :: Frame.Nonce -> ByteString
-sessionCreationFormat nonce = Frame.scalarFormat nonce
-  "#{pid} #{session_id} #{window_id} #{pane_id} #{window_index}"
+sessionCreationFormat nonce = Frame.scalarFormat nonce (Bytes.intercalate " "
+  [formatted Field.ServerPid, formatted Field.SessionId, formatted Field.WindowId,
+   formatted Field.PaneId, formatted Field.LinkIndex])
+  where
+    formatted :: Field.Field row value -> ByteString
+    formatted field = "#{" <> Field.formatVariable field <> "}"
 
 -- | Decode the closed detached new-session profile through an existing pin.
 -- Bounded prefix decoding preserves a receipt when later output exceeds limits.
@@ -132,29 +135,19 @@ boundedLine limit bytes =
 sessionReceipt :: ByteString -> Maybe SessionReceipt
 sessionReceipt payload = case Ascii.split ' ' payload of
   [pidBytes, sessionBytes, windowBytes, paneBytes, indexBytes] -> do
-    pid <- nativeNumber pidBytes
-    if pid == 0 then Nothing else pure ()
-    session <- nativeId Id.parseSessionId sessionBytes
-    window <- nativeId Id.parseWindowId windowBytes
-    pane <- nativeId Id.parsePaneId paneBytes
-    index <- nativeNumber indexBytes
-    checked <- either (const Nothing) Just (Value.mkWindowIndex index)
-    pure (SessionReceipt pid session window pane checked)
+    pid <- creationField Field.ServerPid pidBytes
+    session <- creationField Field.SessionId sessionBytes
+    window <- creationField Field.WindowId windowBytes
+    pane <- creationField Field.PaneId paneBytes
+    index <- creationField Field.LinkIndex indexBytes
+    pure (SessionReceipt pid session window pane index)
   _ -> Nothing
 
-nativeId :: (Text -> Either Id.IdError value) -> ByteString -> Maybe value
-nativeId parse bytes = do
-  text <- either (const Nothing) Just (Utf8.decodeUtf8' bytes)
-  either (const Nothing) Just (parse text)
-
-nativeNumber :: ByteString -> Maybe Integer
-nativeNumber bytes
-  | Bytes.null bytes || Bytes.length bytes > 10 = Nothing
-  | Bytes.head bytes == 48 && Bytes.length bytes /= 1 = Nothing
-  | not (Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes) = Nothing
-  | otherwise = case Ascii.readInteger bytes of
-      Just (value, "") | value <= toInteger (maxBound @CInt) -> Just value
-      _ -> Nothing
+-- Creation's native numbers are unpadded; the catalogue owns their domains.
+creationField :: Field.Field row value -> ByteString -> Maybe value
+creationField field bytes
+  | Bytes.length bytes > 1 && Bytes.head bytes == 48 = Nothing
+  | otherwise = either (const Nothing) Just (Field.decodeField field bytes)
 
 -- | Interpret fully drained streams and normal exit status for one t'Mutation'.
 -- This is not a general control-mode decoder or evidence for waiting commands.
