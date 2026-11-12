@@ -1,7 +1,7 @@
 module CommandIntegrationTest (tests) where
 
 import Control.Concurrent.Async (wait, withAsync)
-import Control.Concurrent.STM (atomically, retry)
+import Control.Concurrent.STM (STM, atomically, retry)
 import Control.Exception (bracket, finally, try)
 import Control.Monad (forM_, void)
 import Data.ByteString qualified as Bytes
@@ -193,11 +193,9 @@ tests = testGroup "native mutation lowering"
           ticket <- submitWithInput fixture client
             ["-C", "new-session", "-d", "-P", "-F", C.sessionCreationFormat nonce,
              "-s", name, "-n", "created-window", "--", "/bin/cat", "-"] P.KeepInputOpen
-          receipt <- atomically $ do
-            prefix <- P.stdoutPrefix ticket
-            case C.decodeSessionCreation nonce Nothing prefix "" of
-              C.SessionCreationUnknown (Just value) _ -> pure value
-              _ -> retry
+          receipt <- timeout 1000000 (atomically (receiptBeforeCompletion nonce ticket)) >>=
+            maybe (fail "creation receipt wait expired")
+              (maybe (fail "native client completed without a receipt") pure)
           withCreatedPane fixture client name $ do
             verifyCreated fixture client name receipt
             P.abort ticket
@@ -208,7 +206,24 @@ tests = testGroup "native mutation lowering"
             prefix <- atomically (P.stdoutPrefix ticket)
             C.decodeSessionCreation nonce Nothing prefix "" @?=
               C.SessionCreationUnknown (Just receipt) C.UnexpectedReply
+  , testCase "session receipt discovery observes terminal native rejection" $
+      Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+        client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+        nonce <- require (Frame.parseNonce (Bytes.replicate 64 101))
+        ticket <- submitWithInput fixture client ["-C", "has-session", "-t", "=libtmux-created-absent"] P.KeepInputOpen
+        completed <- P.await ticket
+        completed.exit @?= Just (N.Exited 1)
+        -- A completed client cannot make receipt discovery wait for more bytes.
+        observed <- timeout 100000 (atomically (receiptBeforeCompletion nonce ticket))
+        observed @?= Just Nothing
   ]
+
+receiptBeforeCompletion :: Frame.Nonce -> P.Ticket -> STM (Maybe C.SessionReceipt)
+receiptBeforeCompletion nonce ticket = do
+  prefix <- P.stdoutPrefix ticket
+  case C.decodeSessionCreation nonce Nothing prefix "" of
+    C.SessionCreationUnknown (Just value) _ -> pure (Just value)
+    _ -> retry
 
 createSessionProbe :: Fixture.Fixture -> R.ServerHandle -> Frame.Nonce -> Bytes.ByteString -> IO P.Completion
 createSessionProbe fixture client nonce name = invokeWithInput fixture client
