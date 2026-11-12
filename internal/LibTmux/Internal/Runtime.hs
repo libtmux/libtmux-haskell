@@ -22,6 +22,8 @@ module LibTmux.Internal.Runtime
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
   , mutateWith
+  , SessionCreation, CreationJournal, createSessionWith
+  , creationRequest, creationJournal, journalReceipt
   ) where
 
 import Control.Concurrent.STM
@@ -88,6 +90,32 @@ data ReadClass = InspectionRead | ScalarRead
 -- native ticket or input buffers. 'awaitRead' also works after cleanup.
 data Request value = Request !ReadReceipt !(TMVar (ReadResult value))
 
+-- | A creation result and its independent historical evidence. The journal
+-- survives decoder retirement and native cleanup without retaining either owner.
+data SessionCreation = SessionCreation !(Request Command.SessionCreationReply) !CreationJournal
+data CreationJournal = CreationJournal !(TVar (Maybe (F.Nonce, Maybe (TVar ByteString))))
+instance Show CreationJournal where
+  showsPrec _ _ = showString "CreationJournal"
+instance ExceptionAnnotation CreationJournal
+
+creationRequest :: SessionCreation -> Request Command.SessionCreationReply
+creationRequest (SessionCreation request _) = request
+
+creationJournal :: SessionCreation -> CreationJournal
+creationJournal (SessionCreation _ journal) = journal
+
+-- | Observe only a complete nonce-qualified receipt from the bounded prefix.
+-- Nothing means evidence has not been observed, not that creation did not run.
+-- This read never waits for native completion or performs an external lookup.
+journalReceipt :: CreationJournal -> STM (Maybe Command.SessionReceipt)
+journalReceipt (CreationJournal journal) = readTVar journal >>= \case
+  Just (nonce, Just source) -> do
+    prefix <- readTVar source
+    pure $ case Command.decodeSessionCreation nonce Nothing prefix "" of
+      Command.SessionCreationUnknown receipt _ -> receipt
+      _ -> Nothing
+  _ -> pure Nothing
+
 -- | Correlation metadata only: no Runtime, pool, ticket or result payload.
 -- The native key remains useful after its decoder owner has retired.
 data ReadReceipt = ReadReceipt !Unique !Graph.Generation !S.Operation !(TVar (Maybe Int))
@@ -125,11 +153,14 @@ data ReadCommand value where
 data NativeCommand value where
   Observe :: !(ReadCommand value) -> NativeCommand value
   Mutate :: !Command.Mutation -> NativeCommand Command.MutationReply
+  CreateSession :: !N.Spec -> !Command.SessionOptions -> !CreationJournal
+    -> NativeCommand Command.SessionCreationReply
 
 -- The mutation decoder is nullary so it cannot retain caller operands.
 data ResultDecoder value where
   ObservationResult :: !(ReadCommand value) -> ResultDecoder value
   MutationResult :: ResultDecoder Command.MutationReply
+  CreationResult :: !CreationJournal -> ResultDecoder Command.SessionCreationReply
 
 -- | Closed scalar acquisition targets; callers cannot supply format fragments.
 data EntityField
@@ -546,6 +577,21 @@ mutateWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> Command
 mutateWith hooks duration runtime client executable mutation =
   startNative (Mutate mutation) hooks duration runtime client executable ScalarRead
 
+-- | Create through an existing pin in the serialized mutation lane. The launch
+-- context contributes file, cwd and environment; its argv is replaced by the
+-- closed compiler. Failure before Request handoff retains journal annotations
+-- alongside any admitted operation receipt, preserving cancellation's class.
+createSessionWith
+  :: P.Hooks -> Int -> Runtime -> ServerHandle -> N.Spec -> Command.SessionOptions
+  -> IO SessionCreation
+createSessionWith hooks duration runtime client context options = mask_ $ do
+  journal <- CreationJournal <$> newTVarIO Nothing
+  tryWithContext @SomeException
+    (startNative (CreateSession context options journal) hooks duration runtime client context.file ScalarRead) >>= \case
+      Right request -> pure (SessionCreation request journal)
+      Left (ExceptionWithContext annotations problem) ->
+        rethrowIO (ExceptionWithContext (Context.addExceptionAnnotation journal annotations) problem)
+
 -- | Observe a stable release identity through the pinned server. Use
 -- 'Version.requireSupported' separately for supported-range admission;
 -- this observation establishes no feature capabilities.
@@ -633,10 +679,13 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
   case input of
     P.BytesInput bytes -> void (evaluate (force bytes))
     P.KeepInputOpen -> pure ()
-  let spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (serverPin client)]
-        <> arguments)
+  let base = case selected of
+        CreateSession context _ _ -> context
+        _ -> N.spec executable []
+      spec = base {N.args = [executable, "-u", "-N", "-S", pinPath (serverPin client)] <> arguments}
       (lane, resourceClass) = case decoder of
         MutationResult -> (S.Mutation, B.Ordinary)
+        CreationResult _ -> (S.Mutation, B.Ordinary)
         ObservationResult _ -> case allocation of
           InspectionRead -> (S.Inspection, B.Inspection)
           ScalarRead -> (S.ScalarRead, B.Ordinary)
@@ -652,6 +701,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
           ObservationResult (ReadGraph _) -> P.retainedBytes + 64 * 1024 * 1024
           ObservationResult (ReadSnapshot _) -> P.retainedBytes + 64 * 1024 * 1024
           MutationResult -> P.retainedBytes + fromIntegral N.vectorLimitBytes
+          CreationResult _ -> P.retainedBytes + fromIntegral N.vectorLimitBytes
           _ -> P.retainedBytes
     envelope <- B.acquireBytes runtime.budget resourceClass parentBytes
     result <- newEmptyTMVar
@@ -663,6 +713,9 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
     let receipt = ReadReceipt runtime.identity (pinGeneration (serverPin client)) operation key
         owner = NativeOwner {operation, receipt, decoder, result, nonce, deadline = now + delta, envelope,
           submission, cancelled, busy, failure}
+    case decoder of
+      CreationResult (CreationJournal journal) -> writeTVar journal (Just (nonce, Nothing))
+      _ -> pure ()
     modifyTVar' runtime.owners (<> [owner])
     pure (owner, Request receipt result)
   allocated <- tryWithContext @SomeException $ do
@@ -681,6 +734,9 @@ compileNative nonce (Observe command) = Right (ObservationResult command, comman
 compileNative _ (Mutate mutation) = do
   arguments <- Command.compileMutation mutation
   pure (MutationResult, "-C" : arguments, P.KeepInputOpen)
+compileNative nonce (CreateSession _ options journal) = do
+  arguments <- Command.compileSessionCreation nonce options
+  pure (CreationResult journal, "-C" : arguments, P.KeepInputOpen)
 
 remaining :: NativeOwner -> IO Int
 remaining owner = do
@@ -714,6 +770,13 @@ readAction unmask runtime owner pool resourceClass hooks spec input = do
                   -- A lazy projection here would keep the entire ticket alive.
                   !nativeKey = ticket.key
               writeTVar key (Just nativeKey)
+              case owner of
+                NativeOwner {decoder = CreationResult (CreationJournal journal)} -> do
+                  -- Force the projection; the journal must not close over Ticket.
+                  let !prefix = ticket.prefix
+                      !nonce = owner.nonce
+                  writeTVar journal (Just (nonce, Just prefix))
+                _ -> pure ()
               readTVar owner.cancelled >>= \flag ->
                 when flag (writeTVar ticket.cancelled True)
         created <- try @SomeException (P.submitInputRegistered register resourceClass hooks pool spec input)
@@ -824,6 +887,7 @@ finishRead runtime owner@NativeOwner {decoder, result} ticket completed = do
 
 forceResult :: ResultDecoder value -> value -> IO ()
 forceResult MutationResult value = void (evaluate (force value))
+forceResult (CreationResult _) value = void (evaluate (force value))
 forceResult (ObservationResult command) value = case command of
   ReadPid -> void (evaluate value)
   ReadVersion -> void (evaluate value)
@@ -836,6 +900,8 @@ completionEvidence :: ResultDecoder value -> value -> S.Completion
 completionEvidence (ObservationResult _) _ = S.Success
 completionEvidence MutationResult Command.Applied = S.Success
 completionEvidence MutationResult _ = S.CommandFailure
+completionEvidence (CreationResult _) (Command.SessionCreated _) = S.Success
+completionEvidence (CreationResult _) _ = S.CommandFailure
 
 decodeResult :: ResultDecoder value -> F.Nonce -> P.Completion -> Either SomeException value
 decodeResult (ObservationResult command) = decodeRead command
@@ -847,6 +913,15 @@ decodeResult MutationResult = \_ completed -> case completed.launchFailure of
           _ -> Nothing
     in either (Left . toException . InvalidCommandReply) Right
       (Command.decodeControlReply exit completed.output completed.errors)
+decodeResult (CreationResult _) = \nonce completed -> case completed.launchFailure of
+  Just problem -> Left (toException problem)
+  Nothing ->
+    let exit = case completed.exit of
+          Just (N.Exited status) -> Just (fromIntegral status)
+          _ -> Nothing
+    in case Command.decodeSessionCreation nonce exit completed.output completed.errors of
+      Command.SessionCreationUnknown _ problem -> Left (toException (InvalidCommandReply problem))
+      value -> Right value
 
 decodeRead :: ReadCommand value -> F.Nonce -> P.Completion -> Either SomeException value
 decodeRead command nonce completed
