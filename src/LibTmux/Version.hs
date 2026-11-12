@@ -21,6 +21,7 @@ module LibTmux.Version
   , requireSupported
   ) where
 
+import Control.DeepSeq (NFData (rnf))
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -30,6 +31,9 @@ import Text.Read (readMaybe)
 -- 'renderVersion'. Ordering compares numeric components before the patch letter.
 data TmuxVersion = TmuxVersion !Integer !Integer !(Maybe Char)
   deriving stock (Eq, Ord, Show)
+
+instance NFData TmuxVersion where
+  rnf (TmuxVersion major minor suffix) = rnf major `seq` rnf minor `seq` rnf suffix
 
 -- | Invalid release syntax or a release outside the supported range.
 data VersionError
