@@ -115,7 +115,7 @@ are saved after the owning job's verification steps. A cache hit does not
 replace the integration checks required by the aggregate job.
 
 These checks qualify the existing implementation subset. The complete
-capture/runtime/workspace and release gates remain separate work.
+capture/runtime and release gates remain separate work.
 
 The native documentation step runs the
 [preparation regressions](../scripts/test_prepare_haddock.py), then prepares

@@ -18,19 +18,16 @@ rename and pane titles, with generation checks and correlated recovery.
 | Creation, pane input and contextual window operations | Not implemented |
 | Query interchange and backend optimization | Not implemented |
 | Control events, streams and cancellation API | Not implemented |
-| Workspace library/CLI | Planned as a separate Cabal package using the core |
-| MCP integration | Excluded from this port |
 
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
-interface. Additional commands, interchange, event and workspace contracts remain separate
+interface. Additional commands, interchange and event contracts remain separate
 qualification work.
 The [behavior inventory](contracts/README.md) records the intended scope.
 
 ## Package policy
 
 The core favors GHC boot libraries and ordinary `IO`. Additional dependencies
-need a concrete requirement; JSON/YAML loading and command-line concerns
-belong in the workspace package. MCP is outside this port's scope. See the
+need a concrete requirement. See the
 [package and dependency policy](../.github/CONTRIBUTING.md#package-and-dependency-policy).
 
 ## Compatibility evidence

@@ -249,9 +249,8 @@ initial backend; any alternative launch path needs separate qualification.
 
 Use the package's modern Haskell feature floor and compatible dependency bounds;
 CI pins record tested configurations rather than an exact compiler requirement.
-Keep tmux 3.3a through 3.8 support, with CI at its endpoints, and keep MCP excluded.
-Workspace is a separate Cabal package using
-public core APIs, with file-format and CLI dependencies outside the core.
+Keep tmux 3.3a through 3.8 support, with CI at its endpoints.
+Keep file-format and CLI dependencies outside the core.
 [Package policy](../../.github/CONTRIBUTING.md#package-and-dependency-policy) ·
 [Cabal projects][cabal-projects]
 
