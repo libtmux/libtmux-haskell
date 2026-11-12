@@ -1,7 +1,7 @@
 module CommandIntegrationTest (tests) where
 
 import Control.Concurrent.Async (wait, withAsync)
-import Control.Concurrent.STM (STM, atomically, retry)
+import Control.Concurrent.STM (STM, atomically, readTMVar)
 import Control.Exception (bracket, finally, try)
 import Control.Monad (forM_, void)
 import Data.ByteString qualified as Bytes
@@ -223,7 +223,7 @@ receiptBeforeCompletion nonce ticket = do
   prefix <- P.stdoutPrefix ticket
   case C.decodeSessionCreation nonce Nothing prefix "" of
     C.SessionCreationUnknown (Just value) _ -> pure (Just value)
-    _ -> retry
+    _ -> readTMVar ticket.result >> pure Nothing
 
 createSessionProbe :: Fixture.Fixture -> R.ServerHandle -> Frame.Nonce -> Bytes.ByteString -> IO P.Completion
 createSessionProbe fixture client nonce name = invokeWithInput fixture client
