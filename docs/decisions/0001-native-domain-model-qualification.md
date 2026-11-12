@@ -24,9 +24,9 @@ passes at `81ea041` on tmux 3.3a and 3.8, the routine support endpoints.
 
 The [capture baseline](../performance.md) measures three graph sizes on both
 endpoints. It does not establish allocation, concurrent-caller or cancellation
-latency guarantees. Typed queries, commands, events, workspace tooling and
-complete adoption qualification remain open. Native
-Haddock anchor and hidden-origin limitations are documented in the
+latency guarantees. Typed queries, commands, events and complete adoption
+qualification remain open. Native Haddock anchor and hidden-origin limitations
+are documented in the
 [API documentation guide](../api.md).
 
 ## Shared Runtime qualification, 2026-11-09
@@ -259,7 +259,7 @@ complete accessibility and external dependency availability remain open.
   existing 64 MiB capture reservation admits one full envelope; it is not RSS.
 - Extend native browser qualification beyond the checked Chromium paths and
   complete shared-site rendering, reference and publication qualification.
-- Implement the command, filter-interchange, event and workspace contracts,
+- Implement the command, filter-interchange and event contracts,
   then qualify their installed consumers and complete the adoption review.
 
 ## Delivery and review
@@ -268,11 +268,11 @@ Use the existing draft PR for logical commits and current-source verification.
 Keep Hspec/QuickCheck specifications separate from the Tasty suite assembly.
 Run the exact release matrix and source-archive consumer checks before public
 export. Preserve failed and unrun gates in the review record. Shared docs,
-workspace, events, commands and query interchange remain part of the full
+events, commands and query interchange remain part of the full
 suite; the current native increment does not claim their completion.
 
-MCP is excluded from implementation and scoring. Every other requested quality
-dimension still needs evidence and the adoption review before merge/release.
+Every requested quality dimension still needs evidence and the adoption review
+before merge/release.
 No numeric score or architectural approval waives a failing mandatory gate.
 
 [print]: https://github.com/tmux/tmux/blob/3.4/server-client.c#L3274-L3284

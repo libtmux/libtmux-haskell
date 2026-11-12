@@ -68,8 +68,8 @@ in application
 modules using observation fields. No optics or effect framework is required.
 
 The package has no Hackage release yet. The development source provides the
-observation and rename/title APIs. Creation, pane input, events and workspace
-tooling remain under development.
+observation and rename/title APIs. Creation, pane input and events remain under
+development.
 Check [status](status.md) before choosing it for automation.
 
 ## Native backend host requirements

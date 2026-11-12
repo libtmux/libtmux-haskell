@@ -8,8 +8,8 @@ description:
   Scoped handles retain cleanup ownership after cancellation and failure.
   Typed queries inspect captured values with explicit cardinality and ordering.
   Rename sessions and physical windows and set pane titles with checked
-  references, bounded deadlines and correlated recovery. Creation, pane input,
-  events and workspace tooling remain under development.
+  references, bounded deadlines and correlated recovery. Creation, pane input
+  and events remain under development.
 license: MIT
 license-file: LICENSE
 author: libtmux contributors

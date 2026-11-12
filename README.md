@@ -174,9 +174,8 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Evaluate the implemented scope and compatibility evidence | [Status](docs/status.md) |
 
 The package is unpublished. Observations, typed queries, session/window rename,
-pane titles and correlated recovery are implemented. Creation, pane input,
-event streams and the workspace library/CLI remain under development.
-MCP is excluded. Native operations require Linux x86_64,
+pane titles and correlated recovery are implemented. Creation, pane input and
+event streams remain under development. Native operations require Linux x86_64,
 glibc 2.39+ and compatible pidfd support; [installation](docs/installation.md)
 describes the host contract. The [manual](docs/README.md) and
 [status](docs/status.md) distinguish available behavior from planned work.

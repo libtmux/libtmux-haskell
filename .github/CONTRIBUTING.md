@@ -3,27 +3,20 @@
 The native Haskell implementation is in progress. The public Server and shared
 Runtime scopes, detached observations, typed values and typed queries have
 tests and source-archive consumers. Session/window rename and pane titles
-have public generation checks and recovery. Additional commands, events,
-workspace tooling and complete adoption qualification remain open.
+have public generation checks and recovery. Additional commands, events and
+complete adoption qualification remain open.
 
 Read [AGENTS.md](../AGENTS.md) for change discipline and
 [WRITING.md](WRITING.md) for prose and commit conventions.
 
 ## Package and dependency policy
 
-This repository develops a native core and plans a workspace library/CLI. MCP is
-outside this port's scope; do not add an MCP package, SDK or protocol layer.
-This is a project scope decision, not a claim about every available SDK.
-
-Keep the existing `libtmux-haskell` core package at the repository root.
-When workspace implementation starts, add `libtmux-haskell-workspace` under
-`packages/workspace/`, with a library and a thin executable in the same
-Cabal package. Register it explicitly in the root `cabal.project`.
+This repository develops a native core. Keep the existing `libtmux-haskell`
+core package at the repository root. Register any additional package explicitly in the root `cabal.project`.
 [Multi-package Cabal projects](https://cabal.readthedocs.io/en/stable/cabal-project-description-file.html#specifying-the-local-packages)
-resolve local package dependencies together. The workspace depends on the
-core's public API and any additional libtmux core packages it needs; the
-core must not depend on workspace code. Add another package only for a
-separate consumer boundary, dependency set or distribution requirement.
+resolve local package dependencies together. An additional package depends on
+the core's public API; the core must not depend on it. Add another package only
+for a separate consumer boundary, dependency set or distribution requirement.
 Each published package owns its metadata, tests and `CHANGELOG.md`.
 
 Prefer the selected GHC's boot libraries, native types and ordinary `IO`.
@@ -31,8 +24,8 @@ Use `base`, `bytestring`, `containers`, `stm`, `text` and `unix` where they
 fit. An external dependency must solve a concrete need with less ownership
 and maintenance burden than local code, support the selected compiler, and
 have a recorded purpose in the resolved dependency plan. Keep effect
-frameworks optional. Keep workspace file-format and CLI dependencies out
-of the core; keep test libraries out of runtime dependencies. Do not replace
+frameworks optional. Keep file-format and CLI dependencies out of the
+core; keep test libraries out of runtime dependencies. Do not replace
 working scoped concurrency or process code merely to reduce a dependency
 count. Qualify cancellation and cleanup before changing those boundaries.
 
