@@ -42,9 +42,23 @@ retains observed prefix bytes after cancellation and stream overflow.
 The [owned-server cases](../../test/integration/CommandIntegrationTest.hs)
 cover duplicate names, control-shaped hook output and deletion after the
 receipt. A hook barrier permits pidfd tracking before deletion or command-client
-cancellation. These private bytes and decoded receipts do not yet supply
-Runtime creation admission, its independent recovery receipt journal,
-first-server bootstrap or a public creation operation.
+cancellation.
+
+The [private Runtime](../../internal/LibTmux/Internal/Runtime.hs) admits checked
+detached-session options in its serialized mutation lane. Its creation request
+pairs the usual operation receipt with an independent journal of observed IDs.
+Native registration publishes the bounded stdout-prefix reference in the same
+transaction as child ownership. The journal retains neither the native ticket
+nor caller arguments, environment or complete output. It remains readable after
+native cleanup and Runtime closure.
+
+The [Runtime cases](../../test/integration/RuntimeCreationTest.hs) distinguish
+known creation, primary rejection, hook errors and uncertain completion. They
+retain observed IDs through cancellation, deadline and output overflow, and
+exercise explicit recovery without replay. Queue cancellation and allocation
+failure do not invent a creation receipt. Launch cwd and environment are
+explicit inputs; they do not silently inherit the read transport's fixed
+context. First-server bootstrap and a public creation operation remain open.
 
 ## Creation and reuse
 

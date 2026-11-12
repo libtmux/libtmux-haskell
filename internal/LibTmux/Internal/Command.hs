@@ -8,10 +8,12 @@ module LibTmux.Internal.Command
   ( Mutation (..), ArgumentError (..), compileMutation
   , MutationReply (..), ReplyError (..), decodeControlReply
   , SessionReceipt (..), SessionCreationReply (..)
-  , sessionCreationFormat, decodeSessionCreation
+  , SessionOptions (..), InitialProcess (..), defaultSessionOptions
+  , compileSessionCreation, sessionCreationFormat, decodeSessionCreation
   ) where
 
 import Control.DeepSeq (NFData (rnf))
+import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -23,6 +25,9 @@ import LibTmux.Internal.Frame qualified as Frame
 import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Internal.TmuxText qualified as Label
 import LibTmux.Value qualified as Value
+import System.OsPath.Posix (PosixPath)
+import System.OsString.Posix (PosixString)
+import System.OsString.Posix qualified as Os
 
 -- | Literal requests with canonical entity targets. Native name validation
 -- and normalization remain command outcomes rather than lowering policy.
@@ -33,8 +38,86 @@ data Mutation
   deriving stock (Eq, Show)
 
 -- | Refusal before a command tail exists, carrying its catalogue field key.
-data ArgumentError = NulOperand !Text | EncodedCommandTooLarge !Text
+data ArgumentError
+  = NulOperand !Text | EncodedCommandTooLarge !Text | InvalidOperand !Text !Text
   deriving stock (Eq, Show)
+
+-- | Native initial-process modes. A direct executable needs at least one
+-- argument: tmux interprets a single argv entry as a shell command.
+data InitialProcess
+  = DefaultProcess | ShellCommand !ByteString
+  | DirectCommand !PosixString ![PosixString] | EmptyPane
+  deriving stock (Eq)
+
+-- | Detached creation only. Nothing selects tmux's native defaults; explicit
+-- values remain literal through command and format parsing. These private
+-- options deliberately have no Show instance for environment or command data.
+data SessionOptions = SessionOptions
+  { name :: !(Maybe Text)
+  , windowName :: !(Maybe TmuxText)
+  , workingDirectory :: !(Maybe PosixPath)
+  , environment :: ![(PosixString, PosixString)]
+  , width :: !(Maybe Value.Dimension)
+  , height :: !(Maybe Value.Dimension)
+  , updateEnvironment :: !Bool
+  , process :: !InitialProcess
+  } deriving stock (Eq)
+
+defaultSessionOptions :: SessionOptions
+defaultSessionOptions = SessionOptions Nothing Nothing Nothing [] Nothing Nothing True DefaultProcess
+
+-- | Validate and lower one detached creation, including its receipt format.
+-- The native layer independently bounds the full launch vector before admission.
+-- Paths and names expand once in tmux; environment and process argv do not.
+compileSessionCreation :: Frame.Nonce -> SessionOptions -> Either ArgumentError [ByteString]
+compileSessionCreation nonce options = do
+  unless (length (take 4097 options.environment) <= 4096)
+    (Left (InvalidOperand "environment" "variable count exceeds 4096"))
+  process <- case options.process of
+    DefaultProcess -> Right []
+    EmptyPane -> Right [literal "initialProcess" ""]
+    ShellCommand command
+      | Bytes.null command -> Left (InvalidOperand "initialProcess" "empty shell command; use EmptyPane")
+      | otherwise -> Right [literal "initialProcess" command]
+    DirectCommand executable arguments -> do
+      when (null arguments)
+        (Left (InvalidOperand "initialProcess" "direct execution requires at least one argument"))
+      unless (length (take 4097 arguments) <= 4096)
+        (Left (InvalidOperand "initialProcess" "argument count exceeds 4096"))
+      when (Os.null executable) (Left (InvalidOperand "initialProcess" "empty executable"))
+      Right (map (literal "initialProcess" . osBytes) (executable : arguments))
+  columns <- dimension "width" "-x" options.width
+  rows <- dimension "height" "-y" options.height
+  let arguments = map (literal "session.creation")
+        ["new-session", "-d", "-P", "-F", sessionCreationFormat nonce]
+        <> optional "session.name" "-s" Utf8.encodeUtf8 options.name
+        <> optional "window.name" "-n" Label.toBytes options.windowName
+        <> optional "workingDirectory" "-c" osBytes options.workingDirectory
+        <> columns <> rows
+        <> [literal "session.creation" "-E" | not options.updateEnvironment]
+        <> concatMap (\(key, value) -> [literal "environment" "-e",
+             literal "environment" (osBytes key <> "=" <> osBytes value)]) options.environment
+        <> [literal "session.creation" "--"] <> process
+      rawCost = sum [toInteger (Bytes.length value) + 1 | (_, _, value) <- arguments]
+  when (rawCost > 65536) (Left (EncodedCommandTooLarge "session.creation"))
+  mapM_ (\(key, _, value) -> when (Bytes.elem 0 value) (Left (NulOperand key))) arguments
+  mapM_ (\(key, _) -> when (Os.null key || Bytes.elem 61 (osBytes key))
+    (Left (InvalidOperand "environment" "invalid variable name"))) options.environment
+  let expansion = sum [if format then 6 * toInteger (Bytes.count 35 value) else 0 |
+        (_, format, value) <- arguments]
+        + toInteger (length [() | (_, _, value) <- arguments, endsSeparator value])
+  when (rawCost + expansion > 65536) (Left (EncodedCommandTooLarge "session.creation"))
+  pure [protectSeparator (if format then protectFormat value else value) | (_, format, value) <- arguments]
+  where
+    literal key value = (key, False, value)
+    optional key flag encode = maybe [] (\value -> [literal key flag, (key, True, encode value)])
+    dimension key flag = maybe (Right []) $ \value ->
+      if Value.dimensionValue value > 65535
+        then Left (InvalidOperand key "dimension exceeds 65535 cells")
+        else Right [literal key flag, literal key (Ascii.pack (show (Value.dimensionValue value)))]
+
+osBytes :: PosixString -> ByteString
+osBytes = Bytes.pack . map (fromIntegral . fromEnum . Os.toChar) . Os.unpack
 
 -- | Native queue evidence. An applied command may still have failing hooks;
 -- none of these constructors promises rollback or a refreshed observation.

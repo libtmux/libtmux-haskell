@@ -99,6 +99,7 @@ performMutation hooks duration runtime server executable mutation = mask $ \rest
   where
     argumentError (C.NulOperand field) = field <> " contains NUL"
     argumentError (C.EncodedCommandTooLarge field) = field <> " exceeds the command size limit"
+    argumentError (C.InvalidOperand field reason) = field <> ": " <> reason
 
 remaining :: Word64 -> IO Int
 remaining deadline = do
