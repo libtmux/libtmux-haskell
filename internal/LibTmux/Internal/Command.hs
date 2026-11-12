@@ -19,13 +19,15 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.Text (Text)
 import Data.Text.Encoding qualified as Utf8
+import Data.List.NonEmpty qualified as NonEmpty
+import LibTmux.Creation (SessionOptions (..), InitialProcess (..), defaultSessionOptions)
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Frame qualified as Frame
 import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Snapshot qualified as Snapshot
 import LibTmux.Value qualified as Value
-import System.OsPath.Posix (PosixPath)
 import System.OsString.Posix (PosixString)
 import System.OsString.Posix qualified as Os
 
@@ -42,30 +44,6 @@ data ArgumentError
   = NulOperand !Text | EncodedCommandTooLarge !Text | InvalidOperand !Text !Text
   deriving stock (Eq, Show)
 
--- | Native initial-process modes. A direct executable needs at least one
--- argument: tmux interprets a single argv entry as a shell command.
-data InitialProcess
-  = DefaultProcess | ShellCommand !ByteString
-  | DirectCommand !PosixString ![PosixString] | EmptyPane
-  deriving stock (Eq)
-
--- | Detached creation only. Nothing selects tmux's native defaults; explicit
--- values remain literal through command and format parsing. These private
--- options deliberately have no Show instance for environment or command data.
-data SessionOptions = SessionOptions
-  { name :: !(Maybe Text)
-  , windowName :: !(Maybe TmuxText)
-  , workingDirectory :: !(Maybe PosixPath)
-  , environment :: ![(PosixString, PosixString)]
-  , width :: !(Maybe Value.Dimension)
-  , height :: !(Maybe Value.Dimension)
-  , updateEnvironment :: !Bool
-  , process :: !InitialProcess
-  } deriving stock (Eq)
-
-defaultSessionOptions :: SessionOptions
-defaultSessionOptions = SessionOptions Nothing Nothing Nothing [] Nothing Nothing True DefaultProcess
-
 -- | Validate and lower one detached creation, including its receipt format.
 -- The native layer independently bounds the full launch vector before admission.
 -- Paths and names expand once in tmux; environment and process argv do not.
@@ -75,23 +53,18 @@ compileSessionCreation nonce options = do
     (Left (InvalidOperand "environment" "variable count exceeds 4096"))
   process <- case options.process of
     DefaultProcess -> Right []
-    EmptyPane -> Right [literal "initialProcess" ""]
-    ShellCommand command
-      | Bytes.null command -> Left (InvalidOperand "initialProcess" "empty shell command; use EmptyPane")
-      | otherwise -> Right [literal "initialProcess" command]
+    ShellCommand command -> Right [literal "initialProcess" command]
     DirectCommand executable arguments -> do
-      when (null arguments)
-        (Left (InvalidOperand "initialProcess" "direct execution requires at least one argument"))
-      unless (length (take 4097 arguments) <= 4096)
+      unless (length (take 4097 (NonEmpty.toList arguments)) <= 4096)
         (Left (InvalidOperand "initialProcess" "argument count exceeds 4096"))
       when (Os.null executable) (Left (InvalidOperand "initialProcess" "empty executable"))
-      Right (map (literal "initialProcess" . osBytes) (executable : arguments))
+      Right (map (literal "initialProcess" . osBytes) (executable : NonEmpty.toList arguments))
   columns <- dimension "width" "-x" options.width
   rows <- dimension "height" "-y" options.height
   let arguments = map (literal "session.creation")
         ["new-session", "-d", "-P", "-F", sessionCreationFormat nonce]
         <> optional "session.name" "-s" Utf8.encodeUtf8 options.name
-        <> optional "window.name" "-n" Label.toBytes options.windowName
+        <> optional "window.name" "-n" Snapshot.labelBytes options.windowName
         <> optional "workingDirectory" "-c" osBytes options.workingDirectory
         <> columns <> rows
         <> [literal "session.creation" "-E" | not options.updateEnvironment]

@@ -3,6 +3,7 @@ module RuntimeCreationTest (tests) where
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Exception.Context qualified as Context
+import Data.List.NonEmpty (NonEmpty (..))
 import Control.Monad (forM_, void)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
@@ -14,12 +15,14 @@ import Fixture qualified
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
+import LibTmux.Internal.Creation qualified as Create
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
-import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Snapshot qualified as Snapshot
 import LibTmux.Value qualified as Value
 import System.Directory (createDirectory)
 import System.OsString.Posix qualified as Os
@@ -38,7 +41,7 @@ tests = testGroup "owned Runtime creation"
         configured fixture server ["set-option", "-g", "status", "off"]
         configured fixture server ["set-option", "-g", "update-environment", "LIBTMUX_CLIENT_CONTEXT"]
         let options = (optionsFor "literal-#{pid}")
-              { C.windowName = Just (Label.fromBytes "#[#{pid}];")
+              { C.windowName = Just (Snapshot.labelFromBytes "#[#{pid}];")
               , C.workingDirectory = Just (Os.fromBytestring cwd)
               , C.environment = [(Os.fromBytestring "KEY", Os.fromBytestring "#{pid};")]
               , C.width = Just width, C.height = Just height }
@@ -175,6 +178,34 @@ tests = testGroup "owned Runtime creation"
               _ -> assertFailure "creation allocation failure lost its correlation"
           Right _ -> assertFailure "worker-allocation failure returned success"
 
+  , testCase "synchronous creation retains journals before Request handoff fails" $
+      forM_ [False, True] $ \expires -> do
+        first <- newIORef True
+        gate <- newEmptyTMVarIO
+        let fork :: P.Fork
+            fork action = atomicModifyIORef' first (\old -> (False, old)) >>= \case
+              True | expires -> atomically (readTMVar gate) >> fail "unexpected allocation"
+                   | otherwise -> throwIO ThreadKilled
+              False -> P.normalFork action
+            duration = if expires then 20000 else 1000000
+        withRuntime fork $ \runtime server fixture -> do
+          let options = (optionsFor "before-handoff") {C.process = C.ShellCommand "exec /bin/cat -"}
+          bounded (tryWithContext @SomeException (Create.performCreation P.defaultHooks duration
+            runtime server (Ascii.pack fixture.executable) options)) >>= \case
+              Left (ExceptionWithContext context problem) -> do
+                if expires then case fromException @Scope.TmuxException problem of
+                  Just Scope.MutationTimedOut -> pure ()
+                  _ -> assertFailure "allocation timeout changed exception"
+                else fromException @AsyncException problem @?= Just ThreadKilled
+                recovery <- case Context.getExceptionAnnotations @Create.CreationRecovery context of
+                  [value] -> pure value
+                  _ -> fail "pre-Request failure lost creation recovery"
+                atomically (Create.observedReceipt recovery) >>= (@?= Nothing)
+                observed <- bounded (Create.awaitRecovery recovery)
+                observed.logical.outcome @?= Just S.NotDispatched
+                observed.logical.retained @?= False
+              Right _ -> assertFailure "failed allocation returned a creation"
+
   , testCase "invalid options and launch contexts create no operation" $
       withRuntime P.normalFork $ \runtime server fixture -> do
         forM_ [(launchContext fixture, (optionsFor "bad") {C.name = Just "bad\NULname"}),
@@ -197,6 +228,21 @@ tests = testGroup "owned Runtime creation"
             length report.readWorkers @?= 0
             length report.unresolved @?= 0
 
+  , testCase "malformed completion retains IDs and uncertainty after native cleanup" $
+      withRuntime P.normalFork $ \runtime server fixture -> do
+        let hooks = P.defaultHooks {P.launchNative = \spec -> N.launch spec
+              {N.file = "/bin/sh", N.args = ["/bin/sh", "-c",
+                "\"$@\" || exit; printf 'after-exit\\n'", "corrupt-footer"] <> spec.args}}
+        created <- R.createSessionWith hooks 1000000 runtime server (launchContext fixture) (optionsFor "malformed-created")
+        withCreated fixture server created $ \receipt -> do
+          unavailable created
+          let correlation = R.readReceipt (R.creationRequest created)
+          recovery <- settled runtime server correlation
+          recovery.logical.outcome @?= Just S.OutcomeUnknown
+          recovery.logical.retained @?= True
+          atomically (R.journalReceipt (R.creationJournal created)) >>= (@?= Just receipt)
+          atomically (R.detachReceipt runtime server correlation) >>= (@?= True)
+
   , testCase "overflow after receipt retains IDs while releasing physical ownership" $
       withRuntime P.normalFork $ \runtime server fixture ->
         -- tmux caps each padding modifier at 10000 cells.
@@ -214,7 +260,7 @@ tests = testGroup "owned Runtime creation"
 optionsFor :: ByteString -> C.SessionOptions
 optionsFor name = C.defaultSessionOptions
   {C.name = Just (Utf8.decodeUtf8 name)
-  ,C.process = C.DirectCommand (Os.fromBytestring "/bin/cat") [Os.fromBytestring "-"]}
+  ,C.process = C.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])}
 
 launchContext :: Fixture.Fixture -> N.Spec
 launchContext fixture = (N.spec (Ascii.pack fixture.executable) []) {N.cwd = Ascii.pack fixture.directory}
