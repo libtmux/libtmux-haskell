@@ -73,6 +73,7 @@ import LibTmux.Internal.Scope
   )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
+import LibTmux.Version qualified as Version
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
 import System.OsPath.Posix (PosixPath)
@@ -105,6 +106,7 @@ withRuntime action = do
 -- | Adopt one endpoint within an existing Runtime and close only that handle
 -- after the callback. Other handles remain admitted under the shared limits;
 -- each adoption has its own 'serverGeneration'. Use 'withServer' for one handle.
+-- Opening validates the daemon's supported version before the callback.
 --
 -- Failed adoption can retain a t'CleanupRecovery' before a t'Server' exists.
 -- Inspection, retry and waiting through that owner stay scoped to the failed
@@ -123,6 +125,7 @@ withServerIn (Runtime runtime) config action = mask $ \restore -> do
   Scope.runServerScope runtime owner $ restore $ do
     handle <- operational (R.adoptServerOwnerWith (\_ _ -> pure ()) runtime owner
       (posixBytes config.socketPath) (posixBytes config.pinDirectory))
+    operational (qualifyVersion runtime handle executable duration)
     action (Server runtime handle executable duration)
 
 -- | Pure configuration, checked when 'withServer' or 'withServerIn' opens the handle.
@@ -131,7 +134,7 @@ data ServerConfig = ServerConfig
   { socketPath :: !PosixPath -- ^ Existing tmux socket, with an absolute trusted path.
   , executable :: !PosixPath -- ^ Executable path or a program resolved once through PATH.
   , pinDirectory :: !PosixPath -- ^ Writable trusted directory on the socket's filesystem.
-  , captureTimeout :: !NominalDiffTime -- ^ Capture deadline in seconds, greater than zero and at most ten.
+  , captureTimeout :: !NominalDiffTime -- ^ Capture and initial version-check deadline in seconds, positive and at most ten.
   }
   deriving stock (Eq, Show)
 
@@ -141,7 +144,9 @@ data ServerConfig = ServerConfig
 serverConfig :: PosixPath -> ServerConfig
 serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeDirectory socket) 2
 
--- | Open one handle, run the callback, then perform bounded owned cleanup.
+-- | Pin the endpoint, validate its supported daemon version, run the callback,
+-- then perform bounded owned cleanup. Version observation runs no command hook.
+-- Unsupported or unrecognized replies fail before entering the callback.
 -- Cleanup never replaces a callback exception. Incomplete cleanup raises
 -- 'CleanupFailed' after success, or annotates the original callback failure
 -- with a reachable t'CleanupRecovery'. No daemon shutdown is requested.
@@ -151,7 +156,13 @@ withServer config action = do
   runtime <- R.newRuntime P.normalFork
   Scope.runScope runtime $ do
     handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
+    operational (qualifyVersion runtime handle executable duration)
     action (Server runtime handle executable duration)
+
+qualifyVersion :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO ()
+qualifyVersion runtime handle executable duration = do
+  (_, _, version) <- C.captureVersionWith P.defaultHooks runtime handle executable duration
+  either (throwIO . UnsupportedTmuxVersion) (const (pure ())) (Version.requireSupported version)
 
 checkedConfiguration :: ServerConfig -> IO (ByteString, Int)
 checkedConfiguration config = do

@@ -64,6 +64,22 @@ tests = testGroup "owned Runtime reads"
       forM_ detached $ \request ->
         atomically (R.readStatus request) >>= (@?= S.Status S.OperationComplete (Just S.Succeeded) False)
 
+  , testCase "version qualification does not run configured command hooks" $
+      withRuntime P.normalFork $ \runtime client fixture -> do
+        expected <- serverVersion fixture
+        forM_ ["after-run-shell", "after-display-message", "command-error"] $ \hook -> do
+          (code, output, errors) <- Fixture.command fixture
+            ["set-hook", "-g", hook, "set-option -g @libtmux-probe-hit 1"]
+          case code of
+            ExitSuccess -> (output, errors) @?= ("", "")
+            ExitFailure 1 -> assertBool "unexpected hook configuration failure"
+              (("invalid option: " <> Bytes.pack hook) `Bytes.isInfixOf` Lazy.toStrict errors)
+            other -> assertFailure (show other)
+        Fixture.command fixture ["set-option", "-g", "@libtmux-probe-hit", "0"] >>= (@?= (ExitSuccess, "", ""))
+        request <- R.readServerVersion runtime client (Bytes.pack fixture.executable) R.ScalarRead
+        expectValue expected request
+        Fixture.command fixture ["show-option", "-g", "-v", "@libtmux-probe-hit"] >>= (@?= (ExitSuccess, "0\n", ""))
+
   , testCase "foreign clients and invalid deadlines refuse before reservation or fork" $
       withRuntime P.normalFork $ \runtime client fixture -> do
         forks <- newIORef (0 :: Int)
