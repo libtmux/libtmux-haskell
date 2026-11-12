@@ -158,6 +158,11 @@ cases as an external executable against the archived library. Those cases
 import no private library modules and exercise accepted cancellation, custom
 deadlines, correlated recovery, reference rejection and later progress.
 
+The consumer check also runs every current example against the Git revision
+offered by the installation guide. That pin must remain in the branch's
+history. Refresh it after rewriting commits; CI fetches history for this check.
+An archive built from HEAD alone cannot qualify an older installation recipe.
+
 The [creation program](../docs/creation.md) uses the returned session, window
 and pane references, refreshes their graph and checks duplicate rejection.
 The archive consumer also runs public creation cases for hook failure,

@@ -148,7 +148,8 @@ Its positive timeout, at most ten seconds, covers context acquisition,
 admission and the complete command response; the default is one second.
 It does not bound the lifetime of the created session or its process.
 
-Invalid options fail before dispatch. A duplicate session name raises
+Protocol and bound checks fail before dispatch. tmux also validates its own
+input rules and current server state. A duplicate session name raises
 `MutationRejected`; a successful primary creation followed by hook failure
 raises `MutationAppliedWithErrors`. Neither failure implies rollback of
 independent hook effects. Timeout, cancellation and incomplete responses can
