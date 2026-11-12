@@ -98,14 +98,14 @@ decodeSessionCreation nonce exit output errors
   | not (Bytes.null errors) = unknown UnexpectedReply
   | otherwise = case known of
       Just (stamp, receipt, following) ->
-        case Bytes.stripSuffix "%exit\n" following >>= Bytes.stripPrefix ("%end " <> stamp <> "\n") of
+        case stripControlExit following >>= Bytes.stripPrefix ("%end " <> stamp <> "\n") of
           Just tailBytes | exit == Just 0 -> SessionCreated receipt
                          | exit == Just 1 && not (Bytes.null tailBytes) ->
                              SessionCreatedWithErrors receipt (Bytes.copy tailBytes)
           _ -> unknown UnexpectedReply
       Nothing -> case initial of
         Just (stamp, body) | exit == Just 1
-          , Just packet <- Bytes.stripSuffix "%exit\n" body
+          , Just packet <- stripControlExit body
           , Right (diagnostic, following) <- errorBody stamp packet ->
               SessionCreationRejected (Bytes.copy (diagnostic <> following))
         _ -> unknown UnexpectedReply
@@ -149,6 +149,11 @@ creationField field bytes
   | Bytes.length bytes > 1 && Bytes.head bytes == 48 = Nothing
   | otherwise = either (const Nothing) Just (Field.decodeField field bytes)
 
+stripControlExit :: ByteString -> Maybe ByteString
+stripControlExit bytes = do
+  packet <- Bytes.stripSuffix "%exit\n" bytes
+  if Bytes.null packet || Bytes.last packet /= 10 then Nothing else Just packet
+
 -- | Interpret fully drained streams and normal exit status for one t'Mutation'.
 -- This is not a general control-mode decoder or evidence for waiting commands.
 decodeControlReply :: Maybe Int -> ByteString -> ByteString -> Either ReplyError MutationReply
@@ -156,8 +161,7 @@ decodeControlReply exit output errors
   | Bytes.length output > 1048576 || Bytes.length errors > 1048576 = Left ReplyTooLarge
   | not (Bytes.null errors) = Left UnexpectedReply
   | otherwise = do
-      packet <- maybe (Left UnexpectedReply) Right (Bytes.stripSuffix "%exit\n" output)
-      if Bytes.null packet || Bytes.last packet /= 10 then Left UnexpectedReply else pure ()
+      packet <- maybe (Left UnexpectedReply) Right (stripControlExit output)
       let (header, following) = Bytes.break (== 10) packet
       stamp <- guardStamp header
       body <- maybe (Left UnexpectedReply) Right (Bytes.stripPrefix "\n" following)
