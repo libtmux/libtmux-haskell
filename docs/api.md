@@ -5,7 +5,8 @@ The public modules are:
 | Module | Read it for |
 | --- | --- |
 | [LibTmux](../src/LibTmux.hs) | Common observation, Server and scalar entry point |
-| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, rename/title commands, deadlines and recovery |
+| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, creation, rename/title commands, deadlines and recovery |
+| [LibTmux.Creation](../src/LibTmux/Creation.hs) | Session options, process modes and historical created references |
 | [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
 | [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
 | [LibTmux.Id](../src/LibTmux/Id.hs) | Distinct entity IDs, canonical parsing, rendering and `IdError` |
@@ -24,7 +25,8 @@ The public modules are:
 Import query sources and field modules qualified, as the [query program](query.md)
 does. The common `LibTmux` module keeps snapshot collection access separate
 from query descriptions.
-The [mutation program](mutations.md) selects physical targets before issuing
+The [creation program](creation.md) uses actual returned references and reads
+them from a new capture. The [mutation program](mutations.md) selects physical targets before issuing
 commands and compares their detached observations afterward.
 
 Build the native Haddock browser from a checkout:
@@ -89,7 +91,8 @@ checked-out source and retains the raw and prepared artifacts separately.
 
 The complete [capture example](../examples/capture-graph/Main.hs),
 [shared Runtime example](../examples/shared-runtime/Main.hs),
-[typed query example](../examples/query-graph/Main.hs) and
+[typed query example](../examples/query-graph/Main.hs),
+[creation example](../examples/create-session/Main.hs) and
 [typed-value example](../examples/typed-values/Main.hs) use only public
 exports. Their source and output are checked against the source archive by
 the [consumer check](../scripts/check_sdist.py).

@@ -23,6 +23,7 @@ extra-doc-files:
   docs/capture.md
   docs/shared-runtime.md
   docs/query.md
+  docs/creation.md
   docs/mutations.md
   docs/fixtures.md
   docs/performance.md
@@ -107,6 +108,12 @@ extra-source-files:
   examples/query-graph/libtmux-query-graph.cabal
   examples/query-graph/cabal.project
   examples/query-graph/cabal.project.vcs
+  examples/create-session/Main.hs
+  examples/create-session/README.md
+  examples/create-session/expected.stdout
+  examples/create-session/libtmux-create-session.cabal
+  examples/create-session/cabal.project
+  examples/create-session/cabal.project.vcs
   examples/mutate-graph/Main.hs
   examples/mutate-graph/README.md
   examples/mutate-graph/expected.stdout

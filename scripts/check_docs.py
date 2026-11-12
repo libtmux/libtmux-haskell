@@ -44,7 +44,7 @@ def check():
     paths = {"source", "package", "project", "vcs_project", "stdout"}
     fields = paths | {"id", "executable", "capability", "command", "verification"}
     for entry in entries:
-        if set(entry) not in [fields, fields | {"runner"}] or entry["id"] in examples:
+        if set(entry) not in [fields, fields | {"runner"}, fields | {"runner", "fixture_panes"}] or entry["id"] in examples:
             raise ValueError("Invalid or duplicate example entry")
         for key in paths | ({"runner"} if "runner" in entry else set()):
             path = Path(entry[key])
@@ -61,6 +61,10 @@ def check():
             command = ["python3", entry["runner"]]
             if runner[1] != entry["id"]:
                 command += ["--executable", entry["executable"], "--expected-output", entry["stdout"]]
+            if "fixture_panes" in entry:
+                if type(entry["fixture_panes"]) is not int or not 1 <= entry["fixture_panes"] <= 10000:
+                    raise ValueError("Invalid example physical pane count")
+                command += ["--expected-panes", str(entry["fixture_panes"])]
             if entry["command"] != command:
                 raise ValueError("An example command must execute its declared runner")
         examples[entry["id"]] = entry

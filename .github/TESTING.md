@@ -158,6 +158,12 @@ cases as an external executable against the archived library. Those cases
 import no private library modules and exercise accepted cancellation, custom
 deadlines, correlated recovery, reference rejection and later progress.
 
+The [creation program](../docs/creation.md) uses the returned session, window
+and pane references, refreshes their graph and checks duplicate rejection.
+The archive consumer also runs public creation cases for hook failure,
+historical deletion, timeout and cancellation. Private Runtime cases cover
+failed request handoff and malformed completion after a valid ID receipt.
+
 Pure unit tests exercise unavailable capabilities before short-circuiting,
 empty relationships, numeric bounds, retained bytes and generated predicates
 against an independent interpreter. Public type checks reject wrong rows,
@@ -172,6 +178,9 @@ in a cleanup note, even when the test independently observes the pane's exit;
 that test observation does not establish the runner's ownership receipt.
 A failed response followed by failed command retirement also preserves the
 primary failure. Daemon shutdown precedes the remaining bounded command wait.
+Before teardown, the runner discovers any additional live physical panes and
+tracks their PIDs. Creation's fixture requires both initial and created pane
+processes to exit on success, callback failure and cancellation.
 
 A real-tmux capability program must include its own setup and cleanup,
 explicit target, feature floor and observable result. Run it end to end;
