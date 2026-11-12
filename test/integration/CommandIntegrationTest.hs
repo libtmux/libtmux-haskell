@@ -1,7 +1,8 @@
 module CommandIntegrationTest (tests) where
 
 import Control.Concurrent.Async (wait, withAsync)
-import Control.Exception (bracket, finally)
+import Control.Concurrent.STM (STM, atomically, readTMVar)
+import Control.Exception (bracket, finally, try)
 import Control.Monad (forM_, void)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -179,7 +180,50 @@ tests = testGroup "native mutation lowering"
                   missing <- invoke fixture client ["has-session", "-t", Utf8.encodeUtf8 (Id.renderSessionId receipt.sessionId)]
                   missing.exit @?= Just (N.Exited 1)
                 other -> fail (show other)
+  , testCase "session creation retains observed IDs when a waiting hook is cancelled" $
+      Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+        client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+        nonce <- require (Frame.parseNonce (Bytes.replicate 64 100))
+        let name = "created-cancel"
+            release = "libtmux-created-cancel-release"
+            signal = prepareCreation fixture client ["wait-for", "-S", release]
+            cleanup = signal `finally` prepareCreation fixture client ["set-hook", "-gu", "after-new-session"]
+        flip finally cleanup $ do
+          prepareCreation fixture client ["set-hook", "-g", "after-new-session", "wait-for " <> release]
+          ticket <- submitWithInput fixture client
+            ["-C", "new-session", "-d", "-P", "-F", C.sessionCreationFormat nonce,
+             "-s", name, "-n", "created-window", "--", "/bin/cat", "-"] P.KeepInputOpen
+          receipt <- timeout 1000000 (atomically (receiptBeforeCompletion nonce ticket)) >>=
+            maybe (fail "creation receipt wait expired")
+              (maybe (fail "native client completed without a receipt") pure)
+          withCreatedPane fixture client name $ do
+            verifyCreated fixture client name receipt
+            P.abort ticket
+            try @P.OwnerError (P.await ticket) >>= \case
+              Left P.Aborted -> pure ()
+              Right completed -> completed.exit @?= Just (N.Signaled 9 False)
+              Left other -> fail (show other)
+            prefix <- atomically (P.stdoutPrefix ticket)
+            C.decodeSessionCreation nonce Nothing prefix "" @?=
+              C.SessionCreationUnknown (Just receipt) C.UnexpectedReply
+  , testCase "session receipt discovery observes terminal native rejection" $
+      Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+        client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+        nonce <- require (Frame.parseNonce (Bytes.replicate 64 101))
+        ticket <- submitWithInput fixture client ["-C", "has-session", "-t", "=libtmux-created-absent"] P.KeepInputOpen
+        completed <- P.await ticket
+        completed.exit @?= Just (N.Exited 1)
+        -- A completed client cannot make receipt discovery wait for more bytes.
+        observed <- timeout 100000 (atomically (receiptBeforeCompletion nonce ticket))
+        observed @?= Just Nothing
   ]
+
+receiptBeforeCompletion :: Frame.Nonce -> P.Ticket -> STM (Maybe C.SessionReceipt)
+receiptBeforeCompletion nonce ticket = do
+  prefix <- P.stdoutPrefix ticket
+  case C.decodeSessionCreation nonce Nothing prefix "" of
+    C.SessionCreationUnknown (Just value) _ -> pure (Just value)
+    _ -> readTMVar ticket.result >> pure Nothing
 
 createSessionProbe :: Fixture.Fixture -> R.ServerHandle -> Frame.Nonce -> Bytes.ByteString -> IO P.Completion
 createSessionProbe fixture client nonce name = invokeWithInput fixture client
@@ -221,10 +265,14 @@ invoke fixture client arguments = invokeWithInput fixture client arguments (P.By
 
 invokeWithInput :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> P.Input -> IO P.Completion
 invokeWithInput fixture client arguments input = do
+  ticket <- submitWithInput fixture client arguments input
+  timeout 1000000 (P.await ticket) >>= maybe (fail "native mutation probe did not complete") pure
+
+submitWithInput :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> P.Input -> IO P.Ticket
+submitWithInput fixture client arguments input = do
   let executable = Ascii.pack fixture.executable
       spec = N.spec executable ([executable, "-u", "-N", "-S", pinPath (R.serverPin client)] <> arguments)
-  ticket <- P.submitInputRegistered (const (pure ())) B.Ordinary P.defaultHooks (R.serverPool client) spec input
-  timeout 1000000 (P.await ticket) >>= maybe (fail "native mutation probe did not complete") pure
+  P.submitInputRegistered (const (pure ())) B.Ordinary P.defaultHooks (R.serverPool client) spec input
 
 require :: Show problem => Either problem value -> IO value
 require = either (fail . show) pure

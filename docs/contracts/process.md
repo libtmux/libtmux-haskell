@@ -45,10 +45,11 @@ updated.
 A shared context limits all its pools to eight clients, sixteen pending
 children and 128 MiB of reserved payload capacity. Reservation and ticket
 registration are one STM transaction before copying or forking. Each captured
-child reserves 4,456,448 bytes: both streams' chunks and final concatenations,
-stdin, owned/marshaled vectors and read scratch. This conservative allowance
-can reject earlier than accounting only actual payload sizes. It is not an
-RSS limit; Haskell object headers, GC and detached caller values are separate.
+child reserves 4,457,472 bytes: both streams' chunks and final concatenations,
+stdin, owned/marshaled vectors, read scratch and bounded stdout-prefix copies.
+This conservative allowance can reject earlier than accounting only actual
+payload sizes. It is not an RSS limit; Haskell object headers, GC and detached
+caller values are separate.
 
 Child and byte leases declare Ordinary or Inspection admission. Ordinary
 work stops at fifteen children and leaves the context's configured byte
@@ -57,10 +58,11 @@ subject to the same sixteen-child and 128 MiB totals. An inspection still
 pending cleanup may hold that capacity; this reserve protects against
 ordinary saturation, not arbitrary inspection debt.
 
-Pool construction requires at least 8,650,752 protected bytes: one child's allowance plus a
-4,194,304-byte consumer envelope. The envelope covers both completed streams
-and equally bounded decoded copies; consumers must enforce those bounds or
-reserve more. Ordinary reservations therefore stop at 125,566,976 bytes.
+Pool construction requires at least 8,652,288 protected bytes: one child's
+allowance plus a 4,194,816-byte consumer envelope. The envelope covers both
+completed streams, equally bounded decoded copies and the retained stdout
+prefix; consumers must enforce those bounds or reserve more. Ordinary
+reservations therefore stop at 125,565,440 bytes.
 This bounded profile does not guarantee admission of a maximum-size capture.
 
 Constructors require caller masking through cleanup/registry installation.
@@ -75,6 +77,14 @@ ticket and releases its child allowance atomically; awaiting is optional.
 Pools must not retain an uncharged terminal-result cache. An internal consumer
 must reserve a separate parent envelope before dispatch for data retained
 through decoding, then transfer that charge or release it on external delivery.
+
+Each ticket retains a copied 512-byte stdout prefix independently of its final
+result. A short masked transition reads the nonblocking descriptor and
+publishes the bounded prefix before checking the stream limit. Cancellation
+and overflow therefore preserve already observed evidence. Readiness waits
+remain interruptible; stderr never enters this journal. Completing a prefix
+does not establish command completion. Runtime creation recovery must still
+transfer validated IDs into its own bounded receipt journal.
 
 ## Provisional Runtime ownership
 
@@ -248,7 +258,7 @@ STM rollback leaves other operations unchanged.
 
 Tagged graph and Snapshot reads always use ordinary admission. Their registered read
 owner retains the 64 MiB graph construction allowance together with the
-existing 4 MiB read envelope. Caller cancellation cannot release that allowance
+process-result envelope. Caller cancellation cannot release that allowance
 while a worker still constructs or forces the graph. The default graph capture
 does not acquire a second copy of it. Scalar comparison capture retains its
 separate scoped allowance. These reservations bound admitted work, not RSS;

@@ -31,14 +31,15 @@ static int frame(const char *value) {
 
 int main(int argc, char **argv, char **env) {
     if (argc > 1 && !strcmp(argv[1], "--signal")) { raise(SIGTERM); return 25; }
-    if (argc > 2 && (!strcmp(argv[1], "--gate") || !strcmp(argv[1], "--gated-echo"))) {
+    if (argc > 2 && (!strcmp(argv[1], "--gate") || !strcmp(argv[1], "--gated-echo") ||
+                    !strcmp(argv[1], "--error-gate"))) {
         int gate = open(argv[2], O_RDONLY);
-        if (gate < 0 || put(1, "R", 1)) return 26;
+        if (gate < 0 || put(!strcmp(argv[1], "--error-gate") ? 2 : 1, "R", 1)) return 26;
         char byte;
         ssize_t count;
         do { count = read(gate, &byte, 1); } while (count < 0 && errno == EINTR);
         close(gate);
-        if (!strcmp(argv[1], "--gate")) return count == 1 ? 0 : 27;
+        if (strcmp(argv[1], "--gated-echo")) return count == 1 ? 0 : 27;
         if (count != 1) return 27;
     }
     if (argc > 1 && (!strcmp(argv[1], "--echo") || !strcmp(argv[1], "--gated-echo"))) {
