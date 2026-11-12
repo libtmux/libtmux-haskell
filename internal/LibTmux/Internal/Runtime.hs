@@ -57,6 +57,7 @@ import LibTmux.Internal.SocketPin
 import LibTmux.Internal.Topology qualified as Topology
 import LibTmux.Id qualified as Id
 import LibTmux.Version qualified as Version
+import LibTmux.Internal.VersionProbe qualified as VersionProbe
 import System.Timeout (timeout)
 
 data Runtime = Runtime
@@ -173,7 +174,7 @@ data ReadError
   | ReadExpired | ReadCancelled | ReadClosing
   | InvalidReadFrame !F.FrameError | InvalidServerPid
   | InvalidRecordFrame !Record.RecordError
-  | InvalidVersionEncoding | InvalidServerVersion !Version.VersionError
+  | InvalidVersionProbe !VersionProbe.ProbeError
   | InvalidEntityReceipt
   | InvalidCommandOperands !Command.ArgumentError
   | InvalidCommandReply !Command.ReplyError
@@ -631,7 +632,7 @@ withCaptureBudget runtime action = bracket
 commandArguments :: F.Nonce -> ReadCommand value -> [ByteString]
 commandArguments nonce command = case command of
   ReadPid -> framed "#{pid}"
-  ReadVersion -> framed "#{version}"
+  ReadVersion -> VersionProbe.versionArguments nonce
   ReadTopology -> framed Topology.topologyFormat
   ReadEntityField field -> let (_, receipt, value) = entityField field in
     framed (receipt <> ":" <> F.escapedFieldFormat value)
@@ -924,6 +925,12 @@ decodeResult (CreationResult _) = \nonce completed -> case completed.launchFailu
       value -> Right value
 
 decodeRead :: ReadCommand value -> F.Nonce -> P.Completion -> Either SomeException value
+decodeRead ReadVersion nonce completed =
+  let status = case completed.exit of
+        Just (N.Exited value) -> Just (fromIntegral value)
+        _ -> Nothing
+  in either (Left . toException . InvalidVersionProbe) Right
+    (VersionProbe.decodeVersionProbe nonce status completed.output completed.errors)
 decodeRead command nonce completed
   | completed.exit /= Just (N.Exited 0) = Left (toException (ReadExit completed.exit))
   | not (Bytes.null completed.errors) = Left (toException (ReadStderr (Bytes.length completed.errors)))
@@ -934,12 +941,6 @@ decodeRead command nonce completed
           Just (pid, "") | Bytes.length bytes <= 10 && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
               && pid > 0 && pid <= toInteger (maxBound @CInt) -> Right $! pid
           _ -> Left (toException InvalidServerPid)
-      ReadVersion -> do
-        bytes <- scalar F.decodeScalar 64
-        text <- either (const (Left (toException InvalidVersionEncoding))) Right (Utf8.decodeUtf8' bytes)
-        case Version.parseVersion text of
-          Left problem -> Left (toException (InvalidServerVersion problem))
-          Right version -> Right $! version
       ReadTopology -> scalar F.decodeScalar 1048576
       ReadEntityField field -> do
         bytes <- scalar F.decodeEscapedScalar 1048576

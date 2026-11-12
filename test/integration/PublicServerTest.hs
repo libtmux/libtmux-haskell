@@ -58,6 +58,26 @@ tests = testGroup "public Server API"
         code @?= ExitSuccess
         errors @?= ""
 
+  , testCase "Server adoption refuses an unqualified executable before entering the callback" $
+      Fixture.withFixture $ \fixture -> forM_ [False, True] $ \shared -> do
+        entered <- newIORef False
+        let config = (Tmux.serverConfig (Os.fromBytestring (Bytes.pack fixture.socket)))
+              {Tmux.executable = Os.fromBytestring "/bin/false"}
+            callback _ = writeIORef entered True
+            action = if shared
+              then Tmux.withRuntime (\runtime -> Tmux.withServerIn runtime config callback)
+              else Tmux.withServer config callback
+        result <- Tmux.tryTmux action
+        readIORef entered >>= (@?= False)
+        case result of
+          Left (ExceptionWithContext context _) ->
+            forM_ (Tmux.cleanupRecoveries context) $ \recovery -> do
+              status <- Tmux.inspectCleanup recovery
+              mapM_ (Tmux.detachUnresolved recovery . fst) status.unresolved
+              _ <- Tmux.resumeCleanup recovery
+              pure ()
+          Right () -> assertFailure "unqualified Server entered its callback"
+
   , testCase "independent Server scopes do not exchange targeting references" $
       Fixture.withFixture $ \fixture -> do
         let config = (Tmux.serverConfig (Os.fromBytestring (Bytes.pack fixture.socket)))

@@ -58,7 +58,9 @@ retain observed IDs through cancellation, deadline and output overflow, and
 exercise explicit recovery without replay. Queue cancellation and allocation
 failure do not invent a creation receipt. Launch cwd and environment are
 explicit inputs; they do not silently inherit the read transport's fixed
-context. First-server bootstrap and a public creation operation remain open.
+context. The public [creation API and program](../creation.md) use these
+receipts and preserve correlated recovery through pre-request failures.
+First-server bootstrap remains open.
 
 ## Creation and reuse
 

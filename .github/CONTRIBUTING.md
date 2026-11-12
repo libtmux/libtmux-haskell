@@ -2,8 +2,8 @@
 
 The native Haskell implementation is in progress. The public Server and shared
 Runtime scopes, detached observations, typed values and typed queries have
-tests and source-archive consumers. Session/window rename and pane titles
-have public generation checks and recovery. Additional commands, events,
+tests and source-archive consumers. Session creation, session/window rename
+and pane titles have public generation checks and recovery. Additional commands, events,
 workspace tooling and complete adoption qualification remain open.
 
 Read [AGENTS.md](../AGENTS.md) for change discipline and

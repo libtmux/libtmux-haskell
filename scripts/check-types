@@ -17,6 +17,7 @@ compile test/compile-pass/ValueApi.hs
 compile test/compile-pass/ObservationApi.hs
 compile test/compile-pass/QueryApi.hs
 compile test/compile-pass/MutationApi.hs
+compile test/compile-pass/CreationApi.hs
 
 reject() {
     local source=$1 code=$2 expected=$3
@@ -46,4 +47,7 @@ reject test/compile-fail/QueryNumericText.hs 83865 'Actual: Q.Field Pane LibTmux
 reject test/compile-fail/QueryExprCoercion.hs 18872 'coerce'
 reject test/compile-fail/QuerySourceCoercion.hs 18872 'coerce'
 reject test/compile-fail/MutationWrongEntity.hs 83865 'WindowRef'
-printf 'PASS: public API (4 positive and 11 intended negative compilation cases)\n'
+reject test/compile-fail/CreationEmptyArgv.hs 83865 'NonEmpty'
+reject test/compile-fail/CreationConstructor.hs 1928 'CreatedSession'
+reject test/compile-fail/CreationEmptyPane.hs 76037 'EmptyPane'
+printf 'PASS: public API (5 positive and 14 intended negative compilation cases)\n'

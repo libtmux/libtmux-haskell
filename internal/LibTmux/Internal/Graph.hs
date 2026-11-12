@@ -7,7 +7,7 @@
 -- metadata and attached clients, then forces the complete detached value.
 module LibTmux.Internal.Graph
   ( EndpointIdentity (..), Generation (..)
-  , SessionRef (..), WindowRef (..), PaneRef (..)
+  , SessionRef (..), WindowRef (..), PaneRef (..), CreatedSession (..)
   , Session (..), Window (..), Pane (..), WindowLink (..), PaneOccurrence (..)
   , EntityGraph, GraphError (..), LookupError (..), assembleEntityGraph
   , graphSessions, graphWindows, graphPanes, graphLinks, graphOccurrences
@@ -71,6 +71,27 @@ data PaneRef = PaneRef !Generation !PaneId
   deriving stock (Eq, Ord, Show)
 instance NFData PaneRef where
   rnf (PaneRef generation ident) = rnf generation `seq` rnf ident
+
+-- | Historical identities printed during detached new-session. A later hook
+-- may already have removed them. Resolve through a fresh captured snapshot;
+-- these references do not constitute hydrated observations or prove liveness.
+-- Read these fields with record dot; construction remains private.
+--
+-- [#v:serverPid# @serverPid@ :: 'Integer'] Daemon PID printed with the receipt.
+-- [#v:session# @session@ :: t'SessionRef'] Created session in the originating generation.
+-- [#v:window# @window@ :: t'WindowRef'] Initial physical window.
+-- [#v:pane# @pane@ :: t'PaneRef'] Initial physical pane.
+-- [#v:windowIndex# @windowIndex@ :: t'WindowIndex'] Initial link index printed by tmux.
+data CreatedSession = CreatedSession
+  { serverPid :: !Integer -- ^ Daemon PID printed with the creation receipt.
+  , session :: !SessionRef -- ^ Actual created session in the originating generation.
+  , window :: !WindowRef -- ^ Actual initial physical window.
+  , pane :: !PaneRef -- ^ Actual initial physical pane.
+  , windowIndex :: !WindowIndex -- ^ Initial link index printed by tmux.
+  } deriving stock (Eq, Show)
+instance NFData CreatedSession where
+  rnf (CreatedSession pid session window pane index) =
+    rnf pid `seq` rnf session `seq` rnf window `seq` rnf pane `seq` rnf index
 
 -- | Detached physical session. Navigate its appearances through t'WindowLink'.
 data Session = Session

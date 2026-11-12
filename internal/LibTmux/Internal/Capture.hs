@@ -7,6 +7,7 @@
 -- "LibTmux.Server" owns the public scope and cleanup policy.
 module LibTmux.Internal.Capture
   ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
+  , captureVersionWith
   , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
   ) where
 
@@ -31,6 +32,7 @@ import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin (pinGeneration)
+import LibTmux.Version qualified as Version
 import LibTmux.Internal.Topology qualified as T
 import System.Timeout (timeout)
 
@@ -69,6 +71,13 @@ resumeRecovery (CaptureRecovery runtime client receipt) = R.resumeReceipt runtim
 -- | Explicitly release logical uncertainty without releasing native owners.
 detachRecovery :: CaptureRecovery -> STM Bool
 detachRecovery (CaptureRecovery runtime client receipt) = R.detachReceipt runtime client receipt
+
+-- | Qualify adoption through the same bounded read/recovery ownership as a
+-- capture. The version probe runs no tmux after-hook and acquires no graph.
+captureVersionWith :: P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO (Word64, Word64, Version.TmuxVersion)
+captureVersionWith hooks runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
+  left <- remaining deadline
+  owned runtime receipt (R.readServerVersionWith hooks left runtime client executable R.ScalarRead)
 
 captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do

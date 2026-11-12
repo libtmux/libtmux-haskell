@@ -10,7 +10,8 @@
 -- 'capture' returns fully decoded, validated values. Field access and graph
 -- navigation are pure. Captures use an observation interval, not an atomic
 -- transaction over tmux and operating-system state.
--- 'renameSession', 'renameWindow' and 'setPaneTitle' perform explicit mutations
+-- 'createSession' returns historical created identities. 'renameSession',
+-- 'renameWindow' and 'setPaneTitle' perform explicit mutations
 -- against generation-bound references. Earlier observations stay detached.
 --
 -- Operational failures use t'TmuxException'. 'tryTmux' catches that type only.
@@ -20,8 +21,11 @@
 module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration
-    -- * Rename and title
+    -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
+    -- * Detached session creation
+  , createSession, createSessionWith
+    -- * Rename and title
   , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
@@ -33,6 +37,9 @@ module LibTmux.Server
     -- * Correlated capture recovery
   , CaptureRecovery, captureRecoveries, recoveryOperation, recoveryGeneration
   , ReadRecovery (..), inspectCaptureRecovery, resumeCaptureRecovery, detachCaptureRecovery
+    -- * Correlated creation recovery
+  , CreationRecovery, creationRecoveries, creationOperation, creationGeneration
+  , creationReceipt, inspectCreationRecovery, resumeCreationRecovery, awaitCreationRecovery, detachCreationRecovery
     -- * Correlated mutation recovery
   , MutationRecovery, mutationRecoveries, mutationOperation, mutationGeneration
   , inspectMutationRecovery, resumeMutationRecovery, awaitMutationRecovery, detachMutationRecovery
@@ -57,6 +64,9 @@ import Data.Type.Coercion (coerceWith, sym)
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
+import LibTmux.Creation qualified as Creation
+import LibTmux.Internal.Creation (CreationRecovery)
+import LibTmux.Internal.Creation qualified as Create
 import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
@@ -73,6 +83,7 @@ import LibTmux.Internal.Scope
   )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
+import LibTmux.Version qualified as Version
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
 import System.OsPath.Posix (PosixPath)
@@ -105,6 +116,7 @@ withRuntime action = do
 -- | Adopt one endpoint within an existing Runtime and close only that handle
 -- after the callback. Other handles remain admitted under the shared limits;
 -- each adoption has its own 'serverGeneration'. Use 'withServer' for one handle.
+-- Opening validates the daemon's supported version before the callback.
 --
 -- Failed adoption can retain a t'CleanupRecovery' before a t'Server' exists.
 -- Inspection, retry and waiting through that owner stay scoped to the failed
@@ -123,6 +135,7 @@ withServerIn (Runtime runtime) config action = mask $ \restore -> do
   Scope.runServerScope runtime owner $ restore $ do
     handle <- operational (R.adoptServerOwnerWith (\_ _ -> pure ()) runtime owner
       (posixBytes config.socketPath) (posixBytes config.pinDirectory))
+    operational (qualifyVersion runtime handle executable duration)
     action (Server runtime handle executable duration)
 
 -- | Pure configuration, checked when 'withServer' or 'withServerIn' opens the handle.
@@ -131,7 +144,7 @@ data ServerConfig = ServerConfig
   { socketPath :: !PosixPath -- ^ Existing tmux socket, with an absolute trusted path.
   , executable :: !PosixPath -- ^ Executable path or a program resolved once through PATH.
   , pinDirectory :: !PosixPath -- ^ Writable trusted directory on the socket's filesystem.
-  , captureTimeout :: !NominalDiffTime -- ^ Capture deadline in seconds, greater than zero and at most ten.
+  , captureTimeout :: !NominalDiffTime -- ^ Capture and initial version-check deadline in seconds, positive and at most ten.
   }
   deriving stock (Eq, Show)
 
@@ -141,7 +154,9 @@ data ServerConfig = ServerConfig
 serverConfig :: PosixPath -> ServerConfig
 serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeDirectory socket) 2
 
--- | Open one handle, run the callback, then perform bounded owned cleanup.
+-- | Pin the endpoint, validate its supported daemon version, run the callback,
+-- then perform bounded owned cleanup. Version observation runs no command hook.
+-- Unsupported or unrecognized replies fail before entering the callback.
 -- Cleanup never replaces a callback exception. Incomplete cleanup raises
 -- 'CleanupFailed' after success, or annotates the original callback failure
 -- with a reachable t'CleanupRecovery'. No daemon shutdown is requested.
@@ -151,7 +166,13 @@ withServer config action = do
   runtime <- R.newRuntime P.normalFork
   Scope.runScope runtime $ do
     handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
+    operational (qualifyVersion runtime handle executable duration)
     action (Server runtime handle executable duration)
+
+qualifyVersion :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO ()
+qualifyVersion runtime handle executable duration = do
+  (_, _, version) <- C.captureVersionWith P.defaultHooks runtime handle executable duration
+  either (throwIO . UnsupportedTmuxVersion) (const (pure ())) (Version.requireSupported version)
 
 checkedConfiguration :: ServerConfig -> IO (ByteString, Int)
 checkedConfiguration config = do
@@ -187,6 +208,24 @@ data MutationOptions = MutationOptions
 -- | One second for command submission and its complete response.
 defaultMutationOptions :: MutationOptions
 defaultMutationOptions = MutationOptions 1
+
+-- | Create a detached session through this pinned Server. Start from
+-- 'LibTmux.Creation.defaultSessionOptions'. The result contains actual created refs,
+-- not observed records; capture again before inspecting the new graph.
+-- After-hooks may already have renamed or destroyed these targets.
+createSession :: Server -> Creation.SessionOptions -> IO Creation.CreatedSession
+createSession = createSessionWith defaultMutationOptions
+
+-- | Create with one 'timeout' covering caller-context acquisition, admission
+-- and completion. 'MutationAppliedWithErrors', cancellation and timeout may
+-- retain a t'CreationRecovery' with known IDs. A missing receipt proves no
+-- absence. Creation never retries and never starts a replacement daemon.
+createSessionWith :: MutationOptions -> Server -> Creation.SessionOptions -> IO Creation.CreatedSession
+createSessionWith options (Server runtime handle executable _) settings = operational $ do
+  duration <- mutationDuration options
+  closed <- atomically (readTVar (R.serverPool handle).closing)
+  when closed (throwIO ServerClosed)
+  Create.performCreation P.defaultHooks duration runtime handle executable settings
 
 -- | Rename the session targeted by a reference from this Server generation.
 -- The name is literal text. Earlier t'Snapshot' values keep their old names;
@@ -228,18 +267,59 @@ setPaneTitleWith options server (G.PaneRef generation ident) label =
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server@(Server runtime handle executable _) generation command = operational $ do
-  let seconds = toRational options.timeout
-  when (seconds <= 0 || seconds > 10)
-    (throwIO (InvalidConfiguration "mutation timeout must be positive and at most ten seconds"))
+  duration <- mutationDuration options
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   unless (generation == serverGeneration server)
     (throwIO (InvalidTarget "reference belongs to a different Server generation or an offline fixture"))
-  let duration = fromInteger (ceiling (seconds * 1000000))
   M.performMutation P.defaultHooks duration runtime handle executable command
 
+mutationDuration :: MutationOptions -> IO Int
+mutationDuration options = do
+  let seconds = toRational options.timeout
+  when (seconds <= 0 || seconds > 10)
+    (throwIO (InvalidConfiguration "mutation timeout must be positive and at most ten seconds"))
+  pure (fromInteger (ceiling (seconds * 1000000)))
+
+-- | Correlated creation owners from 'tryTmux' or 'tryWithContext'. Keep the
+-- context when handling failure, including an applied command's hook error.
+creationRecoveries :: ExceptionContext -> [CreationRecovery]
+creationRecoveries = Context.getExceptionAnnotations
+
+-- | Metadata-only identity of the original creation operation.
+creationOperation :: CreationRecovery -> Operation
+creationOperation = R.receiptOperation . Create.recoveryReceipt
+
+-- | Originating Server generation, including after the scope closes.
+creationGeneration :: CreationRecovery -> Generation
+creationGeneration = R.receiptGeneration . Create.recoveryReceipt
+
+-- | Read any complete historical receipt already observed by the library.
+-- This reads owned metadata without contacting tmux. 'Nothing' does not mean
+-- no session was created; unread or incomplete evidence cannot supply IDs.
+creationReceipt :: CreationRecovery -> IO (Maybe Creation.CreatedSession)
+creationReceipt = atomically . Create.observedReceipt
+
+-- | Inspect logical outcome and native ownership without external operations.
+inspectCreationRecovery :: CreationRecovery -> IO ReadRecovery
+inspectCreationRecovery = atomically . Create.inspectRecovery
+
+-- | Resume existing cleanup; never execute the creation again.
+resumeCreationRecovery :: CreationRecovery -> IO ()
+resumeCreationRecovery = operational . Create.resumeRecovery
+
+-- | Join the original native child and decoder. Logical uncertainty can
+-- remain, and this wait proves no hook/background-job completion.
+awaitCreationRecovery :: CreationRecovery -> IO ReadRecovery
+awaitCreationRecovery = operational . Create.awaitRecovery
+
+-- | Relinquish logical uncertainty while preserving physical cleanup owners.
+-- This does not remove the created session or repeat the command.
+detachCreationRecovery :: CreationRecovery -> IO Bool
+detachCreationRecovery = operational . atomically . Create.detachRecovery
+
 -- | Catch library failures with their exception context. Retain this value
--- when handling an error so cleanup and capture owners stay reachable.
+-- when handling an error so cleanup and operation owners stay reachable.
 -- Application exceptions and asynchronous cancellation propagate.
 tryTmux :: IO a -> IO (Either (ExceptionWithContext TmuxException) a)
 tryTmux = tryWithContext
@@ -256,7 +336,7 @@ cleanupRecoveries = Context.getExceptionAnnotations
 detachUnresolved :: CleanupRecovery -> Operation -> IO Bool
 detachUnresolved recovery = operational . Scope.detachUnresolved recovery
 
--- | Capture owners retained in an exception context, including cancellation.
+-- | Read owners retained by a capture or Server version check, including cancellation.
 captureRecoveries :: ExceptionContext -> [CaptureRecovery]
 captureRecoveries = Context.getExceptionAnnotations
 

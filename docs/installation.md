@@ -17,7 +17,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: e9318e703a56547646d6978d880575862200f4e1
+  tag: bcd17ddf57ee290bd2bcf385538c028a4306bf29
 ```
 
 Add the library to the executable's dependencies. The
@@ -68,8 +68,8 @@ in application
 modules using observation fields. No optics or effect framework is required.
 
 The package has no Hackage release yet. The development source provides the
-observation and rename/title APIs. Creation, pane input, events and workspace
-tooling remain under development.
+observation, rename/title and existing-server session creation APIs. First-server
+bootstrap, window/pane creation, pane input and events remain under development.
 Check [status](status.md) before choosing it for automation.
 
 ## Native backend host requirements

@@ -134,18 +134,18 @@ Operational exceptions retain their recovery context; see [capture and recovery]
 For independent handle lifetimes under one resource budget, use the tested
 [shared Runtime program](docs/shared-runtime.md).
 
-Change the private demonstration server with the [mutation program](docs/mutations.md):
+Create a second session with the [creation program](docs/creation.md):
 
 ```console
-$ cabal run --verbose=0 mutate-graph -- \
+$ cabal run --verbose=0 create-session -- \
     "$LIBTMUX_DEMO_DIR/s" \
     "$(command -v tmux)"
 ```
 
-It checks cardinality before renaming the session and physical window and
-setting the pane title. A new capture shows the changes through both window
-links; the original snapshot keeps its old values. These are separate
-commands, and a later failure does not undo earlier changes.
+It starts `/bin/cat -` directly, uses the actual created window and pane
+references, then captures the updated graph. It also checks duplicate-name
+rejection. The original capture keeps its old values. The new session stays
+running until the demonstration server is stopped.
 
 Stop the demonstration server and remove only its temporary directory:
 
@@ -165,6 +165,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Install in an application | [Cabal source dependency](docs/installation.md) |
 | Capture, filter and navigate linked windows | [Observations and recovery](docs/capture.md) |
 | Compose typed predicates, traverse relations and require one match | [Typed queries](docs/query.md) |
+| Create a session, use its actual targets and handle interrupted creation | [Session creation](docs/creation.md) |
 | Rename sessions/windows, set pane titles and recover interrupted commands | [Mutations](docs/mutations.md) |
 | Share ownership across independent Server scopes | [Shared Runtime](docs/shared-runtime.md) |
 | Understand IDs, indices and validation errors | [Typed values](docs/values.md) |
@@ -174,9 +175,9 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Evaluate the implemented scope and compatibility evidence | [Status](docs/status.md) |
 
 The package is unpublished. Observations, typed queries, session/window rename,
-pane titles and correlated recovery are implemented. Creation, pane input,
-event streams and the workspace library/CLI remain under development.
-MCP is excluded. Native operations require Linux x86_64,
+pane titles, detached session creation and correlated recovery are implemented.
+First-server bootstrap, window/pane creation, pane input and event streams
+remain under development. Native operations require Linux x86_64,
 glibc 2.39+ and compatible pidfd support; [installation](docs/installation.md)
 describes the host contract. The [manual](docs/README.md) and
 [status](docs/status.md) distinguish available behavior from planned work.

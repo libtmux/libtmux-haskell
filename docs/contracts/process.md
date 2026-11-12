@@ -241,14 +241,24 @@ the adopted socket pin. An opaque `Request value` retains the decoded result's
 type. A closed GADT pairs each fixed format with that type; the owned registry
 retains the witness without a cast or an arbitrary decoder callback.
 
-Success requires a fresh nonce frame, empty stderr and successful command-client
-exit. PID decoding retains its 32-byte bound and checked positive process-ID
-domain. Version decoding accepts at most 64 bytes, requires valid UTF-8 and
-uses the existing [version parser](../../src/LibTmux/Version.hs). Stable-version
-observation is separate from supported-range admission and feature capability
-checks. Decoded values are forced before the read envelope is released.
-Extra hook output is a protocol failure. A receipt establishes that read's
-result; it does not establish completion of arbitrary daemon work.
+PID and graph reads require a fresh nonce frame, empty stderr and successful
+command-client exit. PID decoding retains its 32-byte bound and checked
+positive process-ID domain. Extra hook output is a protocol failure.
+
+The [version probe](../../internal/LibTmux/Internal/VersionProbe.hs) instead
+passes a nonce-qualified non-command to `run-shell -C`. tmux expands its version
+and returns a parse refusal without running a shell or command hook. The decoder
+requires exit status one, empty stdout and the exact nonce-framed diagnostic.
+It accepts at most 64 canonical version bytes through the existing
+[version parser](../../src/LibTmux/Version.hs). An unrelated error or successful
+command is not version evidence.
+
+Both public Server scopes perform this owned read through the pin, then check
+the supported range before entering the callback. Failed or cancelled version
+acquisition retains the usual capture and scope recovery owners. Stable-version
+observation remains separate from feature capability checks. Values are forced
+before releasing read credit. Read completion establishes neither application
+readiness nor completion of arbitrary daemon work.
 
 Each admitted read reserves a parent byte envelope and registers its owner
 before copying or forking. The matching inspection class reserves both the
