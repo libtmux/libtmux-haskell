@@ -7,10 +7,22 @@ trap 'rm -rf -- "$scratch"' EXIT
 
 cabal build lib:libtmux-haskell --offline -v0
 
+units=$(jq -er '
+    ."install-plan" as $plan |
+    ["base", "text", "libtmux-haskell"][] as $name |
+    [$plan[] | select(."pkg-name" == $name and
+        (."component-name" // "lib") == "lib") | .id] | unique |
+    if length == 1 then .[0]
+    else error("Expected one library unit for " + $name) end
+' dist-newstyle/cache/plan.json)
+mapfile -t units <<< "$units"
+
 compile() {
     cabal exec --offline -v0 -- ghc -v0 -fno-code -fforce-recomp \
         -XGHC2024 -Wall -Werror -fdiagnostics-as-json \
-        -outputdir "$scratch" -package libtmux-haskell "$1"
+        -outputdir "$scratch" -hide-all-packages \
+        -package-id "${units[0]}" -package-id "${units[1]}" \
+        -package-id "${units[2]}" "$1"
 }
 
 compile test/compile-pass/ValueApi.hs
