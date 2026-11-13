@@ -29,7 +29,7 @@ class ReleaseTests(unittest.TestCase):
         self.source = self.directory / "libtmux-haskell-0.0.1.0.tar.gz"
         self.docs = self.directory / "libtmux-haskell-0.0.1.0-docs.tar.gz"
         self.archive(self.source, {"libtmux-haskell-0.0.1.0/libtmux-haskell.cabal": self.manifest.read_bytes()})
-        self.archive(self.docs, {"libtmux-haskell-0.0.1.0-docs/index.html": b"<html>API documentation</html>"})
+        self.archive(self.docs, {"libtmux-haskell-0.0.1.0-docs/LibTmux.html": b"<html>API documentation</html>"})
         self.checksums()
 
     def archive(self, path, files):
@@ -80,10 +80,10 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity"):
             release.verify(self.directory, self.root)
 
-    def test_missing_documentation_index_is_rejected_even_with_valid_checksums(self):
-        self.archive(self.docs, {"libtmux-haskell-0.0.1.0-docs/README": b"missing index"})
+    def test_missing_public_module_documentation_is_rejected_even_with_valid_checksums(self):
+        self.archive(self.docs, {"libtmux-haskell-0.0.1.0-docs/index.html": b"an index without public API docs"})
         self.checksums()
-        with self.assertRaisesRegex(ValueError, "index"):
+        with self.assertRaisesRegex(ValueError, "LibTmux.html"):
             release.verify(self.directory, self.root)
 
     def test_prepare_selects_the_whole_core_package_instead_of_its_library_component(self):

@@ -54,11 +54,11 @@ def verify(directory, root):
             raise ValueError("Source archive identity differs from the checkout") from error
     with tarfile.open(docs) as archive:
         try:
-            index = archive.extractfile(f"{identifier}-docs/index.html")
-            if index is None or not index.read():
-                raise ValueError("Documentation archive needs a nonempty index.html")
+            module = archive.extractfile(f"{identifier}-docs/LibTmux.html")
+            if module is None or not module.read():
+                raise ValueError("Documentation archive needs a nonempty LibTmux.html")
         except KeyError as error:
-            raise ValueError("Documentation archive needs index.html") from error
+            raise ValueError("Documentation archive needs LibTmux.html") from error
     return source, docs
 
 

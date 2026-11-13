@@ -100,7 +100,7 @@ $ git push origin refs/tags/v0.0.1.0
 Approve the environment if required. Verify that the upload job finishes its
 source, documentation and external-consumer checks, then inspect the
 [published package](https://hackage.haskell.org/package/libtmux-haskell-0.0.1.0)
-and [versioned API documentation](https://hackage.haskell.org/package/libtmux-haskell-0.0.1.0/docs/index.html).
+and [versioned API documentation](https://hackage.haskell.org/package/libtmux-haskell-0.0.1.0/docs/LibTmux.html).
 A green CI build or a pushed tag alone does not establish publication.
 
 ## Recover an interrupted release
