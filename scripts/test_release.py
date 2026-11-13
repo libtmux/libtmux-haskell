@@ -86,6 +86,23 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "index"):
             release.verify(self.directory, self.root)
 
+    def test_prepare_selects_the_whole_core_package_instead_of_its_library_component(self):
+        generated = self.root / "dist-newstyle" / self.docs.name
+        generated.parent.mkdir()
+        generated.write_bytes(self.docs.read_bytes())
+
+        def cabal(command, **kwargs):
+            if command[:2] == ["cabal", "sdist"]:
+                if command[2] != "pkg:libtmux-haskell":
+                    raise subprocess.CalledProcessError(1, command, stderr="Only entire packages may be packaged")
+            else:
+                self.assertEqual(command, ["cabal", "haddock", "lib:libtmux-haskell", "--haddock-for-hackage", "--offline"])
+
+        with patch.object(subprocess, "run", side_effect=cabal), patch.object(release, "consumer") as consumer:
+            release.prepare(self.directory, self.root)
+        self.assertEqual(release.verify(self.directory, self.root), (self.source, self.docs))
+        consumer.assert_called_once_with(self.source.read_bytes(), self.root, offline=True)
+
     def test_existing_identical_source_skips_upload_but_repairs_documentation(self):
         source = self.source.read_bytes()
         documentation = gzip.decompress(self.docs.read_bytes())

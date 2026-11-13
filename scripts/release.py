@@ -65,7 +65,7 @@ def verify(directory, root):
 def prepare(directory, root):
     version = metadata(root)
     directory.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["cabal", "sdist", PACKAGE, f"--output-directory={directory}"], cwd=root, check=True)
+    subprocess.run(["cabal", "sdist", f"pkg:{PACKAGE}", f"--output-directory={directory}"], cwd=root, check=True)
     subprocess.run(["cabal", "haddock", f"lib:{PACKAGE}", "--haddock-for-hackage", "--offline"],
                    cwd=root, check=True)
     docs = root / "dist-newstyle" / f"{PACKAGE}-{version}-docs.tar.gz"
