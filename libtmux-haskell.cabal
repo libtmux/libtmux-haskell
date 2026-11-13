@@ -1,6 +1,6 @@
 cabal-version: 3.18
 name: libtmux-haskell
-version: 0.1.0.0
+version: 0.0.1.0
 synopsis: Haskell tmux client library with detached snapshots
 description:
   Capture a validated tmux graph in IO, then inspect immutable sessions,
@@ -15,6 +15,7 @@ license-file: LICENSE
 author: libtmux contributors
 maintainer: https://github.com/libtmux/libtmux-haskell/issues
 category: System
+stability: experimental
 homepage: https://github.com/libtmux/libtmux-haskell
 bug-reports: https://github.com/libtmux/libtmux-haskell/issues
 build-type: Simple
@@ -40,6 +41,7 @@ extra-doc-files:
   .github/CONTRIBUTING.md
   .github/WRITING.md
   .github/TESTING.md
+  .github/RELEASE.md
   docs/README.md
   docs/installation.md
   docs/values.md
@@ -68,6 +70,8 @@ extra-source-files:
   docs/contracts/traceability.json
   scripts/check-types
   scripts/check_sdist.py
+  scripts/release.py
+  scripts/test_release.py
   scripts/check_docs.py
   scripts/test_check_docs.py
   scripts/prepare_haddock.py
@@ -117,6 +121,7 @@ extra-source-files:
   scripts/test_ci_tmux.py
   .github/tmux-releases.json
   .github/workflows/ci.yml
+  .github/workflows/release.yml
   .github/workflows/docs.yml
   .github/dependabot.yml
   test/compile-pass/*.hs

@@ -11,5 +11,5 @@ executable offline-graph
   ghc-options: -Wall -Werror
   build-depends:
     base >=4.22 && <4.23,
-    libtmux-haskell ^>=0.1.0.0,
+    libtmux-haskell ^>=0.0.1.0,
     os-string >=2.0.8 && <2.1

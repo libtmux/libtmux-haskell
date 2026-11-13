@@ -8,6 +8,8 @@ complete adoption qualification remain open.
 
 Read [AGENTS.md](../AGENTS.md) for change discipline and
 [WRITING.md](WRITING.md) for prose and commit conventions.
+For Hackage account setup, candidate uploads and version-tag publication, read
+[RELEASE.md](RELEASE.md).
 
 ## Package and dependency policy
 

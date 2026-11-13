@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.1.0
+
 ### Added
 
 - Rename sessions and physical windows and set pane titles through

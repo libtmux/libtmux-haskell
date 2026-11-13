@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a version tag (false uploads a candidate)
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hackage-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release ref
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require matching version tags on master for publication
+        env:
+          PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
+          REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            if [ "$REF_TYPE" != tag ]; then
+              echo '::error::Publication requires a version tag; use publish=false for a candidate.'
+              exit 1
+            fi
+            python3 scripts/release.py check --tag "$RELEASE_TAG"
+            git merge-base --is-ancestor HEAD origin/master
+          else
+            python3 scripts/release.py check
+          fi
+
+  verify:
+    name: Tagged commit CI
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Upload to Hackage
+    needs: [validate, verify]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: hackage
+    steps:
+      - name: Require the Hackage environment token
+        env:
+          HACKAGE_AUTH_TOKEN: ${{ secrets.HACKAGE_AUTH_TOKEN }}
+        run: |
+          if [ -z "$HACKAGE_AUTH_TOKEN" ]; then
+            echo '::error::Set HACKAGE_AUTH_TOKEN in the hackage environment; see .github/RELEASE.md.'
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
+        id: haskell
+        with:
+          ghc-version: '9.14.1'
+          cabal-version: '3.18.2.0'
+          enable-stack: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.haskell.outputs.cabal-store }}
+            ~/.cabal/packages
+          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
+          restore-keys: haskell-ubuntu26-x64-9.14.1-3.18.2.0-
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.verify.outputs.release-artifact }}
+          path: dist-newstyle/release
+      - name: Check archive identity and hashes before upload
+        run: python3 scripts/release.py verify
+      - name: Upload source and documentation and test the public archive
+        env:
+          HACKAGE_AUTH_TOKEN: ${{ secrets.HACKAGE_AUTH_TOKEN }}
+          PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            python3 scripts/release.py upload --publish --tag "$RELEASE_TAG"
+          else
+            python3 scripts/release.py upload
+          fi
