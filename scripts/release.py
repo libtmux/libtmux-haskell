@@ -1,6 +1,7 @@
 """Prepare, verify and upload the core package and Haddock documentation."""
 
 import argparse
+import gzip
 import hashlib
 import os
 from pathlib import Path
@@ -75,6 +76,7 @@ def prepare(directory, root):
         for path in [source, directory / docs.name]
     ))
     verify(directory, root)
+    consumer(source.read_bytes(), root, offline=True)
     print("PASS: source and Haddock release archives")
 
 
@@ -120,23 +122,22 @@ def upload(directory, root, publish=False, tag=None):
         base += "/candidate"
     url = f"{base}/{source.name}"
     existing = remote(url)
-    if existing is not None and existing != source.read_bytes():
+    if publish and existing is not None and existing != source.read_bytes():
         raise ValueError("Hackage already serves different source bytes; do not overwrite this version")
-    if existing is None:
+    if existing != source.read_bytes():
         cabal_upload(source, publish, False)
     served = remote(url)
     if served != source.read_bytes():
         raise ValueError("Hackage source archive differs from the checked release archive")
     cabal_upload(docs, publish, True)
-    with tarfile.open(docs) as archive:
-        index = archive.extractfile(f"{PACKAGE}-{version}-docs/index.html").read()
-    if remote(base + "/docs/index.html") != index:
+    # Hackage stores the uncompressed tar; served HTML receives its own CSS.
+    if remote(base + "/docs.tar") != gzip.decompress(docs.read_bytes()):
         raise ValueError("Hackage documentation differs from the checked release archive")
     print(f"PASS: Hackage source and documentation at {base}")
     return served
 
 
-def consumer(source, root):
+def consumer(source, root, offline=False):
     version = metadata(root)
     example = root / "examples/typed-values"
     with tempfile.TemporaryDirectory(prefix="libtmux-haskell-public-consumer-") as temporary:
@@ -144,16 +145,23 @@ def consumer(source, root):
         (directory / "source.tar.gz").write_bytes(source)
         for name in ["Main.hs", "libtmux-typed-values.cabal", "README.md"]:
             shutil.copy2(example / name, directory / name)
-        (directory / "cabal.project").write_text(
-            f"packages: . source.tar.gz\nconstraints: {PACKAGE} =={version}\ntests: False\n")
-        subprocess.run(["cabal", "update"], cwd=directory, check=True)
-        subprocess.run(["cabal", "build", "exe:typed-values"], cwd=directory, check=True)
+        project = f"packages: . source.tar.gz\nconstraints: {PACKAGE} =={version}\ntests: False\n"
+        if offline:
+            index = re.search(r"^index-state:.*$", (root / "cabal.project").read_text(), re.MULTILINE)
+            if index is None:
+                raise ValueError("Offline release consumers need the project's index-state")
+            project += index[0] + "\n"
+        (directory / "cabal.project").write_text(project)
+        if not offline:
+            subprocess.run(["cabal", "update"], cwd=directory, check=True)
+        flags = ["--offline"] if offline else []
+        subprocess.run(["cabal", "build", "exe:typed-values", *flags], cwd=directory, check=True)
         executable = subprocess.check_output(
-            ["cabal", "list-bin", "exe:typed-values"], cwd=directory, text=True).strip()
+            ["cabal", "list-bin", "exe:typed-values", *flags], cwd=directory, text=True).strip()
         result = subprocess.run([executable], cwd=directory, capture_output=True, check=True)
         if result.stdout != (example / "expected.stdout").read_bytes() or result.stderr:
             raise ValueError("Public Hackage archive consumer produced unexpected output")
-    print("PASS: public Hackage archive installed and executed outside the checkout")
+    print("PASS: release archive installed and executed outside the checkout")
 
 
 def main():

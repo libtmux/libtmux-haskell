@@ -1,5 +1,6 @@
 """Release identity, archive integrity and partial-upload recovery."""
 
+import gzip
 import hashlib
 import io
 import os
@@ -21,6 +22,7 @@ class ReleaseTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.manifest = self.root / "libtmux-haskell.cabal"
         self.manifest.write_text("name: libtmux-haskell\nversion: 0.0.1.0\n")
+        (self.root / "cabal.project").write_text("packages: .\nindex-state: 2026-11-06T00:00:00Z\n")
         (self.root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\n## 0.0.1.0\n\n- Initial release.\n")
         self.directory = self.root / "release"
         self.directory.mkdir()
@@ -86,9 +88,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_existing_identical_source_skips_upload_but_repairs_documentation(self):
         source = self.source.read_bytes()
-        index = b"<html>API documentation</html>"
+        documentation = gzip.decompress(self.docs.read_bytes())
         with patch.dict(os.environ, {"HACKAGE_AUTH_TOKEN": "test-token"}), \
-                patch.object(release, "remote", side_effect=[source, source, index]), \
+                patch.object(release, "remote", side_effect=[source, source, documentation]), \
                 patch.object(release, "cabal_upload") as upload:
             release.upload(self.directory, self.root, publish=True, tag="v0.0.1.0")
         self.assertEqual(upload.call_args_list, [unittest.mock.call(self.docs, True, True)])
@@ -103,11 +105,11 @@ class ReleaseTests(unittest.TestCase):
 
     def test_candidate_and_published_uploads_verify_the_served_archive_and_docs(self):
         source = self.source.read_bytes()
-        index = b"<html>API documentation</html>"
+        documentation = gzip.decompress(self.docs.read_bytes())
         for publish in [False, True]:
             with self.subTest(publish=publish), \
                     patch.dict(os.environ, {"HACKAGE_AUTH_TOKEN": "test-token"}), \
-                    patch.object(release, "remote", side_effect=[None, source, index]) as remote, \
+                    patch.object(release, "remote", side_effect=[None, source, documentation]) as remote, \
                     patch.object(release, "cabal_upload") as upload:
                 release.upload(self.directory, self.root, publish=publish, tag="v0.0.1.0" if publish else None)
                 self.assertEqual(upload.call_args_list, [
@@ -118,6 +120,16 @@ class ReleaseTests(unittest.TestCase):
                 if not publish:
                     base += "/candidate"
                 self.assertEqual(remote.call_args_list[0].args, (base + "/libtmux-haskell-0.0.1.0.tar.gz",))
+                self.assertEqual(remote.call_args_list[-1].args, (base + "/docs.tar",))
+
+    def test_review_changes_can_replace_a_candidate_before_publication(self):
+        with patch.dict(os.environ, {"HACKAGE_AUTH_TOKEN": "test-token"}), \
+                patch.object(release, "remote", side_effect=[
+                    b"previous candidate", self.source.read_bytes(), gzip.decompress(self.docs.read_bytes())]), \
+                patch.object(release, "cabal_upload") as upload:
+            release.upload(self.directory, self.root)
+        self.assertEqual(upload.call_args_list, [
+            unittest.mock.call(self.source, False, False), unittest.mock.call(self.docs, False, True)])
 
     def test_missing_credentials_and_untagged_publication_stop_before_network_access(self):
         with patch.dict(os.environ, {"HACKAGE_AUTH_TOKEN": ""}), patch.object(release, "remote") as remote:
@@ -157,14 +169,18 @@ class ReleaseTests(unittest.TestCase):
         cabal.write_text(f'''#!{sys.executable}
 import pathlib, sys
 args = sys.argv[1:]
+offline = args[-1:] == ["--offline"]
+if args[-1:] == ["--offline"]:
+    args = args[:-1]
 if args == ["update"]:
-    pass
+    pathlib.Path({str(self.root / 'updated')!r}).write_text("updated")
 elif args in [["build", "exe:typed-values"], ["list-bin", "exe:typed-values"]]:
     root = pathlib.Path.cwd()
     assert (root / "source.tar.gz").read_bytes() == b"public source archive"
     assert (root / "Main.hs").is_file()
     assert "packages: . source.tar.gz" in (root / "cabal.project").read_text()
     assert "constraints: libtmux-haskell ==0.0.1.0" in (root / "cabal.project").read_text()
+    assert ("index-state: 2026-11-06T00:00:00Z" in (root / "cabal.project").read_text()) == offline
     if args[0] == "list-bin":
         print({str(program)!r})
 else:
@@ -172,7 +188,11 @@ else:
 ''')
         cabal.chmod(0o700)
         with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
-            release.consumer(b"public source archive", self.root)
+            for offline in [False, True]:
+                with self.subTest(offline=offline):
+                    (self.root / "updated").unlink(missing_ok=True)
+                    release.consumer(b"public source archive", self.root, offline=offline)
+                    self.assertEqual((self.root / "updated").exists(), not offline)
 
 
 if __name__ == "__main__":

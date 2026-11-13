@@ -58,8 +58,8 @@ Open the [release runs](https://github.com/libtmux/libtmux-haskell/actions/workf
 and approve the `hackage` environment if configured. Review the
 [initial candidate](https://hackage.haskell.org/package/libtmux-haskell-0.0.1.0/candidate)
 and its documentation. The upload job compares the served source and
-documentation with the checked archives, then builds and executes the pure
-typed-values example from the public archive outside the checkout.
+documentation tarballs with the checked archives, then builds and executes
+the pure typed-values example from the public archive outside the checkout.
 
 To inspect the retained files, download the `hackage-<commit>-<attempt>` artifact
 from the run. It contains only the core source archive, documentation archive
@@ -111,8 +111,9 @@ If those artifacts have expired, rerun all jobs to rebuild them from the same
 tag with the pinned toolchain.
 
 If Hackage already serves identical source bytes, the helper skips the source
-upload and uploads documentation again. It refuses different bytes for an
-existing version. A failed documentation or consumer check can therefore leave
+upload and uploads documentation again. It refuses different bytes for a
+published version; candidate runs replace an earlier candidate after review
+changes. A failed documentation or consumer check can therefore leave
 the source already published; inspect the package before choosing a new version.
 
 After fixing an account or secret, an existing release tag can also be retried
