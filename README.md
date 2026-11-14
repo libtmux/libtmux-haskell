@@ -16,14 +16,32 @@ and explicit `IO`. Capture once, then use ordinary records and collections.
 
 [![CI](https://github.com/libtmux/libtmux-haskell/actions/workflows/ci.yml/badge.svg)](https://github.com/libtmux/libtmux-haskell/actions/workflows/ci.yml)
 
+[Documentation](https://libtmux.org/en/haskell/) ·
+[API reference](https://libtmux.org/en/haskell/latest/reference/) ·
+[Hackage](https://hackage.haskell.org/package/libtmux-haskell) ·
+[Examples](https://libtmux.org/en/haskell/latest/examples/)
+
 </div>
+
+Add the library to your application's `.cabal` dependencies:
+
+```cabal
+build-depends: libtmux-haskell ^>=0.0.1.0
+```
+
+Update the package index before the first build:
+
+```console
+$ cabal update
+```
 
 Use a current GHC and Cabal that satisfy the [package bounds](libtmux-haskell.cabal).
 [Toolchain pins](.tool-versions) record the reproducible CI setup.
 Native operations require the [Linux host capabilities](docs/installation.md#native-backend-host-requirements).
 The tmux support range is 3.3a through 3.8 inclusive; CI tests the endpoints.
-[Add the source dependency](docs/installation.md) to a Cabal application,
-or run the example from a provisioned checkout.
+[Installation](https://libtmux.org/en/haskell/latest/guides/installation/)
+covers application setup and source dependencies. Run the example below from
+a provisioned checkout.
 
 Create a private demonstration server:
 
@@ -126,15 +144,20 @@ demo:0 -> @0 panes=%0
 demo:4 -> @0 panes=%0
 ```
 
-[`withServer`](src/LibTmux/Server.hs) scopes the connection resources;
-[`capture`](src/LibTmux/Server.hs) reads and validates the complete baseline
+[`withServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withserver/)
+scopes the connection resources;
+[`capture`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capture/)
+reads and validates the complete baseline
 graph. Every list comprehension and relationship lookup above uses detached
 values after the scope has closed. Closing the handle leaves the daemon running.
-Operational exceptions retain their recovery context; see [capture and recovery](docs/capture.md).
+Operational exceptions retain their recovery context; see
+[capture and recovery](https://libtmux.org/en/haskell/latest/guides/capture/).
 For independent handle lifetimes under one resource budget, use the tested
-[shared Runtime program](docs/shared-runtime.md).
+[shared Runtime program](https://libtmux.org/en/haskell/latest/guides/shared-runtime/)
+with [`withRuntime`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withruntime/).
 
-Change the private demonstration server with the [mutation program](docs/mutations.md):
+Change the private demonstration server with the
+[mutation program](https://libtmux.org/en/haskell/latest/guides/mutations/):
 
 ```console
 $ cabal run --verbose=0 mutate-graph -- \
@@ -142,8 +165,13 @@ $ cabal run --verbose=0 mutate-graph -- \
     "$(command -v tmux)"
 ```
 
-It checks cardinality before renaming the session and physical window and
-setting the pane title. A new capture shows the changes through both window
+It checks cardinality with
+[`exactlyOne`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-exactlyone/)
+before calling
+[`renameSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamesession/),
+[`renameWindow`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamewindow/)
+and [`setPaneTitle`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-setpanetitle/).
+A new capture shows the changes through both window
 links; the original snapshot keeps its old values. These are separate
 commands, and a later failure does not undo earlier changes.
 
@@ -162,22 +190,25 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 
 | Task | Start here |
 | --- | --- |
-| Install in an application | [Cabal source dependency](docs/installation.md) |
-| Capture, filter and navigate linked windows | [Observations and recovery](docs/capture.md) |
-| Compose typed predicates, traverse relations and require one match | [Typed queries](docs/query.md) |
-| Rename sessions/windows, set pane titles and recover interrupted commands | [Mutations](docs/mutations.md) |
-| Share ownership across independent Server scopes | [Shared Runtime](docs/shared-runtime.md) |
-| Understand IDs, indices and validation errors | [Typed values](docs/values.md) |
-| Test graph predicates without tmux | [Validated offline fixtures](docs/fixtures.md) |
-| Reproduce capture measurements | [Performance](docs/performance.md) |
-| Browse declarations and module documentation | [API guide](docs/api.md) |
-| Evaluate the implemented scope and compatibility evidence | [Status](docs/status.md) |
+| Install in an application | [Cabal installation](https://libtmux.org/en/haskell/latest/guides/installation/) |
+| Capture, filter and navigate linked windows | [Observations and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) |
+| Compose typed predicates, traverse relations and require one match | [Typed queries](https://libtmux.org/en/haskell/latest/guides/query/) |
+| Rename sessions/windows, set pane titles and recover interrupted commands | [Mutations](https://libtmux.org/en/haskell/latest/guides/mutations/) |
+| Share ownership across independent Server scopes | [Shared Runtime](https://libtmux.org/en/haskell/latest/guides/shared-runtime/) |
+| Understand IDs, indices and validation errors | [Typed values](https://libtmux.org/en/haskell/latest/guides/typed-values/) |
+| Test graph predicates without tmux | [Validated offline fixtures](https://libtmux.org/en/haskell/latest/guides/offline-fixtures/) |
+| Reproduce capture measurements | [Performance](https://libtmux.org/en/haskell/latest/guides/performance/) |
+| Browse connection and mutation operations | [`LibTmux.Server`](https://libtmux.org/en/haskell/latest/reference/libtmux-server/) |
+| Browse declarations and module documentation | [API reference](https://libtmux.org/en/haskell/latest/reference/) |
+| Evaluate the implemented scope and compatibility evidence | [Status](https://libtmux.org/en/haskell/latest/guides/status/) |
 
-The package is unpublished. Observations, typed queries, session/window rename,
+The API is experimental. Observations, typed queries, session/window rename,
 pane titles and correlated recovery are implemented. Creation, pane input and
 event streams remain under development. Native operations require Linux x86_64,
 glibc 2.39+ and compatible pidfd support; [installation](docs/installation.md)
-describes the host contract. The [manual](docs/README.md) and
-[status](docs/status.md) distinguish available behavior from planned work.
+describes the host contract. The [manual](https://libtmux.org/en/haskell/) and
+[status](https://libtmux.org/en/haskell/latest/guides/status/) distinguish
+available behavior from planned work. The [source guides](docs/README.md)
+are included in the package archive.
 
 [Contributing](.github/CONTRIBUTING.md) · [License](LICENSE) · [Branding assets](docs/branding.md)

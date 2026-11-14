@@ -5,6 +5,9 @@ Push a `v<version>` tag on a commit already merged into `master` to publish
 `0.0.1.0`, marked experimental. Review the [support and API status](../docs/status.md)
 before describing the release.
 
+The Cabal and Hackage version is numeric (`0.0.1.0`). The Git tag carries the
+`v` prefix (`v0.0.1.0`); do not put that prefix in the Cabal `version` field.
+
 The [release workflow](workflows/release.yml) runs the complete
 [CI workflow](workflows/ci.yml) for the selected commit. CI checks source-archive
 consumers and retains the source archive, Hackage documentation archive and

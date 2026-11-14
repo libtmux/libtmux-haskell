@@ -7,20 +7,9 @@ those bounds. The native backend requires Linux x86_64; see its
 [Contributor setup](../.github/CONTRIBUTING.md#toolchain) links the CI pins for
 reproducing the tested configuration.
 
-Pin the reviewed source revision in your application's `cabal.project`:
-
-<!-- example-project: capture-graph -->
-```cabal
-packages: .
-index-state: 2026-11-06T00:00:00Z
-
-source-repository-package
-  type: git
-  location: https://github.com/libtmux/libtmux-haskell
-  tag: e9318e703a56547646d6978d880575862200f4e1
-```
-
-Add the library to the executable's dependencies. The
+Add `libtmux-haskell` from
+[Hackage](https://hackage.haskell.org/package/libtmux-haskell) to the
+executable's dependencies. The
 [example package](../examples/capture-graph/libtmux-capture-graph.cabal) is a
 complete starting point:
 
@@ -67,10 +56,29 @@ scope cleanup. Its owned fixture creates a repeatable server for the
 in application
 modules using observation fields. No optics or effect framework is required.
 
-The package has no Hackage release yet. The development source provides the
-observation and rename/title APIs. Creation, pane input and events remain under
-development.
+The API is experimental. The package provides observation and rename/title
+operations. Creation, pane input and events remain under development.
 Check [status](status.md) before choosing it for automation.
+
+Browse the [manual](https://libtmux.org/en/haskell/) and
+[`LibTmux.Server` API](https://libtmux.org/en/haskell/latest/reference/libtmux-server/)
+for connection, capture and mutation operations.
+
+## Use the release source directly
+
+To use the same release from Git instead of the package index, use this
+`cabal.project`:
+
+<!-- example-project: capture-graph -->
+```cabal
+packages: .
+index-state: 2026-11-06T00:00:00Z
+
+source-repository-package
+  type: git
+  location: https://github.com/libtmux/libtmux-haskell
+  tag: v0.0.1.0
+```
 
 ## Native backend host requirements
 
