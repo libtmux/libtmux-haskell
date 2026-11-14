@@ -7,9 +7,9 @@ those bounds. The native backend requires Linux x86_64; see its
 [Contributor setup](../.github/CONTRIBUTING.md#toolchain) links the CI pins for
 reproducing the tested configuration.
 
-Add `libtmux-haskell` from
-[Hackage](https://hackage.haskell.org/package/libtmux-haskell) to the
-executable's dependencies. The
+Add `libtmux-haskell` to the executable's dependencies. The package is not
+on Hackage yet, so [fetch the Git source](#fetch-the-source-from-git) with a
+`cabal.project`. The
 [example package](../examples/capture-graph/libtmux-capture-graph.cabal) is a
 complete starting point:
 
@@ -34,7 +34,8 @@ executable capture-graph
 ```
 
 Save [Main.hs](../examples/capture-graph/Main.hs) beside the package file, then
-download the package index before the first build:
+download the package index for the other dependencies before the first
+build:
 
 ```console
 $ cabal update
@@ -64,10 +65,10 @@ Browse the [manual](https://libtmux.org/en/haskell/) and
 [`LibTmux.Server` API](https://libtmux.org/en/haskell/latest/reference/libtmux-server/)
 for connection, capture and mutation operations.
 
-## Use the release source directly
+## Fetch the source from Git
 
-To use the same release from Git instead of the package index, use this
-`cabal.project`:
+Cabal fetches the release source from Git, because the package is not on
+Hackage yet. Use this `cabal.project`:
 
 <!-- example-project: capture-graph -->
 ```cabal

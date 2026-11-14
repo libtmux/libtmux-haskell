@@ -20,18 +20,27 @@ and explicit `IO`. Capture once, then use ordinary records and collections.
 
 [Documentation](https://libtmux.org/en/haskell/) ·
 [API reference](https://libtmux.org/en/haskell/latest/reference/) ·
-[Hackage](https://hackage.haskell.org/package/libtmux-haskell) ·
 [Examples](https://libtmux.org/en/haskell/latest/examples/)
 
 </div>
 
-Add the library to your application's `.cabal` dependencies:
+The package is not on Hackage yet. Add the library to your application's
+`.cabal` dependencies:
 
 ```cabal
 build-depends: libtmux-haskell ^>=0.0.1.0
 ```
 
-Update the package index before the first build:
+Then point Cabal at the Git source in your `cabal.project`:
+
+```cabal
+source-repository-package
+  type: git
+  location: https://github.com/libtmux/libtmux-haskell
+  tag: v0.0.1.0
+```
+
+Update the package index for the other dependencies before the first build:
 
 ```console
 $ cabal update
@@ -42,8 +51,8 @@ Use a current GHC and Cabal that satisfy the [package bounds](libtmux-haskell.ca
 Native operations require the [Linux host capabilities](docs/installation.md#native-backend-host-requirements).
 The tmux support range is 3.3a through 3.8 inclusive; CI tests the endpoints.
 [Installation](https://libtmux.org/en/haskell/latest/guides/installation/)
-covers application setup and source dependencies. Run the example below from
-a provisioned checkout.
+covers application setup and the Git source dependency. Run the example below
+from a provisioned checkout.
 
 Create a private demonstration server:
 
