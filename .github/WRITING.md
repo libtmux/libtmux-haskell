@@ -45,6 +45,21 @@ public client. Performance claims need measurements and a reproduction
 command. Changelog and release-note bullets name an observable change,
 its affected API, and any migration; omit effort and internal diff narration.
 
+## README shape
+
+A README is scanned, not read. Each line has to survive a glance.
+
+- A section is a task. Its `###` heading links the API and names its job:
+  `### [`capture`](url): the whole graph in one read`.
+- Under the heading: a line or two, the tested example, what it prints, at
+  most one note. Detail goes in a guide, linked with `More:`.
+- No paragraph over three lines. A list of facts is a bullet list.
+- No feature inventory. A section and its example show the feature.
+- State requirements as floors a reader can act on, such as "tmux 3.3a or
+  newer". Toolchain pins and CI matrices stay in their own files.
+- Cut what a reader would assume or never need: that examples are tested,
+  how the documentation is built, what the checks cover.
+
 ## Markdown and examples
 
 Use CommonMark with blank lines around headings and lists. Wrap repository
