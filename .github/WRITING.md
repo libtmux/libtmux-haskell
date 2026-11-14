@@ -49,8 +49,8 @@ its affected API, and any migration; omit effort and internal diff narration.
 
 A README is scanned, not read. Each line has to survive a glance.
 
-- A section is a task. Its `###` heading links the API and names its job:
-  `### [`capture`](url): the whole graph in one read`.
+- A section is a task. Its `###` heading is the API, linked to its reference
+  page, then a colon and its job in plain words.
 - Under the heading: a line or two, the tested example, what it prints, at
   most one note. Detail goes in a guide, linked with `More:`.
 - No paragraph over three lines. A list of facts is a bullet list.
