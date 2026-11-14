@@ -160,7 +160,9 @@ demo:4 -> @0 panes=%0
 ```
 
 The values stay usable after the scope closes. Closing the handle leaves the
-daemon running. More: [capture and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) ·
+daemon running.
+
+More: [capture and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) ·
 [`withRuntime`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withruntime/) for
 [shared lifetimes](https://libtmux.org/en/haskell/latest/guides/shared-runtime/).
 
