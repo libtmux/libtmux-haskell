@@ -4,17 +4,18 @@ Use [`LibTmux.Snapshot.Fixture`](../src/LibTmux/Snapshot/Fixture.hs) to build
 ordinary observation records and validate their relationships. No fixture
 operation starts tmux, opens a socket or allocates an operational Server.
 
-The complete program below tests a pane-selection policy against one physical
-window appearing at two session indices. Run it from a provisioned checkout:
+The program below tests a pane-selection policy against one physical window at
+two session indices. Run it from a checkout:
 
 ```console
 $ cabal run --verbose=0 offline-graph
 ```
 
-For a separate Cabal application, copy [Main.hs](../examples/offline-graph/Main.hs)
-and its [package file](../examples/offline-graph/libtmux-offline-graph.cabal).
-Save the [pinned source project](../examples/offline-graph/cabal.project.vcs)
-as `cabal.project`, provision its dependencies, then run the same command.
+To use it in your own application, copy
+[Main.hs](../examples/offline-graph/Main.hs) and its
+[package file](../examples/offline-graph/libtmux-offline-graph.cabal). Save the
+[pinned source project](../examples/offline-graph/cabal.project.vcs) as
+`cabal.project`, then run the same command.
 
 <!-- example: offline-graph -->
 ```haskell
@@ -88,25 +89,28 @@ DefinedOffline "reports"
 (1,2)
 ```
 
-`fixtureOrigin` creates a named offline namespace. Reuse a name to model
-successive observations in one test scenario; use different names for
-independent scenarios. Fixture references never compare equal to references
-from an adopted Server, even when their native IDs match.
+- `fixtureOrigin` creates a named offline namespace. Reuse a name for
+  successive observations in one test scenario; use different names for
+  independent scenarios.
+- Fixture references never equal references from an adopted Server, even when
+  the native IDs match.
 
-`emptyFixture` supplies synthetic server metadata and empty collections.
-Populate its ordinary records, then call `validateFixture`. It reuses graph
-and metadata validation, including reference membership, duplicate slots,
-active selections and attached-client context. A failed input returns
-`FixtureError`; it never becomes an empty snapshot. Reading an edited record
-alone does not validate the graph or update a previously built snapshot.
-Wire decoding, tmux's field normalization and transport limits apply to live
-acquisition. Synthetic values can exercise cases a live capture cannot produce.
+Building a fixture:
 
-`SnapshotOrigin` distinguishes `DefinedOffline` from `AcquiredFromTmux`.
-Offline snapshots have no acquisition interval. Neither provenance nor an
-opaque reference proves that a tmux target is currently alive.
+- `emptyFixture` supplies synthetic server metadata and empty collections. Fill
+  in ordinary records, then call `validateFixture`.
+- Validation covers reference membership, duplicate slots, active selections
+  and attached-client context. A bad input returns `FixtureError`, never an
+  empty snapshot.
+- Editing a record does not validate the graph or update a snapshot already
+  built.
+- Live acquisition applies wire decoding, tmux's field normalization and
+  transport limits. Fixtures can build cases a live capture cannot produce.
 
-The [installed consumer check](../scripts/check_sdist.py) compiles this source
-against the archived public package and asserts its output. The Hspec cases
-exercise namespace separation and invalid graphs without a daemon. See
-[capture and recovery](capture.md) for observations acquired from tmux.
+Provenance:
+
+- `SnapshotOrigin` distinguishes `DefinedOffline` from `AcquiredFromTmux`.
+  Offline snapshots have no acquisition interval.
+- Neither provenance nor an opaque reference proves a tmux target is alive.
+
+For observations acquired from tmux, see [capture and recovery](capture.md).

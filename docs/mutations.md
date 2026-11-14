@@ -3,12 +3,12 @@
 [`renameSession`](../src/LibTmux/Server.hs),
 [`renameWindow`](../src/LibTmux/Server.hs) and
 [`setPaneTitle`](../src/LibTmux/Server.hs) act in `IO` on opaque references
-from the same [`Server`](../src/LibTmux/Server.hs). A window rename changes the
-physical window wherever it is linked. It does not rename one session slot.
+from the same [`Server`](../src/LibTmux/Server.hs). Renaming a window changes
+the physical window everywhere it is linked, not one session slot.
 
-This program validates every selection before its first mutation. It changes
-the supplied server: use the [README's private demonstration fixture](../README.md).
-Run from a [provisioned checkout](../.github/CONTRIBUTING.md#toolchain):
+The program validates every selection before its first mutation. It changes the
+server you give it, so use the [README's demo server](../README.md). Run from a
+[checkout](../.github/CONTRIBUTING.md#toolchain):
 
 ```console
 $ cabal run --verbose=0 mutate-graph -- \
@@ -16,10 +16,10 @@ $ cabal run --verbose=0 mutate-graph -- \
     "$(command -v tmux)"
 ```
 
-The session rename, window rename and title change are separate commands.
-A later failure does not undo earlier changes. Afterward, follow the README's
-teardown commands. The program closes its own connection resources and leaves
-the supplied daemon running.
+- The session rename, window rename and title change are separate commands. A
+  later failure does not undo earlier ones.
+- Afterward, run the README's cleanup commands. The program leaves the daemon
+  running.
 
 <!-- example: mutate-graph -->
 ```haskell
@@ -93,36 +93,42 @@ same target identities: True
 old snapshot values: demo, editor
 ```
 
-All reporting happens after the Server scope closes. The old snapshot keeps
-the original names; the fresh snapshot resolves the same physical references.
-The two window links remain distinct. The literal `#{pid}` in the window name
-is not evaluated as a format.
+- Reporting happens after the Server scope closes.
+- The old snapshot keeps the original names; the fresh one resolves the same
+  physical references.
+- The two window links stay distinct.
+- The literal `#{pid}` in the window name is not evaluated as a format.
 
 ## Targets, names and deadlines
 
-Foreign connection generations and
-[offline fixture references](fixtures.md) fail with `InvalidTarget` before
-dispatch. A closed handle fails with `ServerClosed`. A reference does not
-prove continued existence: tmux can reject a target deleted since capture.
-Use [typed queries and cardinality](query.md) to select the intended physical
-entity before sending a command.
+- A reference from another connection generation, or from an
+  [offline fixture](fixtures.md), fails with `InvalidTarget` before dispatch.
+- A closed handle fails with `ServerClosed`.
+- A reference does not prove the target still exists; tmux can reject one
+  deleted since capture. Select the intended entity first with
+  [typed queries](query.md).
 
-Window names use [`TmuxText`](../src/LibTmux/Snapshot.hs), retaining bytes with
-an explicit fallible text conversion. String literals work with
-[OverloadedStrings](https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/overloaded_strings.html);
-`labelFromBytes` accepts byte-oriented labels. tmux may
-reject a name its release does not accept. Session names and pane titles use
-[`Text`](https://hackage-content.haskell.org/package/text-2.1.3/docs/Data-Text.html#t:Text).
-NUL and oversized encoded commands fail before admission. The pane's
-application can replace a title later.
+Names:
 
-The default deadline is one second, covering submission and response waiting.
-Forms such as [`renameWindowWith`](../src/LibTmux/Server.hs) take
-[`MutationOptions`](../src/LibTmux/Server.hs) first.
-For example, pass `Tmux.defaultMutationOptions {Tmux.timeout = 2}` to
-`renameWindowWith`. Positive timeouts up to ten seconds are accepted. These
-are deadline controls, not a promise that configured hooks finish in that time.
-No mutation retries automatically.
+- Window names are [`TmuxText`](../src/LibTmux/Snapshot.hs): bytes, with an
+  explicit conversion to text that can fail. String literals work with
+  [OverloadedStrings](https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/overloaded_strings.html);
+  `labelFromBytes` takes bytes.
+- Session names and pane titles are
+  [`Text`](https://hackage-content.haskell.org/package/text-2.1.3/docs/Data-Text.html#t:Text).
+- tmux may reject a name its release does not accept.
+- NUL and oversized encoded commands fail before dispatch.
+- The pane's application can replace a title later.
+
+Deadlines:
+
+- Default: one second, covering submission and waiting for the response.
+- Forms such as [`renameWindowWith`](../src/LibTmux/Server.hs) take
+  [`MutationOptions`](../src/LibTmux/Server.hs) first, for example
+  `Tmux.defaultMutationOptions {Tmux.timeout = 2}`.
+- Timeouts must be positive, up to ten seconds. They bound the wait, not
+  configured hooks.
+- Nothing retries automatically.
 
 ## Known and uncertain outcomes
 
@@ -143,28 +149,25 @@ does not establish that background jobs started by a hook have finished.
 
 ## Keep recovery ownership reachable
 
-Read [`mutationRecoveries`](../src/LibTmux/Server.hs) from the exception context
-returned by `tryTmux` or
-[`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext).
-Each owner has a `mutationOperation` and `mutationGeneration`; its receipt
-retains metadata,
-not the command operands or result. No recovery owner is needed before an
-operation is admitted.
+Read [`mutationRecoveries`](../src/LibTmux/Server.hs) from the exception
+context that `tryTmux` or
+[`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext)
+returns. Each owner has a `mutationOperation` and `mutationGeneration`. Its
+receipt keeps metadata, not the command operands or result. An operation that
+was never admitted has no owner.
 
-[`inspectMutationRecovery`](../src/LibTmux/Server.hs) reads logical status and
-native/decoder ownership locally. `resumeMutationRecovery` resumes existing
-cleanup without sending the command again. `awaitMutationRecovery` waits for
-those local owners to retire; inspect failures before waiting if cleanup may
-need resuming. Cancellation of that wait retains the same recovery owner.
+- [`inspectMutationRecovery`](../src/LibTmux/Server.hs) reads the status and
+  native ownership locally.
+- `resumeMutationRecovery` resumes cleanup without resending the command.
+- `awaitMutationRecovery` waits for the local owners to retire. If cleanup may
+  need resuming, inspect first. Cancelling the wait keeps the owner.
+- `detachMutationRecovery` gives up the remaining responsibility. Decide who
+  owns it first: detaching does not stop daemon work, release native resources
+  or repeat the mutation.
 
-An exited native child does not turn `OutcomeUnknown` into success. Retained
-uncertainty can hold ordered admission. After deciding who owns that remaining
-responsibility, `detachMutationRecovery` explicitly relinquishes it. Detachment
-does not stop daemon work, release native resources or repeat the mutation.
-The [scope recovery guide](shared-runtime.md) covers ownership after a callback
-or scope cleanup fails.
+An exited native child does not turn `OutcomeUnknown` into success, and
+retained uncertainty can hold later commands back. After a callback or scope
+cleanup fails, see [shared Runtime](shared-runtime.md).
 
-The public integration and source-archive consumer checks exercise accepted
-cancellation, caller deadlines, known hook errors and later progress. Creation,
-pane input, contextual window operations and event streams remain
-[separate work](status.md).
+Not implemented yet: creation, pane input, contextual window operations and
+event streams; see [status](status.md).

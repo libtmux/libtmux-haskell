@@ -1,13 +1,12 @@
 # Share a Runtime across independent Server scopes
 
-Use [`withRuntime`](../src/LibTmux/Server.hs) to give several components one
-resource and cleanup owner. Open their endpoints with
+[`withRuntime`](../src/LibTmux/Server.hs) gives several components one
+resource and cleanup owner. Open each endpoint with
 [`withServerIn`](../src/LibTmux/Server.hs). Closing one Server scope releases
-that handle while the others remain usable under the shared limits.
+only that handle; the others keep working under the shared limits.
 
-Create the [private demonstration server](../README.md) from the README, then
-run this complete program from a provisioned checkout. CI also runs it from
-an installed package, checks output and observes owned process cleanup:
+Start the [demo server](../README.md) from the README, then run from a
+checkout:
 
 ```console
 $ cabal run --verbose=0 shared-runtime -- \
@@ -63,9 +62,12 @@ main = getArgs >>= \case
   _ -> die "Usage: shared-runtime SOCKET TMUX_EXECUTABLE"
 ```
 
-The program checks that references remain connection-scoped, the inner handle
-closes, the outer handle still captures, and detached navigation works after
-the entire Runtime closes.
+The program checks that:
+
+- References stay connection-scoped.
+- The inner handle closes.
+- The outer handle still captures.
+- Detached navigation works after the whole Runtime closes.
 
 <!-- example-output: shared-runtime -->
 ```text
@@ -77,9 +79,8 @@ detached pane %0 belongs to @0
 
 ## Use the installed package
 
-This example's project pins the release source that
-provides the shared Runtime API. Use that project when building the standalone
-program, together with its package file:
+To build the program on its own, use this project, which pins the release that
+provides the shared Runtime API, and its package file:
 
 <!-- example-project: shared-runtime -->
 ```cabal
@@ -112,36 +113,35 @@ executable shared-runtime
     text >=2.1.3 && <2.2
 ```
 
-[Installation](installation.md) covers the compiler and native host setup.
-The [archive consumer check](../scripts/check_sdist.py) builds the program
-outside the checkout and executes it with the same owned fixture.
+[Installation](installation.md) covers the compiler and host setup.
 
 ## Scope and recovery
 
-Each adoption has a distinct generation, including handles to the same daemon.
-A reference from one handle does not target another handle's observations.
-Closing the Runtime also closes handles still retained by application tasks;
-applications own their worker lifetimes. Starting another adoption after the
-Runtime closes raises `RuntimeClosed`. Closing either kind of scope leaves
-the tmux daemon running.
+- Every adoption has its own generation, even for the same daemon. A reference
+  from one handle does not target another handle's observations.
+- Closing the Runtime also closes handles that application tasks still hold.
+  You own your worker lifetimes.
+- Adopting after the Runtime closes raises `RuntimeClosed`.
+- Closing either kind of scope leaves the tmux daemon running.
 
-Limits belong to the Runtime. The current complete-capture reservation admits
-one complete capture at a time; concurrent attempts can fail with an
-operational capacity error. Capture sequentially or use independent Runtime
-scopes when separate capacity is required. The
-[performance guide](performance.md) records the measured workload and the
-broader qualification still outstanding.
+Limits belong to the Runtime:
 
-Use [`tryTmux`](../src/LibTmux/Server.hs) to keep the failure's exception
-context. `cleanupRecoveries` retrieves its remaining cleanup owners. Their
-inspection, retry, explicit wait and logical detachment stay scoped to the
-selected responsibility. A failed adoption can retain an owner before it
-returns a Server; recovering it does not close neighboring handles.
+- It admits one complete capture at a time. A concurrent attempt can fail with
+  an operational capacity error.
+- Capture sequentially, or use separate Runtimes for separate capacity. See
+  [performance](performance.md) for the measured workload.
 
-Nested scopes may contribute overlapping recovery owners. Inspect and resume
-each retained responsibility. An explicit cleanup wait has no deadline;
-cancellation preserves its owner. Detaching logical uncertainty does not
-release native resources or prove a daemon-side command completed.
-[Capture recovery](capture.md#errors-and-recovery) and the
-[process contract](contracts/process.md#public-scope-outcomes) define the error
-and cancellation policy.
+Recovery:
+
+- Catch with [`tryTmux`](../src/LibTmux/Server.hs) to keep the exception
+  context. `cleanupRecoveries` returns the remaining cleanup owners.
+- Inspect, retry, wait and detach act on the one responsibility you select.
+- A failed adoption can hold an owner before it returns a Server. Recovering it
+  does not close neighboring handles.
+- Nested scopes can contribute overlapping owners. Inspect and resume each.
+- An explicit cleanup wait has no deadline. Cancelling it keeps the owner.
+- Detaching releases no native resource and proves no daemon-side completion.
+
+More: [capture recovery](capture.md#errors-and-recovery) and the
+[process contract](contracts/process.md#public-scope-outcomes) for the error and
+cancellation policy.

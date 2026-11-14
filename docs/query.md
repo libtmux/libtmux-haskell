@@ -1,19 +1,23 @@
 # Select observations with typed queries
 
-Use [`runQuery`](../src/LibTmux/Query.hs) when a predicate needs inspection,
-typed fields or relationship composition. It reads an existing
-[`Snapshot`](../src/LibTmux/Snapshot.hs) and returns ordinary lists inside
-`Either QueryError`. Native comprehensions and `filter` remain the unrestricted
-path for application logic; see the [capture program](capture.md).
+[`runQuery`](../src/LibTmux/Query.hs) evaluates a typed query over a
+[`Snapshot`](../src/LibTmux/Snapshot.hs) and returns lists in
+`Either QueryError`. Use it when you need to inspect a predicate, use typed
+fields or compose relationships. Plain comprehensions and `filter` still work
+for everything else; see [capture](capture.md).
 
-This program finds active panes at least 120 cells wide. It compares the
-typed selection with a native predicate over the same snapshot, checks
-uniqueness, follows session-to-link-to-pane relationships, and inspects the
-required fields. The fixture links one window at indices 0 and 4: one
-physical pane therefore appears twice in the contextual source.
+The program finds active panes at least 120 cells wide, then:
 
-Create the [private demonstration server](../README.md) from the README. From a
-[provisioned checkout](../.github/CONTRIBUTING.md#toolchain), run:
+- Compares the query with a plain predicate on one snapshot.
+- Checks uniqueness.
+- Follows session, link and pane relationships.
+- Prints the fields the query requires.
+
+The demo links one window at indices 0 and 4, so its one physical pane
+appears twice as a contextual match.
+
+Start the [demo server](../README.md) from the README, then run from a
+[checkout](../.github/CONTRIBUTING.md#toolchain):
 
 ```console
 $ cabal run --verbose=0 query-graph -- \
@@ -21,11 +25,8 @@ $ cabal run --verbose=0 query-graph -- \
     "$(command -v tmux)"
 ```
 
-CI runs the installed program against an owned fixture, asserts output and
-empty stderr, and observes the server and initial pane exiting afterward.
-The program accepts an existing socket and tmux executable. Every
-query construction and selection below is pure except the explicitly named
-[`capture`](../src/LibTmux/Server.hs) and [`fetch`](../src/LibTmux/Query.hs).
+Everything in it is pure except [`capture`](../src/LibTmux/Server.hs) and
+[`fetch`](../src/LibTmux/Query.hs).
 
 <!-- example: query-graph -->
 ```haskell
@@ -123,67 +124,83 @@ fresh capture matches: 1
 
 ## Choose the source before checking cardinality
 
-[`panes`](../src/LibTmux/Query.hs) selects unique physical panes.
-[`paneOccurrences`](../src/LibTmux/Query.hs) selects their appearances through
-window links. Filtering preserves the chosen source's multiplicity.
-`exactlyOne` rejects no matches and reports `AtLeastTwoMatches` at the second
-match; it does not count the remaining list. `atMostOne` also permits absence.
-Proving uniqueness may still require traversing every input element.
+- [`panes`](../src/LibTmux/Query.hs) selects unique physical panes.
+- [`paneOccurrences`](../src/LibTmux/Query.hs) selects their appearances
+  through window links. Filtering keeps the source's multiplicity.
+- `exactlyOne` rejects no match and reports `AtLeastTwoMatches` at the second
+  match, without counting the rest. Proving uniqueness can still traverse every
+  input element.
+- `atMostOne` also allows no match.
 
-[`some`](../src/LibTmux/Query.hs) tests one related child against its entire
-predicate. Put all required conditions inside that child predicate when one
-pane must satisfy them together. Two separate existential predicates may
-match different panes. Over a known empty relation, `some` is false, `every`
-is true and `none` is true. Missing required lookups remain errors.
-`optionalRelated` is false for a known absent target; its negation includes
-absence. An unavailable relationship is a validation error, even on an empty
-source or in a branch that would otherwise short-circuit.
+Relationships:
+
+- [`some`](../src/LibTmux/Query.hs) tests one related child against its whole
+  predicate. To require several conditions on one pane, put them all inside it;
+  two separate `some` predicates can match different panes.
+- On a known empty relation, `some` is false; `every` and `none` are true.
+- `optionalRelated` is false for a known absent target. Its negation includes
+  absence.
+- A missing required lookup is an error. So is an unavailable relationship,
+  even on an empty source or in a short-circuited branch.
 
 ## Inspect, order and limit
 
-The qualified [field modules](api.md) expose typed tokens from the capture
-catalogue. Boolean fields cannot take numeric comparisons, and fields from
-different row types cannot be mixed. `dimensionAtLeast` accepts an unbounded
-`Integer` threshold while observed dimensions retain their checked type.
-Text equality and containment are exact, without case folding or Unicode
-normalization. Command names, paths and window labels retain their declared
-byte-preserving types; there is no implicit text conversion.
+- The qualified [field modules](api.md) expose typed tokens. Boolean fields
+  reject numeric comparisons; fields of different row types do not mix.
+- `dimensionAtLeast` takes an unbounded `Integer`; observed dimensions keep
+  their checked type.
+- Text equality and containment are exact: no case folding, no Unicode
+  normalization.
+- Command names, paths and window labels keep their byte-preserving types,
+  with no implicit text conversion.
 
-[`requirements`](../src/LibTmux/Query.hs) reports stable source, field and
-relationship names, ordering keys and the final limit. This is dependency
-inspection, not serialization or a backend execution plan. Validation checks
-all declared requirements before examining rows, including ordering keys,
-empty membership predicates and zero limits.
+[`requirements`](../src/LibTmux/Query.hs) lists a query's source, field and
+relationship names, ordering keys and limit. It inspects dependencies; it is
+not serialization or an execution plan. Validation checks every declared
+requirement before reading rows, including ordering keys, empty membership
+predicates and zero limits.
 
-`matching` accumulates predicates. `orderBy` replaces the ordering keys and
-uses stable sorting; tied rows keep source order. `limit` replaces the final
-nonnegative `Natural` bound. Evaluation always filters, orders and then
-limits, regardless of builder order. Every authored description and operand
-list must be finite.
+Building a query:
+
+- `matching` adds predicates.
+- `orderBy` replaces the ordering keys. The sort is stable, so ties keep source
+  order.
+- `limit` replaces the final bound, a nonnegative `Natural`.
+- Evaluation always filters, then orders, then limits, whatever the builder
+  order.
+- Descriptions and operand lists must be finite.
 
 ## Keep acquisition and failures explicit
 
-[`fetch`](../src/LibTmux/Query.hs) captures a new complete snapshot on every
-call. It checks compiled evaluator support before acquisition, then validates
-version requirements against captured metadata. This implementation performs
-no backend filtering. Reuse `runQuery` over one snapshot when several
-selections should share observations; see [capture costs](performance.md).
+- [`fetch`](../src/LibTmux/Query.hs) captures a new complete snapshot on every
+  call. It checks evaluator support before acquiring, then validates version
+  requirements against the captured metadata.
+- It does no backend filtering. To share observations across selections, reuse
+  `runQuery` on one snapshot; see [capture costs](performance.md).
 
-The example combines operational exceptions, pure query errors and
-cardinality errors in an application error type. `tryTmux` catches library
-exceptions only. Its handler preserves the exception context with `rethrowIO`,
-keeping cleanup and capture recovery owners reachable; asynchronous
-cancellation propagates. See [recovery](capture.md) when an application needs
-to inspect and resume those owners.
+Errors:
 
-The report reads detached values after the Server closes. Its equality check
-uses one snapshot. The final fresh-capture count demonstrates another
-acquisition; two independently changing captures do not prove evaluator
-equivalence. Cardinality and reference equality establish observed selection,
-not current liveness. Public mutation, query interchange, backend optimization
-and event subscriptions remain [unfinished](status.md).
+- The example folds operational, query and cardinality errors into one
+  application error type.
+- `tryTmux` catches library exceptions only; asynchronous cancellation
+  propagates.
+- `rethrowIO` keeps the exception context, so cleanup and capture recovery
+  owners stay reachable. To inspect and resume them, see
+  [recovery](capture.md).
 
-For a separate application, copy the [program](../examples/query-graph/Main.hs)
-and [package file](../examples/query-graph/libtmux-query-graph.cabal), then use
-its [immutable source dependency](../examples/query-graph/cabal.project.vcs)
-with the [installation instructions](installation.md).
+Reading the result:
+
+- The report reads detached values after the Server closes.
+- The equality check uses one snapshot; the fresh-capture count is a second
+  acquisition. Two captures of a changing server do not prove the evaluator
+  equals the plain predicate.
+- Cardinality and reference equality describe what was observed, not what is
+  alive now.
+- Query interchange, backend optimization and event streams are not
+  implemented; see [status](status.md).
+
+To use it in your own application, copy the
+[program](../examples/query-graph/Main.hs) and
+[package file](../examples/query-graph/libtmux-query-graph.cabal), then add its
+[pinned source dependency](../examples/query-graph/cabal.project.vcs) as
+described in [installation](installation.md).

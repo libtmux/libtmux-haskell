@@ -1,16 +1,13 @@
 # Capture and navigate a tmux server
 
-Use [`withServer`](../src/LibTmux/Server.hs) to adopt an existing endpoint and
-[`capture`](../src/LibTmux/Server.hs) to obtain a detached
-[`Snapshot`](../src/LibTmux/Snapshot.hs). The complete program in the
-[README](../README.md) filters ordinary pane records, traverses relationships
-and prints its result after the handle closes. Its
-[source](../examples/capture-graph/Main.hs) and
-[owned fixture verification](../scripts/check_sdist.py) are checked from the
-source archive, with output asserted and owned process exits observed.
+[`withServer`](../src/LibTmux/Server.hs) adopts an existing tmux endpoint.
+[`capture`](../src/LibTmux/Server.hs) reads it into a detached
+[`Snapshot`](../src/LibTmux/Snapshot.hs) that stays usable after the handle
+closes. The [README](../README.md) shows the
+[complete program](../examples/capture-graph/Main.hs).
 
-Create the [private demonstration server](../README.md) from the README, then
-run the Haskell executable from a provisioned checkout:
+Start the [demo server](../README.md) from the README, then run from a
+checkout:
 
 ```console
 $ cabal run --verbose=0 capture-graph -- \
@@ -18,20 +15,21 @@ $ cabal run --verbose=0 capture-graph -- \
     "$(command -v tmux)"
 ```
 
-To inspect your own running server, pass its actual socket and executable
-paths instead. The program observes that daemon; it does not create or stop it.
+To inspect your own server, pass its socket and tmux executable instead. The
+program reads that daemon; it never creates or stops it.
 
-The library requires a trusted absolute socket path and a writable pin
-directory on that socket's filesystem. The default pin directory is the
-socket's parent. [Installation](installation.md#native-backend-host-requirements)
-describes the Linux host requirements.
+The library needs:
+
+- A trusted absolute socket path.
+- A writable pin directory on the socket's filesystem. The default is the
+  socket's parent.
+- A Linux host; see [installation](installation.md#native-backend-host-requirements).
 
 ## Physical entities and appearances
 
-A session links windows at numeric indices. The same physical window can
-appear at two indices in one session or in several sessions. A pane belongs
-to its physical window, while a pane occurrence retains the window-link
-context:
+A session links windows at numeric indices. One physical window can appear at
+two indices, or in several sessions. A pane belongs to its physical window; a
+pane occurrence also keeps the window-link context:
 
 ```mermaid
 flowchart LR
@@ -42,59 +40,64 @@ flowchart LR
     W --> P["Pane %0"]
 ```
 
-`windows` and `panes` return each physical entity once. `windowLinks` and
-`paneOccurrences` retain both appearances in this fixture. Lists use numeric
-ID order; links use session ID and window index; occurrences use link and
-pane index. Indexed lookups avoid rescanning those lists.
+- `windows` and `panes` return each physical entity once.
+- `windowLinks` and `paneOccurrences` return every appearance: two each in
+  this demo.
+- Order: lists by numeric ID; links by session ID, then window index;
+  occurrences by link, then pane index. Lookups are indexed.
 
-References compare targeting identity within one Server generation. A lookup
-returns the observation from the supplied snapshot, including a later capture
-from that same Server. Independent Server scopes have distinct generations.
-Resolving a native ID with `lookupPaneId` deliberately selects its observation
-in the supplied snapshot; it does not restore an earlier targeting guarantee.
+References:
 
-Record updates create local values. They do not update the snapshot's indexes,
-validate a caller-edited graph or send a tmux command. Use
-`dimensionValue pane.width` for numeric comparisons; checked dimensions have
-no [`Num`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Prelude.html#t:Num)
-instance. Paths and current process names preserve POSIX bytes;
-window labels use `TmuxText` with explicit, fallible text conversion.
+- A reference names a target within one Server generation. Independent Server
+  scopes have distinct generations.
+- A lookup returns the observation in the snapshot you pass, including a later
+  capture from the same Server.
+- `lookupPaneId` picks a native ID's observation in the snapshot you pass. It
+  does not restore an earlier targeting guarantee.
+
+Values:
+
+- Record updates make local values. They do not change the snapshot's indexes,
+  validate the edited graph or send a command.
+- Compare sizes with `dimensionValue pane.width`; dimensions have no
+  [`Num`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Prelude.html#t:Num)
+  instance.
+- Paths and command names keep POSIX bytes. Window labels are `TmuxText`;
+  converting to text is explicit and can fail.
 
 ## Errors and recovery
 
-Acquisition fails in `IO` with `TmuxException`. Pure navigation returns
-`Either LookupError`; missing or foreign references never become empty results.
-The snapshot records a monotonic capture interval. It does not claim a
-transaction over tmux and operating-system state.
+- Acquisition fails in `IO` with `TmuxException`.
+- Pure navigation returns `Either LookupError`. A missing or foreign reference
+  is never an empty result.
+- A snapshot records a monotonic capture interval. It is not a transaction over
+  tmux and operating-system state.
 
-`withServer` preserves a callback's original exception, including cancellation.
-If bounded cleanup remains incomplete, its exception context retains a
-`CleanupRecovery`. After a successful callback, incomplete cleanup raises
-`CleanupFailed` instead of returning success.
+`withServer` rethrows the callback's own exception, cancellation included.
 
-Use `tryTmux` to catch library failures with their
-[`ExceptionWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#t:ExceptionWithContext),
-or [`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext)
-when handling application exceptions and
-cancellation too. Ordinary typed `try` loses this context when returning the
-concrete exception. Keep the context while recovering ownership.
+- If bounded cleanup stays incomplete, the exception context holds a
+  `CleanupRecovery`.
+- After a successful callback, incomplete cleanup raises `CleanupFailed`.
 
-`cleanupRecoveries` and `captureRecoveries` retrieve correlated owners from
-that context. Inspect them locally, resume existing cleanup, or explicitly
-detach logical uncertainty. Resuming never dispatches a second capture;
-detachment does not terminate native resources or prove daemon-side completion.
-The [process contract](contracts/process.md) defines these outcomes in detail.
+Catch with `tryTmux` (library failures) or
+[`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext)
+(also application exceptions and cancellation). Both keep the
+[`ExceptionWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#t:ExceptionWithContext)
+that recovery needs; a typed `try` drops it.
 
-Use [validated offline fixtures](fixtures.md) to exercise application graph
-logic without tmux. Their references belong to a separate offline origin.
+`cleanupRecoveries` and `captureRecoveries` read the correlated owners from
+that context. For each owner you can:
 
-The [capture baseline](performance.md) covers controlled graph sizes. The
-[shared Runtime guide](shared-runtime.md) covers independent handle lifetimes.
-Broader performance cases remain qualification work for the public observation
-milestone. The
-[status page](status.md) records the broader implementation scope.
+- Inspect it locally.
+- Resume cleanup. This never sends a second capture.
+- Detach the uncertainty. This stops no native resource and proves nothing
+  about the daemon.
 
-The example fixture verifies daemon exit after setup failure before session
-dispatch, and both daemon and pane exit after callback failure or cancellation.
-The runner joins interrupted session clients. When creation was dispatched but
-the pane receipt is unavailable, it reports that incomplete ownership explicitly.
+Details: [process contract](contracts/process.md).
+
+## See also
+
+- [Offline fixtures](fixtures.md): test graph logic without tmux.
+- [Performance](performance.md): capture cost by graph size.
+- [Shared Runtime](shared-runtime.md): independent handle lifetimes.
+- [Status](status.md): what is implemented.
