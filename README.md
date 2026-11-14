@@ -15,6 +15,8 @@ Haskell tmux client library with detached observations, typed identities
 and explicit `IO`. Capture once, then use ordinary records and collections.
 
 [![CI](https://github.com/libtmux/libtmux-haskell/actions/workflows/ci.yml/badge.svg)](https://github.com/libtmux/libtmux-haskell/actions/workflows/ci.yml)
+[![libtmux.org](https://img.shields.io/badge/docs-libtmux.org-0b7285)](https://libtmux.org/en/haskell/)
+[![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/libtmux/libtmux-haskell/blob/master/LICENSE)
 
 [Documentation](https://libtmux.org/en/haskell/) ·
 [API reference](https://libtmux.org/en/haskell/latest/reference/) ·
