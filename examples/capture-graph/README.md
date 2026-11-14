@@ -9,12 +9,16 @@
 
 # Capture a tmux graph
 
-[Main.hs](Main.hs) captures an existing server, closes its handle, then filters
-detached panes and follows session-to-window links. One physical window linked
-at two indices produces two contextual appearances.
+[Main.hs](Main.hs) captures a server once, closes the handle, then reads the
+detached result with [`withServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withserver/) and
+[`capture`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capture/).
 
-Create the [README's private demonstration server](../../README.md), then run
-from the repository root:
+- Filters panes by width.
+- Follows session-to-window links.
+- Reports one window linked at two indices as two appearances.
+
+Start the [README's demo server](../../README.md), then run from the
+repository root:
 
 ```console
 $ cabal run --verbose=0 capture-graph -- \
@@ -22,10 +26,7 @@ $ cabal run --verbose=0 capture-graph -- \
     "$(command -v tmux)"
 ```
 
-Compare the result with [expected.stdout](expected.stdout), then follow the
-README's teardown commands. The program releases its own handle; it does not
-stop the server you supplied.
+Expected output: [expected.stdout](expected.stdout). Then run the README's
+cleanup commands; the program leaves your server running.
 
-Read the [capture and recovery guide](../../docs/capture.md) for lookup errors,
-connection-scoped references and cancellation. CI executes the installed program
-against an owned fixture and verifies output and process cleanup.
+More: [capture and recovery](../../docs/capture.md).

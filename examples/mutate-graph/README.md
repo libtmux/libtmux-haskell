@@ -9,14 +9,16 @@
 
 # Rename captured targets
 
-[Main.hs](Main.hs) selects one physical pane, follows its window reference,
-renames the session and window, and changes the pane title. A fresh capture
-shows the changes; the original snapshot keeps its old values. The linked
-window still has two appearances.
+[Main.hs](Main.hs) selects one pane, then calls
+[`renameSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamesession/),
+[`renameWindow`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamewindow/) and
+[`setPaneTitle`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-setpanetitle/).
 
-This program changes the supplied server. Use the
-[README's private demonstration server](../../README.md), then run from the
-repository root:
+- A fresh capture shows the changes; the original snapshot keeps its old values.
+- The renamed window still has two appearances.
+
+This program changes the server you give it. Start the
+[README's demo server](../../README.md), then run from the repository root:
 
 ```console
 $ cabal run --verbose=0 mutate-graph -- \
@@ -24,10 +26,7 @@ $ cabal run --verbose=0 mutate-graph -- \
     "$(command -v tmux)"
 ```
 
-Compare the result with [expected.stdout](expected.stdout), then follow the
-README's teardown commands. The program releases its connection resources
-without stopping the supplied server.
+Expected output: [expected.stdout](expected.stdout). Then run the README's
+cleanup commands; the program leaves your server running.
 
-The [mutation guide](../../docs/mutations.md) covers target identity, deadlines,
-known and uncertain outcomes, and recovery. CI checks the installed program's
-output and observes owned fixture teardown on both tmux endpoints.
+More: [mutations](../../docs/mutations.md).

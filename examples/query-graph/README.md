@@ -9,12 +9,15 @@
 
 # Query a captured graph
 
-[Main.hs](Main.hs) compares a typed query with an ordinary pane predicate,
-traverses relationships and checks cardinality. It distinguishes one physical
-pane from that pane's two appearances through window links.
+[Main.hs](Main.hs) runs a typed query with
+[`runQuery`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-runquery/), then compares it with a plain pane
+predicate.
 
-Create the [README's private demonstration server](../../README.md), then run
-from the repository root:
+- Traverses relationships and checks cardinality.
+- Tells one physical pane from its two appearances through window links.
+
+Start the [README's demo server](../../README.md), then run from the
+repository root:
 
 ```console
 $ cabal run --verbose=0 query-graph -- \
@@ -22,10 +25,7 @@ $ cabal run --verbose=0 query-graph -- \
     "$(command -v tmux)"
 ```
 
-Compare the result with [expected.stdout](expected.stdout), then follow the
-README's teardown commands. The program releases its handles without stopping
-the supplied server.
+Expected output: [expected.stdout](expected.stdout). Then run the README's
+cleanup commands; the program leaves your server running.
 
-The [query guide](../../docs/query.md) explains pure evaluation, explicit fresh
-acquisition, relationship semantics and application error handling. CI executes
-the installed program and checks output and owned fixture cleanup.
+More: [typed queries](../../docs/query.md).

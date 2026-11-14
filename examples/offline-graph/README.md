@@ -9,9 +9,13 @@
 
 # Test a pane policy without tmux
 
-[Main.hs](Main.hs) constructs a validated fixture and selects active panes by
-width. Its repeated window link demonstrates the difference between physical
-entities and contextual appearances. It opens no socket and starts no process.
+[Main.hs](Main.hs) builds a fixture with
+[`validateFixture`](https://libtmux.org/en/haskell/latest/reference/libtmux-snapshot-fixture-v-validatefixture/) and selects
+active panes by width.
+
+- Opens no socket and starts no process.
+- Links one window twice, so physical entities and appearances differ.
+- Fixture references never target a live server.
 
 Run from the repository root:
 
@@ -19,7 +23,6 @@ Run from the repository root:
 $ cabal run --verbose=0 offline-graph
 ```
 
-Compare the result with [expected.stdout](expected.stdout). The
-[fixture guide](../../docs/fixtures.md) explains fixture origins and validation;
-fixture references cannot target a live server. CI executes this program using
-the installed public package and asserts its output.
+Expected output: [expected.stdout](expected.stdout).
+
+More: [offline fixtures](../../docs/fixtures.md).
