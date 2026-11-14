@@ -1,20 +1,21 @@
 # Measure capture cost
 
-The capture benchmark measures the public `capture` operation, including
-response decoding, graph validation, stored indexes and forcing owned values.
-Endpoint adoption, fixture construction, derived occurrence counting and
-teardown stay outside that timing. Each sample uses the default two-second
-capture timeout.
+The benchmark times the public `capture` operation.
 
-Build the optional benchmark after provisioning the selected Haskell tools
-and dependencies:
+- Included: response decoding, graph validation, stored indexes, forcing owned
+  values.
+- Excluded: endpoint adoption, fixture construction, occurrence counting,
+  teardown.
+- Each sample uses the default two-second capture timeout.
+
+Build the benchmark from a provisioned checkout:
 
 ```console
 $ cabal build bench:capture --offline
 ```
 
-Run the three workloads against a selected tmux binary. The output directory
-must be new; it receives raw CSV samples, host context and a JSON summary:
+Run the three workloads against a tmux binary. The output directory must not
+exist yet; it receives raw CSV samples, host context and a JSON summary:
 
 ```console
 $ python3 bench/capture.py \
@@ -23,23 +24,22 @@ $ python3 bench/capture.py \
 ```
 
 Repeat `--tmux` to compare binaries in one sweep. The reference run uses the
-support endpoints, 3.3a and 3.8. Benchmarks form a separate tier and do not run
-in routine test loops or add intermediate releases to CI.
+oldest and newest supported tmux, 3.3a and 3.8. Benchmarks stay out of routine
+tests.
 
-The [Haskell harness](../bench/Capture.hs) uses the public interface.
-The [fixture driver](../bench/capture.py) owns a foreground daemon and tracks
-every created pane with a pidfd. It verifies graph cardinalities and observes
-owned exits before accepting a result. Medium and large cases link three
-physical windows across sessions; every case also retains two appearances
-of the initial window.
+- The [Haskell harness](../bench/Capture.hs) uses the public API.
+- The [fixture driver](../bench/capture.py) owns a foreground daemon, tracks
+  each pane with a pidfd, and checks graph sizes and exits before accepting a
+  result.
+- Medium and large cases link three physical windows across sessions. Every
+  case keeps two appearances of the initial window.
 
 ## Reference run
 
-The [recorded samples](../bench/results/capture-2026-11-08.json) were measured
-on 2026-11-08 with GHC 9.14.1, Cabal 3.18.2.0, the library's default `-O1`
-build and one RTS capability. The shared Linux host used a four-core CPU quota
-and an 8 GiB process-group memory limit. Setup and teardown completed for all
-six cases.
+The [recorded samples](../bench/results/capture-2026-11-08.json) date from
+2026-11-08: default `-O1` build, one RTS capability, a four-core CPU quota and
+an 8 GiB memory limit on a shared Linux host. The file records the compiler
+and Cabal versions. All six cases completed setup and teardown.
 
 | tmux | Sessions | Physical windows | Physical panes | Median capture | Maximum capture |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -50,14 +50,13 @@ six cases.
 | 3.8 | 5 | 25 | 75 | 11.7 ms | 12.8 ms |
 | 3.8 | 15 | 80 | 250 | 28.3 ms | 29.8 ms |
 
-Each row contains five samples, including the first capture in its Server
-scope. Values are rounded up to a tenth of a millisecond. The JSON retains
-exact elapsed and acquisition-interval nanoseconds, Haskell process CPU time,
-cardinalities, source identities and host load. Haskell CPU time excludes
-the daemon and command-client processes.
+- Each row has five samples, including the first capture in its Server scope.
+- Values round up to a tenth of a millisecond.
+- The JSON keeps exact elapsed and acquisition-interval nanoseconds, Haskell
+  process CPU time (not the daemon or command clients), cardinalities, source
+  identities and host load.
 
-These measurements qualify the stated fixtures on this host. Allocations,
+These numbers cover the fixtures above, on this host. Not measured: allocations,
 concurrent captures, active selection or geometry changes, long fields,
-cancellation latency and other hosts remain separate qualification work.
-Use the raw samples when comparing a change; a successful small sweep does
-not establish a service-level latency guarantee.
+cancellation latency, other hosts. Compare a change against the raw samples; a
+small sweep is not a latency guarantee.

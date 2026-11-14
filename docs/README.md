@@ -1,8 +1,8 @@
 # Using libtmux for Haskell
 
-Capture an existing tmux endpoint, then process detached records with ordinary
-Haskell. Start with the complete [capture program](../README.md), then read
-[observation and recovery semantics](capture.md) and the [API guide](api.md).
+Capture a tmux server once, then use the records as ordinary Haskell. Start
+with the [capture program](../README.md), then [capture and recovery](capture.md)
+and the [API guide](api.md).
 
 | Task | Guide |
 | --- | --- |
@@ -17,12 +17,11 @@ Haskell. Start with the complete [capture program](../README.md), then read
 | Browse modules, declarations and source | [API documentation](api.md) |
 | Decide whether the current package meets your needs | [Implementation status](status.md) |
 
-The [behavior contracts](contracts/README.md) describe the implementation
-scope. They include operations that are not yet public APIs.
+For maintainers:
 
-The accepted [native domain model ADR](decisions/0001-native-domain-model.md)
-records the physical graph, naming, lifecycle and public API decisions.
-
-Repository setup and test authoring live in
-[contributing](../.github/CONTRIBUTING.md) and
-[testing](../.github/TESTING.md).
+- [Behavior contracts](contracts/README.md): implementation scope, including
+  operations that are not public APIs yet.
+- [Native domain model ADR](decisions/0001-native-domain-model.md): physical
+  graph, naming, lifecycle and public API decisions.
+- [Contributing](../.github/CONTRIBUTING.md) and
+  [testing](../.github/TESTING.md): setup and test authoring.

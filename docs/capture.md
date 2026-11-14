@@ -79,11 +79,15 @@ Values:
   `CleanupRecovery`.
 - After a successful callback, incomplete cleanup raises `CleanupFailed`.
 
-Catch with `tryTmux` (library failures) or
-[`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext)
-(also application exceptions and cancellation). Both keep the
+Catch with:
+
+- `tryTmux`: library failures.
+- [`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext):
+  also application exceptions and cancellation.
+
+Both keep the
 [`ExceptionWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#t:ExceptionWithContext)
-that recovery needs; a typed `try` drops it.
+that recovery needs. A typed `try` drops it.
 
 `cleanupRecoveries` and `captureRecoveries` read the correlated owners from
 that context. For each owner you can:

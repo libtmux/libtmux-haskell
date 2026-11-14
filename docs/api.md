@@ -54,38 +54,36 @@ $ python3 -m http.server 8000 \
 ```
 
 Open [the local API browser](http://127.0.0.1:8000/).
-Module overviews explain the types; declarations specify input domains, results and
-errors. The project enables declaration-to-source links, interactive symbol
-search and a Hoogle index for this package. Acquisition and recovery are
-explicit `IO`; field access, list processing, parsers and navigation are pure.
-Record fields use
-[`OverloadedRecordDot`](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/overloaded_record_dot.html);
-the library does not generate
-top-level selector functions. Detached record constructors support patterns
-and local updates. Snapshot assembly and targeting references remain opaque.
-For an ambiguous record update, qualify the field through its defining module.
-For example, import `LibTmux.Server` as `Server` and update `Server.socketPath`;
-this identifies the field owner without deprecated type-directed disambiguation.
 
-The copy repairs navigation in Haddock 2.33.0's output: repeated record labels have
-distinct owner-qualified anchors, and instance methods have local targets.
-A name-only field link offers its record owners; a source identifier on
-several lines offers those lines. Missing hidden-module instance attributions
-retain their text and valid Source links. No private API page is added.
-In the default theme, long module headings wrap and wide constructor,
-instance and symbol-index sections scroll within the page on narrow screens.
-Source listings use the mobile viewport and keep horizontal scrolling inside
-a keyboard-focusable code region. Type annotations remain visible outside
-the scrolling region and stay within the viewport. Native annotation behavior
-remains available without the source enhancement. Source text and identifier
-targets retain their native contents.
+- Module overviews explain the types. Declarations give input domains, results
+  and errors.
+- Declaration-to-source links, symbol search and a Hoogle index are enabled.
+- Acquisition and recovery are explicit `IO`. Field access, list processing,
+  parsers and navigation are pure.
+- Record fields use
+  [`OverloadedRecordDot`](https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/overloaded_record_dot.html).
+  There are no top-level selector functions.
+- Detached records support patterns and local updates. Snapshot assembly and
+  targeting references are opaque.
+- To update an ambiguous record field, qualify it by its defining module:
+  import `LibTmux.Server` as `Server` and update `Server.socketPath`. This
+  avoids deprecated type-directed disambiguation.
 
-`navigation.json` records raw and prepared file digests and edit counts.
-The check rejects missing local targets, browser assets and unexpected duplicate
-IDs, including index and search links. It preserves signatures, instances, source text and
-compiled interfaces. It does not verify external dependency URLs, prove that
-an arbitrary raw directory is fresh, or publish anything. CI builds from its
-checked-out source and retains the raw and prepared artifacts separately.
+The prepared copy repairs Haddock's navigation:
+
+- Repeated record labels get owner-qualified anchors. Instance methods get
+  local targets.
+- A field name offers its record owners; a source identifier on several lines
+  offers those lines.
+- Wide sections scroll within the page on narrow screens. Source listings keep
+  their scrolling inside a keyboard-focusable region.
+- Source text and identifier targets keep their native contents. No private API
+  page is added.
+
+`navigation.json` records raw and prepared file digests and edit counts. The
+check rejects missing local targets, browser assets and unexpected duplicate
+IDs, including index and search links. It does not verify external dependency
+URLs, prove that a raw directory is fresh, or publish anything.
 
 The complete [capture example](../examples/capture-graph/Main.hs),
 [shared Runtime example](../examples/shared-runtime/Main.hs),

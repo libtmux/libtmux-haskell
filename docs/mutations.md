@@ -152,9 +152,13 @@ does not establish that background jobs started by a hook have finished.
 Read [`mutationRecoveries`](../src/LibTmux/Server.hs) from the exception
 context that `tryTmux` or
 [`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext)
-returns. Each owner has a `mutationOperation` and `mutationGeneration`. Its
-receipt keeps metadata, not the command operands or result. An operation that
-was never admitted has no owner.
+returns.
+
+- Each owner has a `mutationOperation` and `mutationGeneration`.
+- Its receipt keeps metadata, not the command operands or result.
+- An operation that was never admitted has no owner.
+
+Then:
 
 - [`inspectMutationRecovery`](../src/LibTmux/Server.hs) reads the status and
   native ownership locally.

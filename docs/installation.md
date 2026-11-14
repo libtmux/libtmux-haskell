@@ -1,17 +1,18 @@
 # Add the package to a Cabal application
 
-The [package manifest](../libtmux-haskell.cabal) declares the language edition
-and dependency compatibility bounds. Use a current GHC and Cabal that satisfy
-those bounds. The native backend requires Linux x86_64; see its
-[host requirements](#native-backend-host-requirements).
-[Contributor setup](../.github/CONTRIBUTING.md#toolchain) links the CI pins for
-reproducing the tested configuration.
+Requirements:
 
-Add `libtmux-haskell` to the executable's dependencies. The package is not
-on Hackage yet, so [fetch the Git source](#fetch-the-source-from-git) with a
-`cabal.project`. The
-[example package](../examples/capture-graph/libtmux-capture-graph.cabal) is a
-complete starting point:
+- A current GHC and Cabal, within the bounds in the
+  [package manifest](../libtmux-haskell.cabal).
+- Linux x86_64; see [host requirements](#native-backend-host-requirements).
+- tmux 3.3a or newer.
+- To reproduce the tested toolchain, see
+  [contributor setup](../.github/CONTRIBUTING.md#toolchain).
+
+Add `libtmux-haskell` to your executable's dependencies and
+[fetch the Git source](#fetch-the-source-from-git) with a `cabal.project`.
+The [example package](../examples/capture-graph/libtmux-capture-graph.cabal) is
+a complete starting point:
 
 <!-- example-package: capture-graph -->
 ```cabal
@@ -34,15 +35,13 @@ executable capture-graph
 ```
 
 Save [Main.hs](../examples/capture-graph/Main.hs) beside the package file, then
-download the package index for the other dependencies before the first
-build:
+update the package index:
 
 ```console
 $ cabal update
 ```
 
-Use the [private demonstration server](../README.md) from the README, then
-run the Haskell executable:
+Start the [demo server](../README.md) from the README, then run:
 
 ```console
 $ cabal run --verbose=0 capture-graph -- \
@@ -50,12 +49,12 @@ $ cabal run --verbose=0 capture-graph -- \
     "$(command -v tmux)"
 ```
 
-The [capture guide](capture.md) explains the object graph, pure lookups and
-scope cleanup. Its owned fixture creates a repeatable server for the
-[README example](../README.md). Enable
-[`OverloadedRecordDot`](https://downloads.haskell.org/ghc/9.14.1/docs/users_guide/exts/overloaded_record_dot.html)
-in application
-modules using observation fields. No optics or effect framework is required.
+- Enable
+  [`OverloadedRecordDot`](https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/overloaded_record_dot.html)
+  in modules that read observation fields.
+- No optics or effect framework is needed.
+- The [capture guide](capture.md) covers the object graph, pure lookups and
+  scope cleanup.
 
 The API is experimental. The package provides observation and rename/title
 operations. Creation, pane input and events remain under development.
@@ -67,8 +66,8 @@ for connection, capture and mutation operations.
 
 ## Fetch the source from Git
 
-Cabal fetches the release source from Git, because the package is not on
-Hackage yet. Use this `cabal.project`:
+The package is not on Hackage yet, so Cabal fetches the release from Git. Use
+this `cabal.project`:
 
 <!-- example-project: capture-graph -->
 ```cabal
@@ -83,8 +82,13 @@ source-repository-package
 
 ## Native backend host requirements
 
-The native backend targets Linux x86_64 with glibc 2.39 or newer
-for `pidfd_spawn`, compatible kernel pidfd operations, and exclusive child
-reaping ownership. Missing host operations fail before launch. This is
-separate from pure scalar construction and lookup. See the
+The native backend needs:
+
+- Linux x86_64.
+- glibc 2.39 or newer, for `pidfd_spawn`.
+- A kernel with compatible pidfd operations.
+- Exclusive ownership of child reaping.
+
+A missing host operation fails before launch. Pure scalar construction and
+lookup do not need them. See the
 [process host contract](contracts/process.md#launch-and-host-requirements).

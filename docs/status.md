@@ -30,20 +30,19 @@ The core favors GHC boot libraries and ordinary `IO`. Additional dependencies
 need a concrete requirement. See the
 [package and dependency policy](../.github/CONTRIBUTING.md#package-and-dependency-policy).
 
-## Compatibility evidence
+## Tested configurations
 
-CI uses the [recorded toolchain](../.tool-versions) on Linux x86_64. Its current
-integration subset exercises owned fixtures, scalar framing, private socket
-pins, public capture/mutations, scope recovery and process ownership with one and two
-RTS capabilities on exact tmux
-releases 3.3a and 3.8. The supported range includes all intermediate releases;
-CI tests its endpoints.
+- CI runs the [recorded toolchain](../.tool-versions) on Linux x86_64, with one
+  and two RTS capabilities.
+- It uses the two ends of the supported tmux range, 3.3a and 3.8. Releases in
+  between are supported but not run.
+- It exercises owned fixtures, scalar framing, socket pins, public capture and
+  mutations, scope recovery and process ownership.
+- That covers the implemented subset, not the whole tmux API.
 
-The [workflow](../.github/workflows/ci.yml) and
-[test guide](../.github/TESTING.md) describe those checks. This is evidence
-for the implemented subset, not complete tmux API compatibility.
+See the [workflow](../.github/workflows/ci.yml) and
+[test guide](../.github/TESTING.md).
 
-A [capture baseline](performance.md) records small, medium and large owned
-graphs on both tmux endpoints. It measures the public API with raw samples
-and host context. Allocation, concurrency and cancellation-latency
-qualification remain open.
+[Performance](performance.md) measures capture on small, medium and large
+graphs on both endpoints. Not measured yet: allocation, concurrency and
+cancellation latency.
