@@ -77,7 +77,7 @@ detached pane %0 belongs to @0
 
 ## Use the installed package
 
-The core remains unpublished. This example's project pins the source that
+This example's project pins the release source that
 provides the shared Runtime API. Use that project when building the standalone
 program, together with its package file:
 
