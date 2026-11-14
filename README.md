@@ -60,7 +60,6 @@ connection. Run this from a checkout.
 
 Start a demo server on a private socket:
 
-
 ```console
 $ export LIBTMUX_DEMO_DIR="$(mktemp -d -t libtmux-haskell-demo.XXXXXX)"
 ```
@@ -212,7 +211,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Reproduce capture measurements | [Performance](https://libtmux.org/en/haskell/latest/guides/performance/) |
 | Browse connection and mutation operations | [`LibTmux.Server`](https://libtmux.org/en/haskell/latest/reference/libtmux-server/) |
 | Browse declarations and module documentation | [API reference](https://libtmux.org/en/haskell/latest/reference/) |
-| Evaluate the implemented scope and compatibility evidence | [Status](https://libtmux.org/en/haskell/latest/guides/status/) |
+| See what works today and what is planned | [Status](https://libtmux.org/en/haskell/latest/guides/status/) |
 
 ## Support and status
 
