@@ -1,7 +1,7 @@
 # Implementation status
 
 Use the current source for detached observations and typed input values.
-The package is unpublished. Public mutations currently cover session/window
+The API is experimental. Public mutations currently cover session/window
 rename and pane titles, with generation checks and correlated recovery.
 
 | Component | Available to consumers |

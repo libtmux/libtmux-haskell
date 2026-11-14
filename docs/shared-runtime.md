@@ -77,7 +77,7 @@ detached pane %0 belongs to @0
 
 ## Use the installed package
 
-The core remains unpublished. This example's project pins the source that
+This example's project pins the release source that
 provides the shared Runtime API. Use that project when building the standalone
 program, together with its package file:
 
@@ -89,7 +89,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 8b60ec5b60b0e4b0346c56122666ad26feb072ff
+  tag: v0.0.1.0
 ```
 
 <!-- example-package: shared-runtime -->
@@ -108,7 +108,7 @@ executable shared-runtime
   build-depends:
     base >=4.22 && <4.23,
     filepath >=1.5.4 && <1.6,
-    libtmux-haskell ^>=0.1.0.0,
+    libtmux-haskell ^>=0.0.1.0,
     text >=2.1.3 && <2.2
 ```
 

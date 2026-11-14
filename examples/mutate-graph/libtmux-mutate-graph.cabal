@@ -12,5 +12,5 @@ executable mutate-graph
   build-depends:
     base >=4.22 && <4.23,
     filepath >=1.5.4 && <1.6,
-    libtmux-haskell ^>=0.1.0.0,
+    libtmux-haskell ^>=0.0.1.0,
     text >=2.1.3 && <2.2

@@ -5,6 +5,11 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      release-artifact:
+        description: Checked source and Haddock archives
+        value: ${{ jobs.checks.outputs.release-artifact }}
 
 permissions:
   contents: read
@@ -19,10 +24,13 @@ jobs:
     timeout-minutes: 15
     outputs:
       tmux: ${{ steps.matrix.outputs.tmux }}
+      release-artifact: hackage-${{ github.sha }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Release guard regressions
+        run: python3 -B scripts/test_release.py
       - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
@@ -100,6 +108,15 @@ jobs:
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: python3 scripts/check_sdist.py
+      - name: Prepare checked Hackage archives
+        run: python3 scripts/release.py prepare
+      - name: Retain source and Haddock release archives
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hackage-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist-newstyle/release/
+          if-no-files-found: error
+          retention-days: 90
       - name: Save example tmux build
         if: steps.tmux-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
