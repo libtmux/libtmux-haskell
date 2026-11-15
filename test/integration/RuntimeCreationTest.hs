@@ -55,6 +55,11 @@ tests = testGroup "owned Runtime creation"
           readOutput fixture server ["show-environment", "-t", sid, "KEY"] >>= (@?= "KEY=#{pid};\n")
           readOutput fixture server ["show-environment", "-t", sid, "LIBTMUX_CLIENT_CONTEXT"] >>=
             (@?= "LIBTMUX_CLIENT_CONTEXT=from-launch\n")
+          readOutput fixture server ["display-message", "-p", "-t", paneTarget receipt, "-F",
+            "#{pid} #{session_id} #{window_id} #{pane_id} #{window_index}"] >>=
+            (@?= Ascii.unwords [Ascii.pack (show receipt.serverPid), sid,
+              Utf8.encodeUtf8 (Id.renderWindowId receipt.windowId), paneTarget receipt,
+              Ascii.pack (show (Value.windowIndexValue receipt.windowIndex))] <> "\n")
           R.receiptGeneration (R.readReceipt (R.creationRequest created)) @?= Pin.pinGeneration (R.serverPin server)
           atomically (R.readStatus (R.creationRequest created)) >>=
             (@?= S.Status S.OperationComplete (Just S.Succeeded) False)
@@ -86,12 +91,15 @@ tests = testGroup "owned Runtime creation"
       withRuntime P.normalFork $ \runtime server fixture ->
         withHook fixture server "has-session -t =libtmux-missing-created" $ do
           created <- start 1000000 runtime server fixture (optionsFor "hook-error")
-          withCreated fixture server created $ \receipt ->
+          withCreated fixture server created $ \receipt -> do
             reply created >>= \case
               C.SessionCreatedWithErrors observed diagnostic -> do
                 observed @?= receipt
                 assertBool "empty hook diagnostic" (not (Bytes.null diagnostic))
               other -> assertFailure (show other)
+            atomically (R.readStatus (R.creationRequest created)) >>=
+              (@?= S.Status S.OperationComplete (Just S.Failed) False)
+            atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
 
   , testCase "a destructive hook does not erase a historical receipt" $
       withRuntime P.normalFork $ \runtime server fixture ->
@@ -176,14 +184,28 @@ tests = testGroup "owned Runtime creation"
               _ -> assertFailure "creation allocation failure lost its correlation"
           Right _ -> assertFailure "worker-allocation failure returned success"
 
-  , testCase "invalid options and launch contexts create no operation" $
-      withRuntime P.normalFork $ \runtime server fixture -> do
-        forM_ [(launchContext fixture, (optionsFor "bad") {C.name = Just "bad\NULname"}),
-               ((launchContext fixture) {N.env = ["invalid"]}, optionsFor "bad-env"),
-               ((launchContext fixture) {N.cwd = "relative"}, optionsFor "bad-cwd")] $ \(context, options) -> do
-          try @SomeException (R.createSessionWith P.defaultHooks 1000000 runtime server context options) >>= \case
-            Left _ -> pure ()
+  , testCase "invalid options and launch contexts create no operation" $ do
+      forks <- newIORef (0 :: Int)
+      let fork :: P.Fork
+          fork worker = modifyIORef' forks (+ 1) >> P.normalFork worker
+      withRuntime fork $ \runtime server fixture -> do
+        forM_ [(launchContext fixture, (optionsFor "bad") {C.name = Just "bad\NULname"},
+                 Left (R.InvalidCommandOperands (C.NulOperand "session.name"))),
+               ((launchContext fixture) {N.env = ["invalid"]}, optionsFor "bad-env",
+                 Right (N.InvalidInput "invalid environment entry")),
+               ((launchContext fixture) {N.cwd = "relative"}, optionsFor "bad-cwd",
+                 Right (N.InvalidInput "absolute native paths required"))] $ \(context, options, expected) -> do
+          tryWithContext @SomeException
+            (R.createSessionWith P.defaultHooks 1000000 runtime server context options) >>= \case
+            Left (ExceptionWithContext annotations problem) -> do
+              case expected of
+                Left refusal -> fromException problem @?= Just refusal
+                Right refusal -> fromException problem @?= Just refusal
+              assertBool "invalid input acquired an operation receipt"
+                (null (Context.getExceptionAnnotations @R.ReadReceipt annotations))
             Right _ -> assertFailure "invalid creation input was admitted"
+        readIORef forks >>= (@?= 0)
+        atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
         atomically (R.inspect runtime) >>= \report -> do
           length report.readWorkers @?= 0
           length report.unresolved @?= 0
@@ -278,9 +300,12 @@ sessionTarget = Utf8.encodeUtf8 . Id.renderSessionId . (.sessionId)
 paneTarget = Utf8.encodeUtf8 . Id.renderPaneId . (.paneId)
 
 settled :: R.Runtime -> R.ServerHandle -> R.ReadReceipt -> IO R.ReadRecovery
-settled runtime server correlation = bounded $ atomically $ do
-  recovery <- R.inspectReceipt runtime server correlation
-  check (not recovery.workerOwned && not recovery.nativeOwned)
+settled runtime server correlation = do
+  recovery <- bounded $ atomically $ do
+    observed <- R.inspectReceipt runtime server correlation
+    check (not observed.workerOwned && not observed.nativeOwned)
+    pure observed
+  atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
   pure recovery
 
 inspectPid :: R.Runtime -> R.ServerHandle -> Fixture.Fixture -> Assertion
