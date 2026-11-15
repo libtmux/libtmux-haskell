@@ -12,7 +12,7 @@ module LibTmux.Internal.Runtime
   ( Runtime, ServerHandle, ServerOwner, Report (..), newRuntime, adopt, adoptWith
   , newServerOwner, adoptServerOwnerWith, inspectServerOwner, shutdownServerOwner
   , awaitServerOwnerCleanup, detachServerOwnerOperation
-  , serverPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
+  , serverPool, serverOwnerPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
   , inspectServerHandle, shutdownServerHandle
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
@@ -257,6 +257,11 @@ adoptServerOwnerWith checkpoint runtime entry source parent = mask $ \restore ->
 
 serverPool :: ServerHandle -> P.Pool
 serverPool (ServerHandle entry _) = entry.pool
+
+-- | An owner's pool exists before any pin, so one pre-pin native client
+-- (a daemonizing start-server) can be submitted under the registered cleanup.
+serverOwnerPool :: ServerOwner -> P.Pool
+serverOwnerPool entry = entry.pool
 
 serverPin :: ServerHandle -> SocketPin
 serverPin (ServerHandle _ pin) = pin
