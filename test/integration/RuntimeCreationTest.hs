@@ -14,11 +14,11 @@ import Data.IORef
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
-import LibTmux.Creation qualified as Creation
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Creation qualified as Create
+import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
@@ -220,8 +220,8 @@ tests = testGroup "owned Runtime creation"
                           [value] -> pure value
                           _ -> fail "cancellation lost creation recovery"
                         created <- atomically (Create.observedReceipt recovery) >>= maybe (fail "consumed receipt was lost") pure
-                        let session = (created :: Creation.CreatedSession).session
-                        Utf8.encodeUtf8 (Id.renderSessionId (Snapshot.sessionId session)) <> "\n" @?= nativeSession
+                        let G.SessionRef _ session = created.session
+                        Utf8.encodeUtf8 (Id.renderSessionId session) <> "\n" @?= nativeSession
                         observed <- bounded (Create.awaitRecovery recovery)
                         observed.logical.outcome @?= Just S.OutcomeUnknown
                         atomically (Create.detachRecovery recovery) >>= (@?= True)
