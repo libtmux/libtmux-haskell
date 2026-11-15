@@ -11,7 +11,7 @@ The public modules are:
 | [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
 | [LibTmux.Id](../src/LibTmux/Id.hs) | Distinct entity IDs, canonical parsing, rendering and `IdError` |
 | [LibTmux.Value](../src/LibTmux/Value.hs) | Checked dimensions/indices, numeric access and `ValueError` |
-| [LibTmux.Version](../src/LibTmux/Version.hs) | Stable-release identity, admission and `VersionError` |
+| [LibTmux.Version](../src/LibTmux/Version.hs) | Release identity, ordering, minimum-version admission and `VersionError` |
 | [LibTmux.Query](../src/LibTmux/Query.hs) | Pure typed predicates, ordering, requirements, cardinality and explicit fresh fetch |
 | [LibTmux.Query.Pane](../src/LibTmux/Query/Pane.hs) | Physical pane fields and window relationship |
 | [LibTmux.Query.Session](../src/LibTmux/Query/Session.hs) | Session fields, window links and attached clients |

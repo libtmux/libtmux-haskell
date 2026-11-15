@@ -137,7 +137,7 @@ data ReadRecovery = ReadRecovery
   } deriving stock (Show)
 -- | A checked positive server PID, observed by 'readServerPid'.
 type PidRead = Request Integer
--- | A stable release identity, observed by 'readServerVersion'.
+-- | A release identity, observed by 'readServerVersion'.
 type VersionRead = Request Version.TmuxVersion
 
 data ReadResult value = ReadValue !value | ReadUnavailable !S.Outcome !(Maybe SomeException)
@@ -595,8 +595,8 @@ createSessionWith hooks duration runtime client context options = mask_ $ do
       Left (ExceptionWithContext annotations problem) ->
         rethrowIO (ExceptionWithContext (Context.addExceptionAnnotation journal annotations) problem)
 
--- | Observe a stable release identity through the pinned server. Use
--- 'Version.requireSupported' separately for supported-range admission;
+-- | Observe a release identity through the pinned server. Use
+-- 'Version.requireSupported' separately for minimum-version admission;
 -- this observation establishes no feature capabilities.
 readServerVersion :: Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
 readServerVersion = readServerVersionWith P.defaultHooks 1000000

@@ -24,8 +24,8 @@ $ python3 bench/capture.py \
 ```
 
 Repeat `--tmux` to compare binaries in one sweep. The reference run uses the
-oldest and newest supported tmux, 3.3a and 3.8. Benchmarks stay out of routine
-tests.
+minimum supported tmux, 3.3a, and the newest release tested, 3.8. Benchmarks
+stay out of routine tests.
 
 - The [Haskell harness](../bench/Capture.hs) uses the public API.
 - The [fixture driver](../bench/capture.py) owns a foreground daemon, tracks

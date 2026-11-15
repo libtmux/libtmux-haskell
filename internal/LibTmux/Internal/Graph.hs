@@ -160,7 +160,7 @@ data ServerInfo = ServerInfo
   { generation :: !Generation -- ^ Connection identity shared by all references in this snapshot.
   , pid :: !Integer -- ^ Positive daemon process ID reported by tmux.
   , startedAt :: !Integer -- ^ Daemon start time in whole seconds since the Unix epoch.
-  , version :: !Version.TmuxVersion -- ^ Stable release admitted by "LibTmux.Version".
+  , version :: !Version.TmuxVersion -- ^ Release admitted by "LibTmux.Version".
   , socketPath :: !PosixPath -- ^ Reported endpoint path, preserved as POSIX bytes.
   }
   deriving stock (Eq, Show)

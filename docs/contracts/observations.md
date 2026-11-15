@@ -86,7 +86,7 @@ extensions remain planned.
 
 ## Attached-client profile
 
-The complete Snapshot profile owns server PID, start time, stable release and
+The complete Snapshot profile owns server PID, start time, release identity and
 reported POSIX socket path alongside its generation and physical graph. These
 metadata values do not provide a permanent daemon identity or signal authority.
 Acquisition retains its monotonic observation interval.

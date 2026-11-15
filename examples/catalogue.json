@@ -41,7 +41,7 @@
       "stdout": "examples/capture-graph/expected.stdout",
       "runner": "examples/capture-graph/run.py",
       "executable": "capture-graph",
-      "capability": "tmux 3.3a through 3.8",
+      "capability": "tmux 3.3a or newer",
       "command": [
         "python3",
         "examples/capture-graph/run.py"
@@ -102,7 +102,7 @@
       "stdout": "examples/shared-runtime/expected.stdout",
       "runner": "examples/capture-graph/run.py",
       "executable": "shared-runtime",
-      "capability": "tmux 3.3a through 3.8",
+      "capability": "tmux 3.3a or newer",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -136,7 +136,7 @@
       "stdout": "examples/query-graph/expected.stdout",
       "runner": "examples/capture-graph/run.py",
       "executable": "query-graph",
-      "capability": "tmux 3.3a through 3.8",
+      "capability": "tmux 3.3a or newer",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -170,7 +170,7 @@
       "stdout": "examples/mutate-graph/expected.stdout",
       "runner": "examples/capture-graph/run.py",
       "executable": "mutate-graph",
-      "capability": "tmux 3.3a through 3.8",
+      "capability": "tmux 3.3a or newer",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -204,7 +204,7 @@
       "stdout": "examples/create-session/expected.stdout",
       "runner": "examples/capture-graph/run.py",
       "executable": "create-session",
-      "capability": "tmux 3.3a through 3.8",
+      "capability": "tmux 3.3a or newer",
       "command": [
         "python3",
         "examples/capture-graph/run.py",

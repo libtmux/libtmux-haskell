@@ -79,8 +79,8 @@ detached pane %0 belongs to @0
 
 ## Use the installed package
 
-To build the program on its own, use this project, which pins the release that
-provides the shared Runtime API, and its package file:
+To build the program on its own, use this project, which pins the source
+revision that provides the shared Runtime API, and its package file:
 
 <!-- example-project: shared-runtime -->
 ```cabal
@@ -90,7 +90,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 6dad60a7ffef2111bb7eb21f6514c0b097bce325
+  tag: 7907db1f8f34feedf9f3ec2ca572eab1e5ed3431
 ```
 
 <!-- example-package: shared-runtime -->
