@@ -220,7 +220,8 @@ tests = testGroup "owned Runtime creation"
                           [value] -> pure value
                           _ -> fail "cancellation lost creation recovery"
                         created <- atomically (Create.observedReceipt recovery) >>= maybe (fail "consumed receipt was lost") pure
-                        Utf8.encodeUtf8 (Id.renderSessionId (Snapshot.sessionId (Creation.session created))) <> "\n" @?= nativeSession
+                        let session = (created :: Creation.CreatedSession).session
+                        Utf8.encodeUtf8 (Id.renderSessionId (Snapshot.sessionId session)) <> "\n" @?= nativeSession
                         observed <- bounded (Create.awaitRecovery recovery)
                         observed.logical.outcome @?= Just S.OutcomeUnknown
                         atomically (Create.detachRecovery recovery) >>= (@?= True)
