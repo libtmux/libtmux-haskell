@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Select physical targets, mutate them, and compare detached observations.
+-- | Rename a session and a window, set a pane title, then show the state
+-- before and after.
 module Main (main) where
 
 import Control.Exception (rethrowIO)
