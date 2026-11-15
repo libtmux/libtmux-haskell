@@ -107,12 +107,14 @@ examples do not use an uncontrolled distribution package. Scope cases
 preserve primary failures and recovery context across cleanup failure,
 cancellation and failed worker allocation.
 
-Cabal caches contain the dependency store and package index. tmux cache keys
-include its pinned archive, runner image/version, architecture, compiler,
+Cabal caches contain the dependency store and package index. The shared
+[`build-tmux`](https://github.com/libtmux/.github/tree/30f81842b1e639ea4e25f93f1f2543504178e228/actions/build-tmux)
+action builds each tmux release from its pinned archive and caches it. Its
+cache key includes the archive, runner image/version, architecture, compiler,
 library packages and build recipe. A restored executable must match its
-recorded hash and version; invalid cache content is rebuilt. Fresh builds
-are saved after the owning job's verification steps. A cache hit does not
-replace the integration checks required by the aggregate job.
+recorded hash and version and answer from a private daemon; invalid cache
+content is rebuilt. A cache hit does not replace the integration checks
+required by the aggregate job.
 
 These checks qualify the existing implementation subset. The complete
 capture/runtime and release gates remain separate work.

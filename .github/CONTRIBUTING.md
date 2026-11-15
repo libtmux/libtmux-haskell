@@ -115,12 +115,10 @@ $ uv run --locked ruff check scripts
 $ uv run --locked ty check scripts
 ```
 
-Run every script's fixture-based tests and doctests without network access.
-The build-cache tests copy the tmux executable named by `CI_TEST_TMUX` and only
-run `tmux -V` on it; they start no server:
+Run every script's fixture-based tests and doctests without network access:
 
 ```console
-$ CI_TEST_TMUX="$(command -v tmux)" uv run --locked --offline pytest
+$ uv run --locked --offline pytest
 ```
 
 Check the example catalogue, displayed source/output and local guide links in
