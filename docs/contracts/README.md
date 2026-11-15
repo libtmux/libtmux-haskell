@@ -1,28 +1,17 @@
-# Behavior inventory
+# Native contract notes
 
 The supported tmux floor is 3.3a, with no upper bound. CI tests 3.3a and 3.8,
 the newest release tested. Notes below also retain source-pinned research on
 plain 3.3; that historical evidence does not change the supported floor.
 
-[python.json](python.json) maps 216 source declarations to proposed native
-contracts: the 201 research rows plus 15 inherited option, hook and observed
-client methods. Every implementation status remains `UNVERIFIED`.
+Each note proposes native contracts for one area. Its source links identify
+the inspected commit and declaration. Python signatures and version guards are
+evidence about the reference, not Haskell signatures or proof that a flag is
+available on every supported release.
 
-Each source link identifies the inspected commit and declaration. Python
-signatures and version guards are evidence about the reference, not Haskell
-signatures or proof that a flag is available on every supported release.
-Canonical keys join aliases without requiring duplicate Haskell wrappers.
-
-The [case plan](traceability.json) joins all 177 canonical behaviors to 61
-shared scenarios. Each scenario gives its fixture, action, expected result,
-counterexample, owning epic task and planned example/test locations. The
-inventory's `case_specification` is a JSON Pointer into that file. Aliases
-share the canonical case rather than requiring duplicate wrappers or tests.
-
-All case-plan examples and tests are `PLANNED`; their paths name later work,
-not existing executable files. Existing private graph and scalar tests are
-listed separately as partial evidence. They do not pass the planned public
-API scenarios. Detailed operation modes remain in the contracts below.
+A note proposes an operation until its public declaration and tests exist.
+Existing private graph and scalar tests are partial evidence and do not pass
+the proposed public API. Detailed operation modes remain in the contracts below.
 
 The [environment contract](environment.md) specifies visibility, removal
 markers and byte preservation. Lossless full-listing qualification remains
@@ -67,4 +56,4 @@ Before an operation passes, replace its proposed API with the implemented
 public declaration and record exact input, target, output, completion,
 capability and conformance evidence. Interactive commands, client-name
 reuse and starting a daemon without creating a session retain explicit
-qualification work. This inventory does not establish behavioral parity.
+qualification work. These notes do not establish behavioral qualification.
