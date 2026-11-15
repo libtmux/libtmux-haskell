@@ -171,6 +171,24 @@ class ReleaseTests(unittest.TestCase):
             release.cabal_upload(self.docs, True, True)
         self.assertNotIn("secret-token", str(error.exception))
 
+    @unittest.expectedFailure
+    def test_http_401_identifies_the_token_to_replace(self):
+        result = subprocess.CompletedProcess([], 1, "", "http code 401\nBad auth token secret-token")
+        with patch.dict(os.environ, {"HACKAGE_AUTH_TOKEN": "secret-token"}), \
+                patch.object(subprocess, "run", return_value=result), \
+                self.assertRaisesRegex(ValueError, "HTTP 401.*HACKAGE_AUTH_TOKEN") as error:
+            release.cabal_upload(self.source, False, False)
+        self.assertNotIn("secret-token", str(error.exception))
+
+    @unittest.expectedFailure
+    def test_http_403_identifies_the_uploaders_group_to_check(self):
+        result = subprocess.CompletedProcess([], 1, "", "http code 403\nForbidden. No access for this resource.")
+        with patch.dict(os.environ, {"HACKAGE_AUTH_TOKEN": "secret-token"}), \
+                patch.object(subprocess, "run", return_value=result), \
+                self.assertRaisesRegex(ValueError, "HTTP 403.*uploaders group") as error:
+            release.cabal_upload(self.source, False, False)
+        self.assertNotIn("secret-token", str(error.exception))
+
     def test_public_consumer_runs_the_declared_example_from_an_external_archive(self):
         example = self.root / "examples/typed-values"
         example.mkdir(parents=True)
