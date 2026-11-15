@@ -18,6 +18,7 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.IntSet qualified as Set
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (isJust)
+import GHC.Conc (threadWaitRead)
 import Fixture qualified
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.SocketPin
@@ -210,9 +211,11 @@ tests getChild = testGroup "private process owner"
                       cancel waiter
                       waitCatch waiter >>= assertCancelled
                     [] -> assertFailure "no pending launch was created"
-                  bracket (atomically (B.acquireBytes budget B.Ordinary 58720256))
+                  let ordinaryLimit = 128 * 1024 * 1024 - O.inspectionBytes
+                      heldBytes = ordinaryLimit - 15 * O.childBytes
+                  bracket (atomically (B.acquireBytes budget B.Ordinary heldBytes))
                     (atomically . B.releaseBytes) $ \_ -> do
-                      atomically (B.usage budget) >>= (@?= B.Usage True 2 15 125566976)
+                      atomically (B.usage budget) >>= (@?= B.Usage True 2 15 ordinaryLimit)
                       try @B.LimitError (O.submit B.Ordinary O.defaultHooks second inspect "") >>= \case
                         Left actual -> actual @?= B.Exhausted B.OrdinaryChildren 1 15 15
                         Right ticket -> O.abort ticket >> assertFailure "ordinary work reached protected capacity"
@@ -225,8 +228,8 @@ tests getChild = testGroup "private process owner"
                           observed.exit @?= Just (N.Exited 0)
                           observed.launchFailure @?= Nothing
                           readIORef forks >>= (@?= 16)
-                          atomically (B.usage budget) >>= (@?= B.Usage True 2 15 129761280)
-                      atomically (B.usage budget) >>= (@?= B.Usage True 2 15 125566976)
+                          atomically (B.usage budget) >>= (@?= B.Usage True 2 15 (ordinaryLimit + O.retainedBytes))
+                      atomically (B.usage budget) >>= (@?= B.Usage True 2 15 ordinaryLimit)
                   release
                   mapM_ (\ticket -> O.await ticket >>= \result -> result.exit @?= Just (N.Exited 24)) tickets
                   _ <- O.requestClose first
@@ -371,6 +374,64 @@ tests getChild = testGroup "private process owner"
           atomically (O.activeCount pool) >>= (@?= 0)
           atomically (readTVar ticket.exitCache) >>= assertBool "overflow lost reap obligation" . isJust
           readIORef ticket.descriptors >>= assertBool "overflow retained descriptors" . Set.null
+          atomically (O.stdoutPrefix ticket) >>= (@?= Bytes.replicate O.prefixLimitBytes 0)
+
+    , testCase "stdout prefix keeps bounded binary evidence after completion" $
+        withPool getChild O.normalFork $ \pool _ _ child -> do
+          let input = Bytes.concat (replicate 4 (Bytes.pack [0 .. 255]))
+          ticket <- O.submit B.Ordinary O.defaultHooks pool (child ["--echo"]) input
+          completed <- O.await ticket
+          (completed.output, completed.errors, completed.exit) @?= (input, input, Just (N.Exited 0))
+          atomically (O.stdoutPrefix ticket) >>= (@?= Bytes.take 512 input)
+          O.prefixLimitBytes @?= 512
+
+    , testCase "stdout prefix survives cancellation of the owned child" $
+        withPool getChild O.normalFork $ \pool _ fixture child -> do
+          let fifo = Ascii.pack fixture.directory <> "/prefix-gate"
+          Files.createNamedPipe fifo 0o600
+          bracket (Posix.openFd fifo Posix.ReadWrite Posix.defaultFileFlags) Posix.closeFd $ \_ -> do
+            ticket <- O.submit B.Ordinary O.defaultHooks pool (child ["--gate", fifo]) ""
+            atomically $ O.progress ticket >>= \p -> check (p.outputBytes == 1)
+            atomically (O.stdoutPrefix ticket) >>= (@?= "R")
+            O.abort ticket
+            try @O.OwnerError (O.await ticket) >>= \case
+              Left O.Aborted -> pure ()
+              Right completed -> completed.exit @?= Just (N.Signaled 9 False)
+              Left other -> assertFailure (show other)
+            atomically (O.stdoutPrefix ticket) >>= (@?= "R")
+            atomically (O.activeCount pool) >>= (@?= 0)
+            readIORef ticket.descriptors >>= assertBool "cancelled prefix retained descriptors" . Set.null
+
+    , testCase "pending RTS interruption after reading stdout preserves the prefix" $
+        withPool getChild O.normalFork $ \pool _ fixture child -> G.withGate $ \gate -> do
+          let fifo = Ascii.pack fixture.directory <> "/read-return-gate"
+              hooks = O.defaultHooks {O.readOutput = \fd ->
+                threadWaitRead (Fd fd) >> G.readChunk gate fd}
+          Files.createNamedPipe fifo 0o600
+          bracket (Posix.openFd fifo Posix.ReadWrite Posix.defaultFileFlags) Posix.closeFd $ \_ -> do
+            ticket <- O.submit B.Ordinary hooks pool (child ["--gate", fifo]) ""
+            G.awaitGate gate
+            target <- atomically (G.gateThread gate)
+            withAsync (throwTo target AsyncCancelled) $ \sender -> do
+              G.awaitPending (asyncThreadId sender) `finally` G.releaseGate gate
+              wait sender
+            try @SomeException (O.await ticket) >>= assertCancelled
+            atomically (O.stdoutPrefix ticket) >>= (@?= "R")
+            atomically (O.activeCount pool) >>= (@?= 0)
+            readIORef ticket.descriptors >>= assertBool "interrupted read retained descriptors" . Set.null
+
+    , testCase "stderr cannot enter the stdout prefix journal" $
+        withPool getChild O.normalFork $ \pool _ fixture child -> do
+          let fifo = Ascii.pack fixture.directory <> "/stderr-prefix-gate"
+          Files.createNamedPipe fifo 0o600
+          bracket (Posix.openFd fifo Posix.ReadWrite Posix.defaultFileFlags) Posix.closeFd $ \control -> do
+            ticket <- O.submit B.Ordinary O.defaultHooks pool (child ["--error-gate", fifo]) ""
+            atomically $ O.progress ticket >>= \p -> check (p.errorBytes == 1)
+            atomically (O.stdoutPrefix ticket) >>= (@?= "")
+            _ <- Posix.fdWrite control "x"
+            completed <- O.await ticket
+            (completed.output, completed.errors, completed.exit) @?= ("", "R", Just (N.Exited 0))
+            atomically (O.stdoutPrefix ticket) >>= (@?= "")
 
     , testCase "owner failure after native return retires the child" $
         withPool getChild O.normalFork $ \pool pin _ child -> G.withGate $ \gate -> do
@@ -615,6 +676,7 @@ tests getChild = testGroup "private process owner"
               result.output @?= "R" <> input
               result.errors @?= input
               result.exit @?= Just (N.Exited 0)
+              atomically (O.stdoutPrefix ticket) >>= (@?= "R" <> Bytes.take 511 input)
               blockedWrites >>= assertBool "no EAGAIN recorded" . (> 0))
               `finally` G.stopWatchingWriter
 

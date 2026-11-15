@@ -11,6 +11,7 @@ import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Unsafe qualified as UnsafeBytes
+import Data.Word (Word8)
 import Foreign.C.Error (Errno (..), eAGAIN, eCHILD, eINTR, errnoToIOError)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt (..), CSize (..))
@@ -25,6 +26,7 @@ import System.Posix.Types (Fd (..))
 
 type LaunchCall = CString -> Ptr CString -> Ptr CString -> CString -> Ptr CInt -> IO CInt
 type WaitCall = CInt -> Ptr CInt -> IO CInt
+type ReadCall = CInt -> Ptr Word8 -> CSize -> IO CInt
 
 foreign import ccall safe "libtmux_process_features" cFeatures :: IO CInt
 foreign import ccall safe "libtmux_process_spawn" cSpawn :: LaunchCall
@@ -140,8 +142,12 @@ close :: CInt -> IO ()
 close fd = when (fd >= 0) (closeFdWith Posix.closeFd (Fd fd))
 
 readChunk :: CInt -> IO (Maybe ByteString)
-readChunk fd = allocaBytes chunkBytes $ \buffer -> do
-  let loop = cRead fd buffer (fromIntegral chunkBytes) >>= \count ->
+readChunk = readWith cRead
+
+-- | The owner masks the native read and publication of its returned bytes.
+readWith :: ReadCall -> CInt -> IO (Maybe ByteString)
+readWith call fd = allocaBytes chunkBytes $ \buffer -> do
+  let loop = call fd buffer (fromIntegral chunkBytes) >>= \count ->
         if count > 0 then Just <$> Bytes.packCStringLen (castPtr buffer, fromIntegral count) else
         if count == 0 then pure (Just Bytes.empty) else
         if count == negate (errno eAGAIN) then pure Nothing else
