@@ -67,6 +67,7 @@ defaultSessionOptions :: SessionOptions
 defaultSessionOptions = SessionOptions Nothing Nothing Nothing [] Nothing Nothing True DefaultProcess
 
 -- | Validate and lower one detached creation, including its receipt format.
+-- Command argv must fit one native tmux message, including NUL terminators.
 -- The native layer independently bounds the full launch vector before admission.
 -- Paths and names expand once in tmux; environment and process argv do not.
 compileSessionCreation :: Frame.Nonce -> SessionOptions -> Either ArgumentError [ByteString]
@@ -99,14 +100,14 @@ compileSessionCreation nonce options = do
              literal "environment" (osBytes key <> "=" <> osBytes value)]) options.environment
         <> [literal "session.creation" "--"] <> process
       rawCost = sum [toInteger (Bytes.length value) + 1 | (_, _, value) <- arguments]
-  when (rawCost > 65536) (Left (EncodedCommandTooLarge "session.creation"))
+  when (rawCost > commandLimitBytes) (Left (EncodedCommandTooLarge "session.creation"))
   mapM_ (\(key, _, value) -> when (Bytes.elem 0 value) (Left (NulOperand key))) arguments
   mapM_ (\(key, _) -> when (Os.null key || Bytes.elem 61 (osBytes key))
     (Left (InvalidOperand "environment" "invalid variable name"))) options.environment
   let expansion = sum [if format then 6 * toInteger (Bytes.count 35 value) else 0 |
         (_, format, value) <- arguments]
         + toInteger (length [() | (_, _, value) <- arguments, endsSeparator value])
-  when (rawCost + expansion > 65536) (Left (EncodedCommandTooLarge "session.creation"))
+  when (rawCost + expansion > commandLimitBytes) (Left (EncodedCommandTooLarge "session.creation"))
   pure [protectSeparator (if format then protectFormat value else value) | (_, format, value) <- arguments]
   where
     literal key value = (key, False, value)
@@ -291,7 +292,7 @@ errorBody stamp body
   where
     closing = "%error " <> stamp <> "\n"
 
--- | Compile one command without IO. The 64KiB bound includes every tail argv
+-- | Compile one command without IO. The 16364-byte bound includes every tail argv
 -- terminator; the native owner separately checks the full executable/socket
 -- invocation before admission. A tail neither validates generation nor reserves
 -- a target, and native completion requires its own operation-specific evidence.
@@ -319,10 +320,15 @@ mutationParts mutation = case mutation of
 
 checkCost :: Text -> ByteString -> Integer -> Integer -> Either ArgumentError ()
 checkCost key value minimumCost expansionCost
-  | minimumCost > 65536 = Left (EncodedCommandTooLarge key)
+  | minimumCost > commandLimitBytes = Left (EncodedCommandTooLarge key)
   | Bytes.elem 0 value = Left (NulOperand key)
-  | minimumCost + expansionCost > 65536 = Left (EncodedCommandTooLarge key)
+  | minimumCost + expansionCost > commandLimitBytes = Left (EncodedCommandTooLarge key)
   | otherwise = Right ()
+
+-- tmux 3.3a and 3.8: MAX_IMSGSIZE minus imsg_hdr and msg_command.
+-- compat/imsg.c includes the header when proc_send packs client argv.
+commandLimitBytes :: Integer
+commandLimitBytes = 16384 - 16 - 4
 
 protectFormat :: ByteString -> ByteString
 -- tmux preserves hash runs before '['; character expansion avoids that branch.
