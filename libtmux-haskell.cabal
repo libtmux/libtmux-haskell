@@ -142,10 +142,6 @@ extra-source-files:
   examples/mutate-graph/libtmux-mutate-graph.cabal
   examples/mutate-graph/cabal.project
   examples/mutate-graph/cabal.project.vcs
-  scripts/ci_tmux/README.md
-  scripts/ci_tmux/ci_tmux.py
-  scripts/ci_tmux/tests/test_ci_tmux.py
-  .github/tmux-releases.json
   .github/workflows/ci.yml
   .github/workflows/release.yml
   .github/workflows/docs.yml
