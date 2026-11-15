@@ -11,7 +11,8 @@
 -- "LibTmux.Query" provides qualified typed descriptions over the same
 -- snapshots; query source names are separate from collection access here.
 module LibTmux
-  ( module LibTmux.Creation
+  ( module LibTmux.Capabilities
+  , module LibTmux.Creation
   , module LibTmux.Server
   , module LibTmux.Snapshot
   , module LibTmux.Id
@@ -19,6 +20,7 @@ module LibTmux
   , module LibTmux.Version
   ) where
 
+import LibTmux.Capabilities
 import LibTmux.Creation
 import LibTmux.Id
 import LibTmux.Server
