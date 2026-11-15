@@ -67,8 +67,8 @@ for connection, capture and mutation operations.
 
 ## Fetch the source from Git
 
-The package is not on Hackage yet, so Cabal fetches the release from Git. Use
-this `cabal.project`:
+The package is not on Hackage yet, so Cabal fetches a source revision from Git.
+Use this `cabal.project`:
 
 <!-- example-project: capture-graph -->
 ```cabal

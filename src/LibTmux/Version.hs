@@ -59,7 +59,8 @@ instance NFData TmuxVersion where
 -- | Position within one numeric release. Constructor order is ascending rank.
 data Stage
   = Development -- ^ @next-X.Y@, the development line before @X.Y@.
-  | Candidate !(Maybe Integer) -- ^ @X.Y-rc@ (the first candidate) or @X.Y-rcN@.
+  | Candidate !(Maybe Integer)
+    -- ^ @X.Y-rc@, an unnumbered candidate, or @X.Y-rcN@.
   | Release -- ^ @X.Y@.
   | Patch !Char -- ^ @X.Ya@, a lowercase patch letter.
   deriving stock (Eq, Ord, Show)
