@@ -74,6 +74,16 @@ tests = testGroup "session creation receipts"
             C.defaultSessionOptions {C.name = Just (Text.replicate count "x")}
       compile available @?= Right 16364
       compile (available + 1) @?= Left (C.EncodedCommandTooLarge "session.creation")
+  , testCase "creation bounds expanded argv with room for client arguments" $ do
+      nonce <- require (F.parseNonce token)
+      let compile options = length <$> C.compileSessionCreation nonce options
+          direct count = C.defaultSessionOptions {C.process = C.DirectCommand
+            (Os.fromBytestring "/bin/echo") (Os.fromBytestring "x" :| replicate (count - 1) (Os.fromBytestring "x"))}
+      compile (direct 4083) @?= Right 4090
+      compile (direct 4084) @?= Left (C.EncodedCommandTooLarge "session.creation")
+      compile C.defaultSessionOptions {C.environment = replicate 2043
+        (Os.fromBytestring "A", Os.fromBytestring "x")} @?=
+        Left (C.EncodedCommandTooLarge "session.creation")
   , testCase "creation prints only nonce-qualified native identities" $ do
       nonce <- require (F.parseNonce token)
       C.sessionCreationFormat nonce @?= F.scalarFormat nonce

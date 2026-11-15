@@ -1,10 +1,11 @@
 module RuntimeCreationTest (tests) where
 
+import Control.Concurrent.Async (asyncThreadId, wait, withAsync)
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Exception.Context qualified as Context
 import Data.List.NonEmpty (NonEmpty (..))
-import Control.Monad (forM_, void)
+import Control.Monad (forM_, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -13,10 +14,12 @@ import Data.IORef
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
+import LibTmux.Creation qualified as Creation
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Creation qualified as Create
+import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
@@ -187,6 +190,42 @@ tests = testGroup "owned Runtime creation"
               _ -> assertFailure "creation allocation failure lost its correlation"
           Right _ -> assertFailure "worker-allocation failure returned success"
 
+  , testCase "facade cancellation retains a receipt consumed before cancellation" $
+      withRuntime P.normalFork $ \runtime server fixture ->
+        withHook fixture server "wait-for release-facade" $
+          flip finally (configured fixture server ["wait-for", "-S", "release-facade"]) $ do
+            ready <- newEmptyTMVarIO
+            prefix <- newIORef Bytes.empty
+            let observeOutput stream = do
+                  chunk <- N.readChunk stream
+                  forM_ chunk $ \bytes -> do
+                    observed <- atomicModifyIORef' prefix $ \old ->
+                      let next = Bytes.take 512 (old <> bytes) in (next, next)
+                    -- Controlled stdout starts with %begin and the receipt.
+                    when (Bytes.count 10 observed >= 2) (atomically (void (tryPutTMVar ready ())))
+                  pure chunk
+                hooks = P.defaultHooks {P.readOutput = observeOutput}
+            withAsync (tryWithContext @SomeException (Create.performCreation hooks 10000000 runtime server
+              (Ascii.pack fixture.executable) (optionsFor "cancel-facade"))) $ \worker -> do
+                bounded (atomically (readTMVar ready))
+                pid <- readOutput fixture server ["display-message", "-p", "-t", "=cancel-facade:", "-F", "#{pane_pid}"]
+                nativeSession <- readOutput fixture server ["display-message", "-p", "-t", "=cancel-facade:", "-F", "#{session_id}"]
+                Fixture.withTrackedPane (Lazy.fromStrict pid)
+                  (void (invoke fixture server ["kill-session", "-t", "=cancel-facade"])) $ do
+                    throwTo (asyncThreadId worker) ThreadKilled
+                    bounded (wait worker) >>= \case
+                      Left (ExceptionWithContext annotations problem) -> do
+                        fromException @AsyncException problem @?= Just ThreadKilled
+                        recovery <- case Context.getExceptionAnnotations @Create.CreationRecovery annotations of
+                          [value] -> pure value
+                          _ -> fail "cancellation lost creation recovery"
+                        created <- atomically (Create.observedReceipt recovery) >>= maybe (fail "consumed receipt was lost") pure
+                        Utf8.encodeUtf8 (Id.renderSessionId (Snapshot.sessionId (Creation.session created))) <> "\n" @?= nativeSession
+                        observed <- bounded (Create.awaitRecovery recovery)
+                        observed.logical.outcome @?= Just S.OutcomeUnknown
+                        atomically (Create.detachRecovery recovery) >>= (@?= True)
+                      Right _ -> assertFailure "cancelled facade returned success"
+
   , testCase "synchronous creation retains journals before Request handoff fails" $
       forM_ [False, True] $ \expires -> do
         first <- newIORef True
@@ -214,6 +253,26 @@ tests = testGroup "owned Runtime creation"
                 observed.logical.outcome @?= Just S.NotDispatched
                 observed.logical.retained @?= False
               Right _ -> assertFailure "failed allocation returned a creation"
+
+  , testCase "launch context limits give typed refusals without admitted recovery" $
+      withRuntime P.normalFork $ \runtime server fixture -> do
+        forM_ [(["LARGE=" <> Bytes.replicate 65536 120], "native vector byte limit"),
+               (replicate 4097 "A=x", "native vector count limit")] $ \(environment, reason) -> do
+          let context = (launchContext fixture) {N.env = environment}
+              submit remaining = do
+                duration <- remaining
+                R.creationRequest <$> R.createSessionWith P.defaultHooks duration runtime server context (optionsFor "context-refusal")
+          tryWithContext @SomeException (M.performRequest 1000000 runtime server submit (const (pure ()))) >>= \case
+            Left (ExceptionWithContext annotations problem) -> do
+              case fromException @Scope.TmuxException problem of
+                Just (Scope.InvalidConfiguration message) -> message @?= "native launch: " <> reason
+                _ -> assertFailure (show problem)
+              assertBool "refused context retained an operation"
+                (null (Context.getExceptionAnnotations @M.MutationRecovery annotations))
+              assertBool "refused context acquired an operation receipt"
+                (null (Context.getExceptionAnnotations @R.ReadReceipt annotations))
+            Right _ -> assertFailure "oversized launch context was admitted"
+          atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
 
   , testCase "invalid options and launch contexts create no operation" $ do
       forks <- newIORef (0 :: Int)

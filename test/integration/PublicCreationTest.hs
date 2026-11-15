@@ -13,6 +13,8 @@ import LibTmux qualified as Tmux
 import LibTmux.Creation qualified as Creation
 import System.Exit (ExitCode (..))
 import System.OsString.Posix qualified as Os
+import System.Posix.Directory.ByteString qualified as Directory
+import System.Posix.Env.ByteString qualified as Environment
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
@@ -58,6 +60,28 @@ tests = testGroup "public session creation"
               (code, errors) @?= (ExitSuccess, "")
               ("cat -u" `Bytes.isInfixOf` Lazy.toStrict command) @?= inherited
 
+  , testCase "creation captures the caller cwd and honors update-environment" $
+      Fixture.withFixture $ \fixture -> do
+        cwd <- Directory.getWorkingDirectory
+        environment <- Environment.getEnvironment
+        home <- maybe (fail "test launch omitted HOME") pure (lookup "HOME" environment)
+        configured fixture ["set-environment", "-gu", "HOME"]
+        configured fixture ["set-option", "-g", "update-environment", "HOME"]
+        Tmux.withServer (config fixture) $ \server ->
+          forM_ [("client-env", True), ("skip-client-env", False)] $ \(name, update) -> do
+            created <- Tmux.createSession server (options name)
+              {Creation.workingDirectory = Just (Os.fromBytestring "."), Creation.updateEnvironment = update}
+            withCreated fixture created $ do
+              let pane = Text.unpack (Tmux.renderPaneId (Tmux.paneId created.pane))
+                  session = Text.unpack (Tmux.renderSessionId (Tmux.sessionId created.session))
+              (code, path, errors) <- Fixture.command fixture ["display-message", "-p", "-t", pane, "-F", "#{pane_start_path}"]
+              (code, errors) @?= (ExitSuccess, "")
+              Lazy.toStrict path @?= cwd <> "\n"
+              (envCode, values, envErrors) <- Fixture.command fixture ["show-environment", "-t", session]
+              (envCode, envErrors) @?= (ExitSuccess, "")
+              filter ("HOME=" `Bytes.isPrefixOf`) (Bytes.lines (Lazy.toStrict values)) @?=
+                ["HOME=" <> home | update]
+
   , testCase "duplicate rejection and failed hooks retain their distinct outcomes" $
       Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
         first <- Tmux.createSession server (options "duplicate-public")
@@ -87,8 +111,13 @@ tests = testGroup "public session creation"
               withAsync (Tmux.createSession server (options "deleted-public")) $ \worker -> do
                 bounded (wait entered)
                 withNamedPane fixture "deleted-public" $ do
+                  (code, nativeSession, errors) <- Fixture.command fixture
+                    ["display-message", "-p", "-t", "=deleted-public:", "-F", "#{session_id}"]
+                  (code, errors) @?= (ExitSuccess, "")
                   configured fixture ["wait-for", "-S", "delete-release"]
                   created <- bounded (wait worker)
+                  Bytes.pack (Text.unpack (Tmux.renderSessionId (Tmux.sessionId created.session))) <> "\n" @?=
+                    Lazy.toStrict nativeSession
                   snapshot <- Tmux.capture server
                   case Tmux.lookupSession snapshot created.session of
                     Left (Tmux.MissingSession _) -> pure ()
@@ -141,7 +170,9 @@ tests = testGroup "public session creation"
       Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
         before <- Tmux.capture server
         Tmux.tryTmux (Tmux.createSession server (options "bad") {Creation.name = Just "bad\NULname"}) >>= \case
-          Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument _)) -> pure ()
+          Left (ExceptionWithContext context (Tmux.InvalidMutationArgument _)) -> do
+            assertBool "invalid creation retained a creation operation" (null (Tmux.creationRecoveries context))
+            assertBool "invalid creation retained a mutation operation" (null (Tmux.mutationRecoveries context))
           _ -> assertFailure "invalid creation options were dispatched"
         after <- Tmux.capture server
         map (.ref) (Tmux.sessions after) @?= map (.ref) (Tmux.sessions before)
