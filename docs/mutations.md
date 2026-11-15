@@ -49,7 +49,8 @@ main = getArgs >>= \case
         selected = Q.panes & Q.matching (Q.eq Pane.active True)
     result <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
       before <- Tmux.capture server
-      session <- require "Session selection" (Q.exactlyOne (Tmux.sessions before))
+      session <- require "Session selection"
+        (Q.exactlyOne (Tmux.sessions before))
       matches <- require "Pane query" (Q.runQuery before selected)
       pane <- require "Pane selection" (Q.exactlyOne matches)
       window <- require "Pane's window" (Tmux.lookupWindow before pane.window)
@@ -62,20 +63,29 @@ main = getArgs >>= \case
     case result of
       Left problem -> rethrowIO problem
       Right (before, after, session, window, pane) -> do
-        changedSession <- require "Fresh session" (Tmux.lookupSession after session.ref)
-        changedWindow <- require "Fresh window" (Tmux.lookupWindow after window.ref)
+        changedSession <- require "Fresh session"
+          (Tmux.lookupSession after session.ref)
+        changedWindow <- require "Fresh window"
+          (Tmux.lookupWindow after window.ref)
         changedPane <- require "Fresh pane" (Tmux.lookupPane after pane.ref)
         oldWindow <- require "Old window" (Tmux.lookupWindow before window.ref)
         oldName <- require "Old window encoding" (Tmux.labelText oldWindow.name)
-        newName <- require "New window encoding" (Tmux.labelText changedWindow.name)
-        let links = [link | link <- Tmux.windowLinks after, link.window == window.ref]
-        putStrLn $ "session: " <> Text.unpack session.name <> " -> " <> Text.unpack changedSession.name
-        putStrLn $ "window: " <> Text.unpack oldName <> " -> " <> Text.unpack newName
+        newName <- require "New window encoding"
+          (Tmux.labelText changedWindow.name)
+        let links =
+              [link | link <- Tmux.windowLinks after, link.window == window.ref]
+        putStrLn $ "session: " <> Text.unpack session.name <> " -> "
+          <> Text.unpack changedSession.name
+        putStrLn $ "window: " <> Text.unpack oldName <> " -> "
+          <> Text.unpack newName
         putStrLn $ "pane title: " <> Text.unpack changedPane.title
         putStrLn $ "physical window links: " <> show (length links)
         putStrLn $ "same target identities: " <> show
-          (session.ref == changedSession.ref && window.ref == changedWindow.ref && pane.ref == changedPane.ref)
-        putStrLn $ "old snapshot values: " <> Text.unpack session.name <> ", " <> Text.unpack oldName
+          (session.ref == changedSession.ref
+            && window.ref == changedWindow.ref
+            && pane.ref == changedPane.ref)
+        putStrLn $ "old snapshot values: " <> Text.unpack session.name <> ", "
+          <> Text.unpack oldName
   _ -> die "Usage: mutate-graph SOCKET TMUX_EXECUTABLE"
 
 require :: Show problem => String -> Either problem a -> IO a
