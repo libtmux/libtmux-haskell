@@ -45,3 +45,8 @@ Thumbs.db
 # Local agent configuration
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Python tooling caches
+/.venv/
+.ruff_cache/
+.pytest_cache/

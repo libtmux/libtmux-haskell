@@ -1,31 +1,48 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Build-cache support for the exact tmux releases exercised by CI."""
 
+import argparse
 import hashlib
 import json
-import argparse
 import os
-from pathlib import Path
 import platform
 import shutil
 import subprocess
 import tarfile
 import tempfile
 import urllib.request
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-PINS = json.loads((ROOT / ".github/tmux-releases.json").read_text())
+ROOT = Path(__file__).resolve().parents[2]
+PINS: dict[str, str] = json.loads((ROOT / ".github/tmux-releases.json").read_text())
+
+type Identity = dict[str, Any]
 
 
-def digest(path):
+def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def cache_key(identity):
+def cache_key(identity: Identity) -> str:
+    """Name the cache entry by the release and a hash of the whole build identity.
+
+    >>> cache_key({"version": "3.8", "image": "ubuntu"})  # doctest: +ELLIPSIS
+    'haskell-tmux-v1-3.8-...'
+    >>> cache_key({"version": "3.8", "image": "ubuntu"}) == cache_key({"image": "ubuntu", "version": "3.8"})
+    True
+    >>> cache_key({"version": "3.8", "image": "ubuntu"}) == cache_key({"version": "3.8", "image": "debian"})
+    False
+    """
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     return f"haskell-tmux-v1-{identity['version']}-{fingerprint}"
 
 
-def valid(prefix, identity):
+def valid(prefix: Path, identity: Identity) -> bool:
     for parent in prefix.parents:
         if parent.is_symlink():
             raise ValueError("Refusing a symlinked cache ancestor")
@@ -42,7 +59,7 @@ def valid(prefix, identity):
         return False
 
 
-def prepare(prefix, identity, build):
+def prepare(prefix: Path, identity: Identity, build: Callable[[Path, Identity], None]) -> bool:
     if valid(prefix, identity):
         return False
     if prefix.is_symlink():
@@ -54,30 +71,49 @@ def prepare(prefix, identity, build):
     reported = subprocess.check_output([binary, "-V"], text=True, timeout=1).strip()
     if reported != "tmux " + identity["version"]:
         raise ValueError(f"Built executable reports {reported!r}")
-    (prefix / "build.json").write_text(json.dumps({"identity": identity, "sha256": digest(binary)}, indent=2) + "\n")
+    (prefix / "build.json").write_text(
+        json.dumps({"identity": identity, "sha256": digest(binary)}, indent=2) + "\n"
+    )
     return True
 
 
-def output(command):
+def output(command: list[str]) -> str:
     return subprocess.check_output(command, text=True).strip()
 
 
-def identify(version):
+def identify(version: str) -> Identity:
     if version not in PINS:
         raise ValueError(f"Unpinned tmux release: {version}")
     image = [os.environ.get(key, "") for key in ["ImageOS", "ImageVersion"]]
     if not all(image):
         raise ValueError("Runner ImageOS and ImageVersion are required")
-    return {"version": version, "source": PINS[version],
-            "image": "-".join(image), "arch": platform.machine(),
-            "recipe": digest(Path(__file__)),
-            "compiler": output(["cc", "--version"]),
-            "packages": output(["dpkg-query", "-W", "-f=${Package}=${Version}\n",
-                "gcc", "libc6", "libevent-dev", "libncurses-dev", "make", "pkg-config", "bison"]),
-            "configure": ["--disable-utf8proc"], "CFLAGS": "-O2"}
+    return {
+        "version": version,
+        "source": PINS[version],
+        "image": "-".join(image),
+        "arch": platform.machine(),
+        "recipe": digest(Path(__file__)),
+        "compiler": output(["cc", "--version"]),
+        "packages": output(
+            [
+                "dpkg-query",
+                "-W",
+                "-f=${Package}=${Version}\n",
+                "gcc",
+                "libc6",
+                "libevent-dev",
+                "libncurses-dev",
+                "make",
+                "pkg-config",
+                "bison",
+            ]
+        ),
+        "configure": ["--disable-utf8proc"],
+        "CFLAGS": "-O2",
+    }
 
 
-def build(prefix, identity):
+def build(prefix: Path, identity: Identity) -> None:
     prefix.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="source-", dir=prefix.parent) as directory:
         directory = Path(directory)
@@ -91,19 +127,24 @@ def build(prefix, identity):
         with tarfile.open(archive) as source:
             source.extractall(directory, filter="data")
         source = directory / ("tmux-" + version)
-        env = dict(os.environ, CC="cc", CFLAGS=identity["CFLAGS"], CPPFLAGS="", LDFLAGS="", MAKEFLAGS="")
-        for command in [["./configure", "--prefix=" + str(prefix), *identity["configure"]],
-                        ["make", "-j2"], ["make", "install"]]:
+        env = dict(
+            os.environ, CC="cc", CFLAGS=identity["CFLAGS"], CPPFLAGS="", LDFLAGS="", MAKEFLAGS=""
+        )
+        for command in [
+            ["./configure", "--prefix=" + str(prefix), *identity["configure"]],
+            ["make", "-j2"],
+            ["make", "install"],
+        ]:
             subprocess.run(command, cwd=source, env=env, check=True)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=["matrix", "plan", "prepare"])
     parser.add_argument("version", choices=sorted(PINS), nargs="?")
     args = parser.parse_args()
     if args.operation == "matrix":
-        with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
             stream.write("tmux=" + json.dumps(list(PINS)) + "\n")
         return
     if args.version is None:
@@ -114,10 +155,14 @@ def main():
         rebuilt = prepare(prefix, identity, build)
         print(f"tmux {args.version}: {'rebuilt' if rebuilt else 'validated cache'}")
         if rebuilt and os.environ.get("CACHE_HIT") == "true":
-            print("::warning::An invalid immutable cache was rebuilt; bump the recipe to replace its key.")
+            print(
+                "::warning::An invalid immutable cache was rebuilt; bump the recipe to replace its key."
+            )
     else:
-        with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-            stream.write(f"key={cache_key(identity)}\nprefix={prefix}\nbinary={prefix / 'bin/tmux'}\n")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+            stream.write(
+                f"key={cache_key(identity)}\nprefix={prefix}\nbinary={prefix / 'bin/tmux'}\n"
+            )
 
 
 if __name__ == "__main__":
