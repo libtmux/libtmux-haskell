@@ -84,7 +84,7 @@ jobs:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: |
           python3 scripts/test_check_docs.py
-          "$RUNNER_TEMP/release-tests/bin/python" -B -m pytest -q -p no:cacheprovider examples/capture-graph/test_run.py
+          "$RUNNER_TEMP/release-tests/bin/python" -B -m pytest -q -p no:cacheprovider examples/capture-graph/test_run.py examples/capture-graph/test_readme.py
           python3 scripts/check_docs.py --run
       - name: Public type contracts
         run: scripts/check-types

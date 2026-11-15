@@ -3,7 +3,6 @@
 import gc
 import os
 import select
-import shutil
 import signal
 import subprocess
 import threading
@@ -13,15 +12,6 @@ from contextlib import ExitStack
 
 import pytest
 from run import exited, fixture
-
-
-@pytest.fixture
-def tmux_binary() -> str:
-    selected = os.environ.get("LIBTMUX_TEST_TMUX")
-    assert selected, "set LIBTMUX_TEST_TMUX to a released tmux binary"
-    binary = shutil.which(selected)
-    assert binary is not None, "select an installed tmux release"
-    return binary
 
 
 @pytest.fixture
