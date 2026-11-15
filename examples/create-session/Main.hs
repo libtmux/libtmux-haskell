@@ -22,7 +22,7 @@ main = getArgs >>= \case
     width <- require "Width" (Tmux.mkDimension 120)
     let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
         options = Creation.defaultSessionOptions
-          { Creation.name = Just "workspace"
+          { Creation.name = Just "created-workspace"
           , Creation.windowName = Just (Tmux.labelFromBytes "editor")
           , Creation.width = Just width
           , Creation.process = Creation.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])
