@@ -219,11 +219,11 @@ tests = testGroup "owned Runtime creation"
                         recovery <- case Context.getExceptionAnnotations @Create.CreationRecovery annotations of
                           [value] -> pure value
                           _ -> fail "cancellation lost creation recovery"
+                        observed <- bounded (Create.awaitRecovery recovery)
+                        observed.logical.outcome @?= Just S.OutcomeUnknown
                         created <- atomically (Create.observedReceipt recovery) >>= maybe (fail "consumed receipt was lost") pure
                         let G.SessionRef _ session = created.session
                         Utf8.encodeUtf8 (Id.renderSessionId session) <> "\n" @?= nativeSession
-                        observed <- bounded (Create.awaitRecovery recovery)
-                        observed.logical.outcome @?= Just S.OutcomeUnknown
                         atomically (Create.detachRecovery recovery) >>= (@?= True)
                       Right _ -> assertFailure "cancelled facade returned success"
 
