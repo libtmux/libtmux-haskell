@@ -149,8 +149,17 @@ Its positive timeout, at most ten seconds, covers context acquisition,
 admission and the complete command response; the default is one second.
 It does not bound the lifetime of the created session or its process.
 
-Protocol and bound checks fail before dispatch. tmux also validates its own
-input rules and current server state. A duplicate session name raises
+Invalid options raise `InvalidMutationArgument` before admission. Encoded
+command arguments fit a 16,364-byte message, including terminators and literal
+text escaping. The client invocation also counts toward the argv limit.
+
+The caller's environment shares the native launch budget with argv: at most
+4,096 entries and 64 KiB, including paths, terminators and pointer storage.
+Exceeding that budget raises `InvalidConfiguration` before admission. Neither
+refusal retains a creation operation or includes environment values.
+
+tmux also validates its own input rules and current server state. A duplicate
+session name raises
 `MutationRejected`; a successful primary creation followed by hook failure
 raises `MutationAppliedWithErrors`. Neither failure implies rollback of
 independent hook effects. Timeout, cancellation and incomplete responses can

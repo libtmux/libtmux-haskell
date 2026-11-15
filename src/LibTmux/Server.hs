@@ -220,6 +220,9 @@ createSession = createSessionWith defaultMutationOptions
 -- and completion. 'MutationAppliedWithErrors', cancellation and timeout may
 -- retain a t'CreationRecovery' with known IDs. A missing receipt proves no
 -- absence. Creation never retries and never starts a replacement daemon.
+-- Oversized options raise 'InvalidMutationArgument' before admission. A caller
+-- environment beyond the native launch budget raises 'InvalidConfiguration'
+-- without admitting an operation.
 createSessionWith :: MutationOptions -> Server -> Creation.SessionOptions -> IO Creation.CreatedSession
 createSessionWith options (Server runtime handle executable _) settings = operational $ do
   duration <- mutationDuration options
