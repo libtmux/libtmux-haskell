@@ -9,6 +9,8 @@
 - Rename sessions and physical windows and set pane titles through
   `LibTmux.Server`, using generation-bound references, literal names and
   per-command deadlines. ([#10])
+- Set a mutation's deadline with `MutationOptions`: start from
+  `defaultMutationOptions` and pass it to the `...With` variants. ([#10])
 - Recover interrupted mutations through their original operation and cleanup
   owner. Distinguish rejected commands from applied changes followed by hook
   errors, without replaying an uncertain command. ([#10])
@@ -23,6 +25,7 @@
   adoption or cleanup cannot establish completion. ([#4])
 - Build validated offline snapshots with `LibTmux.Snapshot.Fixture` for pure
   application tests, without starting tmux or creating live references. ([#4])
+- Tell a captured snapshot from an offline fixture with `snapshotOrigin`. ([#4])
 - Select observations with typed fields and relationships through
   `LibTmux.Query`. Validate requirements, evaluate an existing snapshot or
   fetch fresh observations, and apply stable ordering and limits. ([#6])
