@@ -106,6 +106,13 @@ def cabal_upload(path, publish, documentation):
         result = subprocess.run(command, capture_output=True, text=True)
     output = (result.stdout + result.stderr).replace(token, "[redacted]")
     if result.returncode:
+        status = re.search(r"\bhttp code (401|403)\b", output, re.IGNORECASE)
+        if status and status[1] == "401":
+            raise ValueError("Hackage HTTP 401: HACKAGE_AUTH_TOKEN was rejected; replace the token "
+                             "in the hackage environment; see .github/RELEASE.md.\n" + output)
+        if status and status[1] == "403":
+            raise ValueError("Hackage HTTP 403: access refused; check the token owner's uploaders group "
+                             "membership and package maintainer rights; see .github/RELEASE.md.\n" + output)
         raise ValueError(f"Hackage upload failed (exit {result.returncode}): {output}")
     print(output, end="")
 
