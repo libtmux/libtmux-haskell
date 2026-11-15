@@ -1,22 +1,26 @@
 module CommandIntegrationTest (tests) where
 
-import Control.Exception (bracket)
-import Control.Monad (forM_)
+import Control.Concurrent.Async (wait, withAsync)
+import Control.Exception (bracket, finally)
+import Control.Monad (forM_, void)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
+import Data.ByteString.Lazy qualified as Lazy
 import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
+import LibTmux.Internal.Frame qualified as Frame
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.SocketPin (pinPath)
 import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Value qualified as Value
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertEqual, testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, assertEqual, testCase, (@?=))
 
 tests :: TestTree
 tests = testGroup "native mutation lowering"
@@ -109,7 +113,108 @@ tests = testGroup "native mutation lowering"
           other -> fail (show other)
         inspect "@0" "window_name" >>= (@?= "effect-before-hook-error\n")
         configured ["set-hook", "-gu", "after-rename-window"]
+  , testCase "session creation returns actual identities and rejects duplicate names" $
+      Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+        client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+        nonce <- require (Frame.parseNonce (Bytes.replicate 64 97))
+        let name = "created-native"
+        completed <- createSessionProbe fixture client nonce name
+        withCreatedPane fixture client name $ do
+          case creationReply nonce completed of
+            C.SessionCreated receipt -> verifyCreated fixture client name receipt
+            other -> fail (show other)
+          before <- invoke fixture client ["list-sessions", "-F", "#{session_id}"]
+          duplicate <- createSessionProbe fixture client nonce name
+          case creationReply nonce duplicate of
+            C.SessionCreationRejected diagnostic -> assertBool "empty rejection" (not (Bytes.null diagnostic))
+            other -> fail (show other)
+          after <- invoke fixture client ["list-sessions", "-F", "#{session_id}"]
+          (before.exit, before.errors, after.exit, after.errors) @?=
+            (Just (N.Exited 0), "", Just (N.Exited 0), "")
+          before.output @?= after.output
+  , testCase "session creation separates hook failure and control-shaped hook output" $
+      Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+        client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+        nonce <- require (Frame.parseNonce (Bytes.replicate 64 98))
+        let fake = Frame.scalarFormat nonce "1 $0 @0 %0 0"
+            cases = [("created-after-error", "has-session -t =libtmux-creation-missing", True),
+                     ("created-after-output", "display-message -p '" <> fake <> "'", False)]
+        forM_ cases $ \(name, hook, failing) ->
+          flip finally (prepareCreation fixture client ["set-hook", "-gu", "after-new-session"]) $ do
+            prepareCreation fixture client ["set-hook", "-g", "after-new-session", hook]
+            completed <- createSessionProbe fixture client nonce name
+            withCreatedPane fixture client name $ do
+              receipt <- case (failing, creationReply nonce completed) of
+                (True, C.SessionCreatedWithErrors value diagnostic) -> do
+                  assertBool "empty hook error" (not (Bytes.null diagnostic))
+                  pure value
+                (False, C.SessionCreated value) -> do
+                  assertBool "hook did not print the competing receipt" (fake `Bytes.isInfixOf` completed.output)
+                  pure value
+                (_, other) -> fail (show other)
+              verifyCreated fixture client name receipt
+  , testCase "session creation retains its receipt after a hook deletes the session" $
+      Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
+        client <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+        nonce <- require (Frame.parseNonce (Bytes.replicate 64 99))
+        let name = "created-delete"
+            ready = "libtmux-create-ready"
+            release = "libtmux-create-release"
+            signal = prepareCreation fixture client ["wait-for", "-S", release]
+            hook = "wait-for -S " <> ready <> " ; wait-for " <> release <>
+              " ; kill-session -t =" <> name
+            cleanup = signal `finally` prepareCreation fixture client ["set-hook", "-gu", "after-new-session"]
+        flip finally cleanup $ do
+          prepareCreation fixture client ["set-hook", "-g", "after-new-session", hook]
+          withAsync (createSessionProbe fixture client nonce name) $ \request -> do
+            prepareCreation fixture client ["wait-for", ready]
+            withCreatedPane fixture client name $ do
+              observed <- invoke fixture client ["display-message", "-p", "-t", "=" <> name <> ":", "-F", "#{session_id}"]
+              (observed.exit, observed.errors) @?= (Just (N.Exited 0), "")
+              signal
+              completed <- wait request
+              case creationReply nonce completed of
+                C.SessionCreated receipt -> do
+                  Utf8.encodeUtf8 (Id.renderSessionId receipt.sessionId) <> "\n" @?= observed.output
+                  missing <- invoke fixture client ["has-session", "-t", Utf8.encodeUtf8 (Id.renderSessionId receipt.sessionId)]
+                  missing.exit @?= Just (N.Exited 1)
+                other -> fail (show other)
   ]
+
+createSessionProbe :: Fixture.Fixture -> R.ServerHandle -> Frame.Nonce -> Bytes.ByteString -> IO P.Completion
+createSessionProbe fixture client nonce name = invokeWithInput fixture client
+  ["-C", "new-session", "-d", "-P", "-F", C.sessionCreationFormat nonce,
+   "-s", name, "-n", "created-window", "--", "/bin/cat", "-"] P.KeepInputOpen
+
+creationReply :: Frame.Nonce -> P.Completion -> C.SessionCreationReply
+creationReply nonce completed = C.decodeSessionCreation nonce exited completed.output completed.errors
+  where
+    exited = case completed.exit of
+      Just (N.Exited status) -> Just (fromIntegral status)
+      _ -> Nothing
+
+prepareCreation :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> IO ()
+prepareCreation fixture client arguments = do
+  completed <- invoke fixture client arguments
+  (completed.exit, completed.output, completed.errors) @?= (Just (N.Exited 0), "", "")
+
+withCreatedPane :: Fixture.Fixture -> R.ServerHandle -> Bytes.ByteString -> IO a -> IO a
+withCreatedPane fixture client name action = do
+  process <- invoke fixture client ["display-message", "-p", "-t", "=" <> name <> ":", "-F", "#{pane_pid}"]
+  (process.exit, process.errors) @?= (Just (N.Exited 0), "")
+  Fixture.withTrackedPane (Lazy.fromStrict process.output)
+    (void (invoke fixture client ["kill-session", "-t", "=" <> name])) action
+
+verifyCreated :: Fixture.Fixture -> R.ServerHandle -> Bytes.ByteString -> C.SessionReceipt -> IO ()
+verifyCreated fixture client name receipt = do
+  let session = Utf8.encodeUtf8 (Id.renderSessionId receipt.sessionId)
+      expected = Bytes.intercalate "|"
+        [name, session, Utf8.encodeUtf8 (Id.renderWindowId receipt.windowId),
+         Utf8.encodeUtf8 (Id.renderPaneId receipt.paneId),
+         Ascii.pack (show (Value.windowIndexValue receipt.windowIndex)), Ascii.pack (show receipt.serverPid)] <> "\n"
+  observed <- invoke fixture client ["display-message", "-p", "-t", session <> ":", "-F",
+    "#{session_name}|#{session_id}|#{window_id}|#{pane_id}|#{window_index}|#{pid}"]
+  (observed.exit, observed.output, observed.errors) @?= (Just (N.Exited 0), expected, "")
 
 invoke :: Fixture.Fixture -> R.ServerHandle -> [Bytes.ByteString] -> IO P.Completion
 invoke fixture client arguments = invokeWithInput fixture client arguments (P.BytesInput "")
