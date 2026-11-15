@@ -1,5 +1,7 @@
 module VersionProbeTest (tests) where
 
+import Control.DeepSeq (force)
+import Control.Exception (evaluate)
 import Control.Monad (forM_)
 import Data.ByteString qualified as Bytes
 import Data.Text.Encoding qualified as Utf8
@@ -20,6 +22,19 @@ tests = testGroup "hook-free version probe"
         expected <- require (V.parseVersion release)
         P.decodeVersionProbe nonce (Just 1) ""
           ("unknown command: " <> F.scalarFormat nonce (encode release) <> "\n") @?= Right expected
+  , testCase "every native token spelling survives the decoder's exact round trip" $ do
+      nonce <- require (F.parseNonce token)
+      forM_ ["3.3a", "3.8", "3.8a", "3.9", "3.10", "next-3.9", "3.8-rc", "3.8-rc1", "3.8-rc2", "3.8-rc3"] $ \release -> do
+        expected <- require (V.parseVersion release)
+        V.renderVersion expected @?= release
+        P.decodeVersionProbe nonce (Just 1) "" (daemonReply nonce release) @?= Right expected
+        evaluate (force expected) >>= (@?= expected)
+  , testCase "the decoder neither guesses a release nor accepts a respelled one" $ do
+      nonce <- require (F.parseNonce token)
+      forM_ ["master", "3.8-dev", "3.8-rc0", "next-3.8a", "openbsd-7.4"] $ \unknown ->
+        P.decodeVersionProbe nonce (Just 1) "" (daemonReply nonce unknown)
+          @?= Left (P.InvalidProbeVersion (V.MalformedVersion unknown))
+      P.decodeVersionProbe nonce (Just 1) "" (daemonReply nonce "tmux 3.8") @?= Left P.UnexpectedProbeReply
   , testCase "unrelated status, stdout and diagnostic data cannot become version evidence" $ do
       nonce <- require (F.parseNonce token)
       let reply = "unknown command: " <> F.scalarFormat nonce "3.8" <> "\n"
@@ -34,6 +49,7 @@ tests = testGroup "hook-free version probe"
   where
     token = Bytes.replicate 64 97
     encode = Utf8.encodeUtf8
+    daemonReply nonce release = "unknown command: " <> F.scalarFormat nonce (encode release) <> "\n"
 
 require :: Show problem => Either problem a -> IO a
 require = either (fail . show) pure
