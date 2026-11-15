@@ -17,10 +17,12 @@ import Control.Monad (when)
 import Data.ByteString (ByteString)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Maybe (listToMaybe)
+import Data.Text qualified as Text
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Process qualified as P
+import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scope (TmuxException (..))
 import System.Timeout (timeout)
@@ -83,9 +85,11 @@ performRequest duration runtime server submit decode = mask $ \restore -> do
           \failure@(ExceptionWithContext context (problem :: SomeException)) -> do
             -- Timeout consumes its exception; retain correlation before conversion.
             writeIORef receipt (listToMaybe (Context.getExceptionAnnotations @R.ReadReceipt context))
-            case fromException @R.ReadError problem of
-              Just (R.InvalidCommandOperands invalid) -> rethrowIO
+            case (fromException @R.ReadError problem, fromException @N.Failure problem) of
+              (Just (R.InvalidCommandOperands invalid), _) -> rethrowIO
                 (ExceptionWithContext context (toException (InvalidMutationArgument (argumentError invalid))))
+              (_, Just (N.InvalidInput reason)) -> rethrowIO
+                (ExceptionWithContext context (toException (InvalidConfiguration ("native launch: " <> Text.pack reason))))
               _ -> rethrowIO failure
         let !current = R.readReceipt request
         writeIORef receipt (Just current)
