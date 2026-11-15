@@ -19,7 +19,10 @@ consumers and retains the source archive, Hackage documentation archive and
    and complete email verification. Request membership in the uploaders group;
    registration alone does not grant upload permission. The registration page
    explains endorsement and trustee-request options.
-2. Confirm that you can upload `libtmux-haskell`. Uploading the first candidate
+2. Check that your login appears in the [uploaders group](https://hackage.haskell.org/packages/uploaders/).
+   Candidates require uploader membership too. If approval is pending, wait for
+   the Hackage team's confirmation before attempting another upload.
+   Confirm that you can upload `libtmux-haskell`. Uploading the first candidate
    for an unused package name establishes its maintainer group. If the name
    already belongs to another maintainer, resolve ownership before publishing.
 3. Create an API token through
@@ -107,6 +110,19 @@ and [versioned API documentation](https://hackage.haskell.org/package/libtmux-ha
 A green CI build or a pushed tag alone does not establish publication.
 
 ## Recover an interrupted release
+
+The helper reports authentication and permission failures separately:
+
+- **HTTP 401:** Hackage rejected `HACKAGE_AUTH_TOKEN`. Replace it in the
+  `hackage` environment with a valid token from the intended account.
+- **HTTP 403:** Hackage refused access. Check that the token owner
+  belongs to the uploaders group and has maintainer rights
+  if the package already exists. A 403 alone does not identify the missing right.
+
+For uploader membership, follow the endorsement instructions in the account's
+registration email or request approval from the trustees through
+[Hackage registration](https://hackage.haskell.org/users/register-request).
+Wait for their reply before retrying.
 
 Rerun failed jobs from the release run. The workflow downloads the retained
 archives and validates their checksums and package identity before uploading.
