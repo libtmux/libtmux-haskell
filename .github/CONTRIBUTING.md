@@ -101,6 +101,20 @@ timed checks:
 $ uv sync --locked
 ```
 
+Check formatting, lint rules and types for every script:
+
+```console
+$ uv run --locked ruff format --check scripts
+```
+
+```console
+$ uv run --locked ruff check scripts
+```
+
+```console
+$ uv run --locked ty check scripts
+```
+
 Run every script's fixture-based tests and doctests without network access.
 The build-cache tests copy the tmux executable named by `CI_TEST_TMUX` and only
 run `tmux -V` on it; they start no server:
