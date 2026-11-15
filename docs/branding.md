@@ -12,3 +12,7 @@
   cards stay in the central kit.
 - The manifests start at `/`. A documentation publisher must adjust `id`,
   `start_url` and `scope` to its deployment path before linking them.
+
+The library sharing cards show a native query verified against a private tmux
+server. File entries with a `revision` in `assets/source.json` override the
+default source revision for those exports.
