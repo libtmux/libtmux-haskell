@@ -9,7 +9,7 @@ and correlated recovery.
 | --- | --- |
 | Entity ID parsing/rendering | Yes, through `LibTmux.Id` |
 | Checked dimensions and indices | Yes, through `LibTmux.Value` |
-| Stable-release parsing and supported-range admission | Yes, through `LibTmux.Version` |
+| Release parsing, ordering and minimum-version admission | Yes, through `LibTmux.Version` |
 | Server, complete captures and generation-bound references | Implemented through `LibTmux.Server` and `LibTmux.Snapshot` |
 | Bounded scope cleanup and correlated recovery | Implemented; keep exception context when catching failures |
 | Validated offline fixtures | Implemented through `LibTmux.Snapshot.Fixture` |
@@ -36,8 +36,9 @@ need a concrete requirement. See the
 
 - CI runs the [recorded toolchain](../.tool-versions) on Linux x86_64, with one
   and two RTS capabilities.
-- It uses the two ends of the supported tmux range, 3.3a and 3.8. Releases in
-  between are supported but not run.
+- It runs tmux 3.3a, the minimum, and 3.8, the newest release tested. Other
+  releases from 3.3a onward are admitted but not run, and releases after 3.8
+  are untested.
 - It exercises owned fixtures, scalar framing, socket pins, public capture and
   mutations, scope recovery and process ownership.
 - That covers the implemented subset, not the whole tmux API.

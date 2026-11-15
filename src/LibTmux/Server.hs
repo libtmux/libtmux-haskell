@@ -116,7 +116,8 @@ withRuntime action = do
 -- | Adopt one endpoint within an existing Runtime and close only that handle
 -- after the callback. Other handles remain admitted under the shared limits;
 -- each adoption has its own 'serverGeneration'. Use 'withServer' for one handle.
--- Opening validates the daemon's supported version before the callback.
+-- Before the callback, opening refuses a daemon release older than 3.3a or an
+-- unrecognized version reply.
 --
 -- Failed adoption can retain a t'CleanupRecovery' before a t'Server' exists.
 -- Inspection, retry and waiting through that owner stay scoped to the failed
@@ -154,9 +155,10 @@ data ServerConfig = ServerConfig
 serverConfig :: PosixPath -> ServerConfig
 serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeDirectory socket) 2
 
--- | Pin the endpoint, validate its supported daemon version, run the callback,
--- then perform bounded owned cleanup. Version observation runs no command hook.
--- Unsupported or unrecognized replies fail before entering the callback.
+-- | Pin the endpoint, check the daemon release against the 3.3a admission
+-- minimum, run the callback, then perform bounded owned cleanup. Version
+-- observation runs no command hook. A release older than 3.3a or an
+-- unrecognized reply fails before entering the callback.
 -- Cleanup never replaces a callback exception. Incomplete cleanup raises
 -- 'CleanupFailed' after success, or annotates the original callback failure
 -- with a reachable t'CleanupRecovery'. No daemon shutdown is requested.

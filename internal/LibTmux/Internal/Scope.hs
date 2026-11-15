@@ -26,7 +26,7 @@ data TmuxException
   | InvalidConfiguration !Text -- ^ Configuration failed before acquisition.
   | InvalidObservation !Text -- ^ Acquired metadata failed final validation.
   | InvalidTarget !Text -- ^ Target belongs to a different connection or an offline fixture.
-  | UnsupportedTmuxVersion !Version.VersionError -- ^ Daemon release failed supported-range admission.
+  | UnsupportedTmuxVersion !Version.VersionError -- ^ Daemon release is older than the supported minimum.
   | InvalidMutationArgument !Text -- ^ Invalid command operand; no command was admitted.
   | MutationRejected !ByteString -- ^ tmux rejected the primary command; bounded diagnostic bytes.
   | MutationAppliedWithErrors !ByteString -- ^ The primary command ran, then a command hook failed.

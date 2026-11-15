@@ -237,7 +237,7 @@ transitions separately from the native process tests below.
 
 ## Framed server read ownership
 
-The private Runtime observes server PIDs, stable releases, physical graphs and
+The private Runtime observes server PIDs, release identities, physical graphs and
 the finite Snapshot profile through
 the adopted socket pin. An opaque `Request value` retains the decoded result's
 type. A closed GADT pairs each fixed format with that type; the owned registry
@@ -252,12 +252,13 @@ passes a nonce-qualified non-command to `run-shell -C`. tmux expands its version
 and returns a parse refusal without running a shell or command hook. The decoder
 requires exit status one, empty stdout and the exact nonce-framed diagnostic.
 It accepts at most 64 canonical version bytes through the existing
-[version parser](../../src/LibTmux/Version.hs). An unrelated error or successful
-command is not version evidence.
+[version parser](../../src/LibTmux/Version.hs), which renders every accepted
+token, including `next-X.Y` and `X.Y-rcN`, back to the spelling the daemon
+sent. An unrelated error or successful command is not version evidence.
 
 Both public Server scopes perform this owned read through the pin, then check
-the supported range before entering the callback. Failed or cancelled version
-acquisition retains the usual capture and scope recovery owners. Stable-version
+the supported minimum before entering the callback. Failed or cancelled version
+acquisition retains the usual capture and scope recovery owners. Version
 observation remains separate from feature capability checks. Values are forced
 before releasing read credit. Read completion establishes neither application
 readiness nor completion of arbitrary daemon work.

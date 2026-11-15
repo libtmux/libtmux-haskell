@@ -69,13 +69,16 @@ Indices:
 
 ## Release admission has a limited meaning
 
-- [`parseVersion`](../src/LibTmux/Version.hs) accepts stable releases in the
-  output format of `tmux -V`, including one final LF. Development versions and
-  trailing data fail.
-- [`requireSupported`](../src/LibTmux/Version.hs) admits tmux 3.3a through 3.8,
-  inclusive.
-- Both check the release identity you supply. They do not inspect the host or
-  vouch for every feature of that release.
+- [`parseVersion`](../src/LibTmux/Version.hs) accepts the spellings tmux
+  reports in the output format of `tmux -V`, including one final LF: `X.Y`,
+  `X.Ya`, `X.Y-rc`, `X.Y-rcN` and `next-X.Y`. They rank
+  `next-X.Y < X.Y-rc < X.Y-rcN < X.Y < X.Ya`, with numeric components compared
+  as numbers. A bare `master`, unknown suffixes and trailing data fail.
+- [`requireSupported`](../src/LibTmux/Version.hs) admits tmux 3.3a and every
+  newer release, with no upper bound. Plain 3.3 and older releases fail. A
+  development build or candidate passes when it ranks above 3.3a.
+- Both check the release identity you supply. They do not inspect the host,
+  vouch for every feature of that release, or show that the project tested it.
 
 See [status](status.md) for what is implemented.
 

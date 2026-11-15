@@ -274,8 +274,10 @@ checks are prerequisites; passing them does not qualify public commands,
 byte-safe process arguments, bootstrap or runtime child ownership.
 
 Record the exact tmux version and platform for each check. The required
-support range is tmux 3.3a through 3.8 inclusive on Linux x86_64. Routine CI
-tests its endpoints, 3.3a and 3.8; intermediate releases remain supported.
-Capability-specific flags do not raise the floor. Retain earlier intermediate
-results as evidence without adding those releases to routine CI. Test admission
-of intermediate releases and rejection outside the support range separately.
+support floor is tmux 3.3a on Linux x86_64, with no upper bound. Routine CI
+tests 3.3a and 3.8, the newest release tested; intermediate and newer releases
+are admitted but not run. Capability-specific flags do not raise the floor.
+Retain earlier intermediate results as evidence without adding those releases
+to routine CI. Test admission of newer and intermediate releases and rejection
+below the floor separately. Parser tests with synthetic tokens check admission
+only; qualify a release with its released binary.
