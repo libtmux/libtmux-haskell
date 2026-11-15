@@ -14,16 +14,23 @@
 
 ### Changed
 
-- Admit tmux 3.3a and every newer release in `LibTmux.Version.requireSupported`
-  and `withServer`, with no upper bound. Releases after 3.8 and patch letters
-  such as 3.8a now pass. 3.3 and older still raise `UnsupportedVersion` or
+- Admit tmux 3.3a and every newer release in `LibTmux.Version.requireSupported`,
+  `withServer`, `withServerIn` and the server version recorded in snapshots,
+  with no upper bound. Releases after 3.8 and patch letters such as 3.8a now
+  pass. 3.3 and older still raise `UnsupportedVersion` or
   `UnsupportedTmuxVersion`. CI tests only 3.3a and 3.8. ([#15])
 - Parse and order `next-X.Y`, `X.Y-rc` and `X.Y-rcN` in
   `LibTmux.Version.parseVersion`, ranked
   `next-X.Y < X.Y-rc < X.Y-rcN < X.Y < X.Ya`. Numeric components compare as
   numbers and `renderVersion` returns the accepted spelling. Bare `master`
-  and unknown suffixes remain `MalformedVersion`; code that handled these
-  spellings or releases above 3.8 as errors must accept them. ([#15])
+  and unknown suffixes remain `MalformedVersion`. Callers that relied on
+  `MalformedVersion` or `UnsupportedVersion` for these spellings or for
+  releases above 3.8 now receive a version. ([#15])
+- Change the derived `Show` output of `TmuxVersion` with its private
+  representation, for example from `TmuxVersion 3 8 (Just 'a')` to
+  `TmuxVersion 3 8 (Patch 'a')`. The same text appears inside
+  `UnsupportedVersion`. Use `renderVersion` for user-facing release text.
+  ([#15])
 
 ### Fixed
 
