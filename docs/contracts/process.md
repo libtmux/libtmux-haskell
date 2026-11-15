@@ -85,6 +85,8 @@ and overflow therefore preserve already observed evidence. Readiness waits
 remain interruptible; stderr never enters this journal. Completing a prefix
 does not establish command completion. Runtime creation recovery must still
 transfer validated IDs into its own bounded receipt journal.
+Bytes the child wrote but the owner had not read before cancellation may be
+lost. An empty prefix does not prove that the native command was rejected.
 
 ## Provisional Runtime ownership
 

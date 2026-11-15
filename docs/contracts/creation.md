@@ -39,6 +39,9 @@ errors and incomplete native completion remain distinct. The decoder retains
 a complete receipt when the supplied following bytes are truncated or exceed
 its limits. The process owner's [bounded stdout journal](process.md#streams-and-bounds)
 retains observed prefix bytes after cancellation and stream overflow.
+Child output not read before cancellation may be lost; an absent receipt
+does not establish rejection.
+
 Complete primary rejection takes precedence over receipt-shaped diagnostic
 lines. An unknown outcome retains matching prefix evidence without establishing
 successful creation.

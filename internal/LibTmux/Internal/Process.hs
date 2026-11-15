@@ -43,6 +43,8 @@ data Hooks = Hooks
   { afterStart :: !(IO ()), afterReap :: !(IO ()), beforeSecondStream :: !(IO ())
   , signalChild :: !(N.Child -> IO CInt)
   , launchNative :: !(N.Spec -> IO N.Start), waitNative :: !(N.Child -> IO (Maybe N.Exit))
+  , readOutput :: !(CInt -> IO (Maybe ByteString))
+    -- ^ Stdout reader, called masked; production implementations must not block.
   }
 
 data Pool = Pool
@@ -90,7 +92,7 @@ forkIn :: Pool -> Fork
 forkIn Pool {forker} = forker
 
 defaultHooks :: Hooks
-defaultHooks = Hooks (pure ()) (pure ()) (pure ()) (\child -> N.signalChild child 9) N.launch N.waitChild
+defaultHooks = Hooks (pure ()) (pure ()) (pure ()) (\child -> N.signalChild child 9) N.launch N.waitChild N.readChunk
 
 newPool :: B.Budget -> Fork -> PinOwner -> Int -> IO Pool
 -- The caller masks through cleanup registration; PinOwner transfers on success.
@@ -256,7 +258,7 @@ readStream ticket stdout fd = preservingFinally ticket.cleanupFailure (loop [] 0
     -- Keep consumed evidence before cancellation or stream-limit refusal.
     -- Only the nonblocking read and bounded publication run masked.
     observed size = mask_ $ do
-      chunk <- N.readChunk fd
+      chunk <- if stdout then ticket.hooks.readOutput fd else N.readChunk fd
       forM_ chunk $ \bytes -> unless (Bytes.null bytes) $ do
         when stdout $ do
           previous <- readTVarIO ticket.prefix

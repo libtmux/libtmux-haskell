@@ -40,6 +40,12 @@ int libtmux_test_wait_gate(int fd, int notice, int pidfd, int *result) {
     return rc;
 }
 
+int libtmux_test_read_gate(int gate, int notice, int fd, void *buffer, size_t size) {
+    int rc = libtmux_process_read(fd, buffer, size);
+    if (rc > 0) hold(gate, notice);
+    return rc;
+}
+
 /* Test-only provenance observation; the production writer remains unchanged. */
 static _Atomic uintptr_t watched_begin, watched_end;
 static _Atomic unsigned shared_writes;

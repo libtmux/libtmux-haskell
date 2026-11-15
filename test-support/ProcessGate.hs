@@ -5,7 +5,8 @@ import Control.Concurrent (ThreadId, myThreadId, yield)
 import Control.Concurrent.STM
 import Control.Exception (bracket, finally, mask_, onException)
 import Control.Monad (void, when)
-import Foreign.C.Types (CInt (..))
+import Data.ByteString (ByteString)
+import Foreign.C.Types (CInt (..), CSize (..))
 import Foreign.Ptr qualified
 import Foreign.Marshal.Array (allocaArray, peekArray)
 import GHC.Conc (BlockReason (..), ThreadStatus (..), threadStatus, threadWaitRead)
@@ -19,6 +20,7 @@ foreign import ccall unsafe "libtmux_test_control_pipe" cPipe :: Foreign.Ptr.Ptr
 foreign import ccall safe "libtmux_test_spawn_gate" cSpawnGate :: CInt -> CInt -> CInt -> N.LaunchCall
 foreign import ccall safe "libtmux_test_constructor_gate" cConstructorGate :: CInt -> CInt -> IO ()
 foreign import ccall safe "libtmux_test_wait_gate" cWaitGate :: CInt -> CInt -> N.WaitCall
+foreign import ccall safe "libtmux_test_read_gate" cReadGate :: CInt -> CInt -> N.ReadCall
 
 data GatePoint = BeforeLaunch | AfterLaunch deriving stock (Eq, Show)
 data GateState = Fresh | Using | Returned | Closed deriving stock (Eq)
@@ -30,6 +32,9 @@ launch point gate spec = usingGate (Just gate) $ \fd notice ->
 
 consume :: Gate -> N.Child -> IO (Maybe N.Exit)
 consume gate child = usingGate (Just gate) $ \fd notice -> N.waitWith (cWaitGate fd notice) child
+
+readChunk :: Gate -> CInt -> IO (Maybe ByteString)
+readChunk gate stream = usingGate (Just gate) $ \fd notice -> N.readWith (cReadGate fd notice) stream
 
 pauseConstructor :: Gate -> IO ()
 pauseConstructor gate = usingGate (Just gate) cConstructorGate

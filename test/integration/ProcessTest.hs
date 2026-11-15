@@ -18,6 +18,7 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.IntSet qualified as Set
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (isJust)
+import GHC.Conc (threadWaitRead)
 import Fixture qualified
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.SocketPin
@@ -401,6 +402,24 @@ tests getChild = testGroup "private process owner"
             atomically (O.activeCount pool) >>= (@?= 0)
             readIORef ticket.descriptors >>= assertBool "cancelled prefix retained descriptors" . Set.null
 
+    , testCase "pending RTS interruption after reading stdout preserves the prefix" $
+        withPool getChild O.normalFork $ \pool _ fixture child -> G.withGate $ \gate -> do
+          let fifo = Ascii.pack fixture.directory <> "/read-return-gate"
+              hooks = O.defaultHooks {O.readOutput = \fd ->
+                threadWaitRead (Fd fd) >> G.readChunk gate fd}
+          Files.createNamedPipe fifo 0o600
+          bracket (Posix.openFd fifo Posix.ReadWrite Posix.defaultFileFlags) Posix.closeFd $ \_ -> do
+            ticket <- O.submit B.Ordinary hooks pool (child ["--gate", fifo]) ""
+            G.awaitGate gate
+            target <- atomically (G.gateThread gate)
+            withAsync (throwTo target AsyncCancelled) $ \sender -> do
+              G.awaitPending (asyncThreadId sender) `finally` G.releaseGate gate
+              wait sender
+            try @SomeException (O.await ticket) >>= assertCancelled
+            atomically (O.stdoutPrefix ticket) >>= (@?= "R")
+            atomically (O.activeCount pool) >>= (@?= 0)
+            readIORef ticket.descriptors >>= assertBool "interrupted read retained descriptors" . Set.null
+
     , testCase "stderr cannot enter the stdout prefix journal" $
         withPool getChild O.normalFork $ \pool _ fixture child -> do
           let fifo = Ascii.pack fixture.directory <> "/stderr-prefix-gate"
@@ -657,6 +676,7 @@ tests getChild = testGroup "private process owner"
               result.output @?= "R" <> input
               result.errors @?= input
               result.exit @?= Just (N.Exited 0)
+              atomically (O.stdoutPrefix ticket) >>= (@?= "R" <> Bytes.take 511 input)
               blockedWrites >>= assertBool "no EAGAIN recorded" . (> 0))
               `finally` G.stopWatchingWriter
 
