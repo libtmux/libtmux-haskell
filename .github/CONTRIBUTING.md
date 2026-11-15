@@ -89,6 +89,16 @@ $ cabal test unit --offline --test-show-details=direct
 The two runners have separate executables. Read [testing](TESTING.md)
 for specification authoring, generation/shrinking, and suite assembly.
 
+Python helper tests use pytest fixtures, `tmp_path` and `monkeypatch`. Provision
+pytest before timed checks, then run the release guards without network access:
+
+```console
+$ uv run --no-project \
+    --offline \
+    --with pytest==9.2.0 \
+    python -B -m pytest scripts/test_release.py
+```
+
 Check the example catalogue, displayed source/output and local guide links
 without compiling or contacting a server:
 

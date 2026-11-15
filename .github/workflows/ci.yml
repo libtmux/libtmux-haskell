@@ -30,7 +30,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Release guard regressions
-        run: python3 -B scripts/test_release.py
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-tests"
+          "$RUNNER_TEMP/release-tests/bin/pip" install --disable-pip-version-check pytest==9.2.0
+          "$RUNNER_TEMP/release-tests/bin/python" -B -m pytest -q -p no:cacheprovider scripts/test_release.py
       - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
