@@ -12,6 +12,19 @@
   generation, receipt inspection and explicit cleanup recovery without
   replaying creation. ([#19])
 
+### Changed
+
+- Admit tmux 3.3a and every newer release in `LibTmux.Version.requireSupported`
+  and `withServer`, with no upper bound. Releases after 3.8 and patch letters
+  such as 3.8a now pass. 3.3 and older still raise `UnsupportedVersion` or
+  `UnsupportedTmuxVersion`. CI tests only 3.3a and 3.8. ([#15])
+- Parse and order `next-X.Y`, `X.Y-rc` and `X.Y-rcN` in
+  `LibTmux.Version.parseVersion`, ranked
+  `next-X.Y < X.Y-rc < X.Y-rcN < X.Y < X.Ya`. Numeric components compare as
+  numbers and `renderVersion` returns the accepted spelling. Bare `master`
+  and unknown suffixes remain `MalformedVersion`; code that handled these
+  spellings or releases above 3.8 as errors must accept them. ([#15])
+
 ### Fixed
 
 - Report a refused native creation context as `InvalidConfiguration` before
@@ -105,3 +118,4 @@
 [#7]: https://github.com/libtmux/libtmux-haskell/pull/7
 [#8]: https://github.com/libtmux/libtmux-haskell/pull/8
 [#9]: https://github.com/libtmux/libtmux-haskell/pull/9
+[#15]: https://github.com/libtmux/libtmux-haskell/issues/15
