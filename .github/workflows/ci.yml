@@ -75,9 +75,11 @@ jobs:
           cabal --numeric-version
           cabal build all --enable-tests --offline
       - name: Specs, properties and unit tests
+        env:
+          LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: |
           cabal test specs --offline --test-show-details=direct --test-options='--strict --fail-on=empty'
-          cabal test unit --offline --test-show-details=direct
+          cabal test unit integration --keep-going --offline --test-show-details=direct --test-options='+RTS -N2 -RTS'
       - name: Documented example command
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
