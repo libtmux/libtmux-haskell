@@ -581,6 +581,8 @@ mutateWith hooks duration runtime client executable mutation =
 -- context contributes file, cwd and environment; its argv is replaced by the
 -- closed compiler. Failure before Request handoff retains journal annotations
 -- alongside any admitted operation receipt, preserving cancellation's class.
+-- The caller must mask the handoff until it retains the returned journal.
+-- A failure without an operation receipt refused admission.
 createSessionWith
   :: P.Hooks -> Int -> Runtime -> ServerHandle -> N.Spec -> Command.SessionOptions
   -> IO SessionCreation

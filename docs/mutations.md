@@ -117,7 +117,8 @@ Names:
 - Session names and pane titles are
   [`Text`](https://hackage-content.haskell.org/package/text-2.1.3/docs/Data-Text.html#t:Text).
 - tmux may reject a name its release does not accept.
-- NUL and oversized encoded commands fail before dispatch.
+- NUL and encoded command arguments over 16,364 bytes fail before dispatch.
+  The limit includes terminators, format expansion and escaped separators.
 - The pane's application can replace a title later.
 
 Deadlines:

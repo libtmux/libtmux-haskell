@@ -59,6 +59,15 @@ transaction as child ownership. The journal retains neither the native ticket
 nor caller arguments, environment or complete output. It remains readable after
 native cleanup and Runtime closure.
 
+The caller masks the handoff until it retains the returned journal. A creation
+facade must own that handoff. An exception annotation without an operation
+receipt means creation was refused before admission; its journal has no IDs.
+
+Creation and mutation arguments fit one native message: 16,364 bytes, including
+NUL terminators and literal-text escaping. The tmux client packs argv into
+`msg_command`; the message also holds a 16-byte `imsg_hdr` and the four-byte
+argument count. The launch vector has a separate resource bound.
+
 The [Runtime cases](../../test/integration/RuntimeCreationTest.hs) distinguish
 known creation, primary rejection, hook errors and uncertain completion. They
 retain observed IDs through cancellation, deadline and output overflow, and
@@ -147,7 +156,9 @@ work. Cases must include replacement/fork failure, last-session retirement,
 repeated links, session groups, alert clearing, hooks that destroy creations,
 missing receipts, and cancellation after dispatch.
 
-Sources: [baseline new-window](https://github.com/tmux/tmux/blob/87fe00e8b44901240fc22d7120c1b31e4331f6f5/cmd-new-window.c),
+Sources: [client argv packing](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/client.c),
+[native message bound](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/compat/imsg.c),
+[baseline new-window](https://github.com/tmux/tmux/blob/87fe00e8b44901240fc22d7120c1b31e4331f6f5/cmd-new-window.c),
 [3.8 new-window](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/cmd-new-window.c),
 [spawn ordering](https://github.com/tmux/tmux/blob/87fe00e8b44901240fc22d7120c1b31e4331f6f5/spawn.c),
 [move/link](https://github.com/tmux/tmux/blob/87fe00e8b44901240fc22d7120c1b31e4331f6f5/cmd-move-window.c),
