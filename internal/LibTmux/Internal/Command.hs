@@ -1,4 +1,4 @@
--- | Private literal mutations and their closed native acknowledgment profile.
+-- | Private literal mutations and nonce-qualified native creation receipts.
 --
 -- 'compileMutation' preserves operand bytes through tmux's command and format
 -- parsers. 'decodeControlReply' applies only to these synchronous handlers,
@@ -7,6 +7,8 @@
 module LibTmux.Internal.Command
   ( Mutation (..), ArgumentError (..), compileMutation
   , MutationReply (..), ReplyError (..), decodeControlReply
+  , SessionReceipt (..), SessionCreationReply (..)
+  , sessionCreationFormat, decodeSessionCreation
   ) where
 
 import Control.DeepSeq (NFData (rnf))
@@ -17,8 +19,10 @@ import Data.Text (Text)
 import Data.Text.Encoding qualified as Utf8
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Field qualified as Field
+import LibTmux.Internal.Frame qualified as Frame
 import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Value qualified as Value
 
 -- | Literal requests with canonical entity targets. Native name validation
 -- and normalization remain command outcomes rather than lowering policy.
@@ -45,6 +49,111 @@ instance NFData MutationReply where
 data ReplyError = UnexpectedReply | ReplyTooLarge
   deriving stock (Eq, Show)
 
+-- | IDs printed by new-session before its after-hooks. They do not establish
+-- current liveness, process exec success or completion of background jobs.
+-- 'decodeSessionCreation' retains them independently of completion evidence.
+data SessionReceipt = SessionReceipt
+  { serverPid :: !Integer
+  , sessionId :: !Id.SessionId
+  , windowId :: !Id.WindowId
+  , paneId :: !Id.PaneId
+  , windowIndex :: !Value.WindowIndex
+  } deriving stock (Eq, Show)
+
+instance NFData SessionReceipt where
+  rnf (SessionReceipt pid session window pane index) =
+    rnf pid `seq` rnf (Id.renderSessionId session) `seq`
+    rnf (Id.renderWindowId window) `seq` rnf (Id.renderPaneId pane) `seq` rnf index
+
+-- | Primary completion and historical creation evidence are independent.
+-- Unknown completion retains a receipt only when its entire nonce line passed.
+data SessionCreationReply
+  = SessionCreated !SessionReceipt
+  | SessionCreatedWithErrors !SessionReceipt !ByteString
+  | SessionCreationRejected !ByteString
+  | SessionCreationUnknown !(Maybe SessionReceipt) !ReplyError
+  deriving stock (Eq, Show)
+
+instance NFData SessionCreationReply where
+  rnf (SessionCreated receipt) = rnf receipt
+  rnf (SessionCreatedWithErrors receipt diagnostic) = rnf receipt `seq` rnf diagnostic
+  rnf (SessionCreationRejected diagnostic) = rnf diagnostic
+  rnf (SessionCreationUnknown receipt problem) = rnf receipt `seq` problem `seq` ()
+
+-- | The line-safe identity format for detached @new-session -P -F@.
+sessionCreationFormat :: Frame.Nonce -> ByteString
+sessionCreationFormat nonce = Frame.scalarFormat nonce (Bytes.intercalate " "
+  [formatted Field.ServerPid, formatted Field.SessionId, formatted Field.WindowId,
+   formatted Field.PaneId, formatted Field.LinkIndex])
+  where
+    formatted :: Field.Field row value -> ByteString
+    formatted field = "#{" <> Field.formatVariable field <> "}"
+
+-- | Decode the closed detached new-session profile through an existing pin.
+-- Bounded prefix decoding preserves a receipt when later output exceeds limits.
+-- Startup/configuration output and persistent control clients need other profiles.
+decodeSessionCreation :: Frame.Nonce -> Maybe Int -> ByteString -> ByteString -> SessionCreationReply
+decodeSessionCreation nonce exit output errors
+  | Bytes.length output > 1048576 || Bytes.length errors > 1048576 = unknown ReplyTooLarge
+  | not (Bytes.null errors) = unknown UnexpectedReply
+  | otherwise = case known of
+      Just (stamp, receipt, following) ->
+        case stripControlExit following >>= Bytes.stripPrefix ("%end " <> stamp <> "\n") of
+          Just tailBytes | exit == Just 0 -> SessionCreated receipt
+                         | exit == Just 1 && not (Bytes.null tailBytes) ->
+                             SessionCreatedWithErrors receipt (Bytes.copy tailBytes)
+          _ -> unknown UnexpectedReply
+      Nothing -> case initial of
+        Just (stamp, body) | exit == Just 1
+          , Just packet <- stripControlExit body
+          , Right (diagnostic, following) <- errorBody stamp packet ->
+              SessionCreationRejected (Bytes.copy (diagnostic <> following))
+        _ -> unknown UnexpectedReply
+  where
+    initial = do
+      (header, body) <- boundedLine 64 output
+      stamp <- either (const Nothing) Just (guardStamp header)
+      pure (stamp, body)
+    known = do
+      (stamp, body) <- initial
+      (line, following) <- boundedLine 256 body
+      payload <- either (const Nothing) Just (Frame.decodeScalar nonce 64 (line <> "\n"))
+      receipt <- sessionReceipt payload
+      pure (stamp, receipt, following)
+    -- Force the selected record, so the Maybe cannot retain the stream tuple.
+    evidence = case known of
+      Just (_, !receipt, _) -> Just receipt
+      Nothing -> Nothing
+    unknown = SessionCreationUnknown evidence
+
+boundedLine :: Int -> ByteString -> Maybe (ByteString, ByteString)
+boundedLine limit bytes =
+  let (line, following) = Bytes.break (== 10) (Bytes.take (limit + 1) bytes)
+  in if Bytes.null following then Nothing
+     else Just (line, Bytes.drop (Bytes.length line + 1) bytes)
+
+sessionReceipt :: ByteString -> Maybe SessionReceipt
+sessionReceipt payload = case Ascii.split ' ' payload of
+  [pidBytes, sessionBytes, windowBytes, paneBytes, indexBytes] -> do
+    pid <- creationField Field.ServerPid pidBytes
+    session <- creationField Field.SessionId sessionBytes
+    window <- creationField Field.WindowId windowBytes
+    pane <- creationField Field.PaneId paneBytes
+    index <- creationField Field.LinkIndex indexBytes
+    pure (SessionReceipt pid session window pane index)
+  _ -> Nothing
+
+-- Creation's native numbers are unpadded; the catalogue owns their domains.
+creationField :: Field.Field row value -> ByteString -> Maybe value
+creationField field bytes
+  | Bytes.length bytes > 1 && Bytes.head bytes == 48 = Nothing
+  | otherwise = either (const Nothing) Just (Field.decodeField field bytes)
+
+stripControlExit :: ByteString -> Maybe ByteString
+stripControlExit bytes = do
+  packet <- Bytes.stripSuffix "%exit\n" bytes
+  if Bytes.null packet || Bytes.last packet /= 10 then Nothing else Just packet
+
 -- | Interpret fully drained streams and normal exit status for one t'Mutation'.
 -- This is not a general control-mode decoder or evidence for waiting commands.
 decodeControlReply :: Maybe Int -> ByteString -> ByteString -> Either ReplyError MutationReply
@@ -52,8 +161,7 @@ decodeControlReply exit output errors
   | Bytes.length output > 1048576 || Bytes.length errors > 1048576 = Left ReplyTooLarge
   | not (Bytes.null errors) = Left UnexpectedReply
   | otherwise = do
-      packet <- maybe (Left UnexpectedReply) Right (Bytes.stripSuffix "%exit\n" output)
-      if Bytes.null packet || Bytes.last packet /= 10 then Left UnexpectedReply else pure ()
+      packet <- maybe (Left UnexpectedReply) Right (stripControlExit output)
       let (header, following) = Bytes.break (== 10) packet
       stamp <- guardStamp header
       body <- maybe (Left UnexpectedReply) Right (Bytes.stripPrefix "\n" following)

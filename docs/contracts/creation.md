@@ -28,6 +28,22 @@ creating connection with fresh nonce challenges, pins the socket, and checks
 the same daemon/session before admitting dependent mutations. Failure returns
 known creation receipts and uncertainty without automatic replay or rebinding.
 
+## Private receipt protocol
+
+The [private command protocol](../../internal/LibTmux/Internal/Command.hs)
+decodes the IDs printed by a detached `new-session -P -F` through an existing
+pin. A nonce binds the daemon PID, session, initial window/pane and link index
+to one response. Primary rejection, successful creation, following hook
+errors and incomplete native completion remain distinct. The decoder retains
+a complete receipt when the supplied following bytes are truncated or exceed
+its limits. Capturing that evidence during IO still needs its own journal.
+
+The [owned-server cases](../../test/integration/CommandIntegrationTest.hs)
+cover duplicate names, control-shaped hook output and deletion after the
+receipt. A hook barrier permits pidfd tracking before deletion. This protocol
+does not yet supply Runtime creation admission, an IO receipt journal,
+first-server bootstrap or a public creation operation.
+
 ## Creation and reuse
 
 | Intent | Input and result |
