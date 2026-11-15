@@ -70,6 +70,7 @@ extra-doc-files:
   docs/contracts/acquisition.md
   docs/contracts/pane-commands.md
 extra-source-files:
+  capabilities.json
   .tool-versions
   cbits/process.h
   test-support/process-child.c
@@ -180,7 +181,7 @@ benchmark capture
 library
   import: modern
   hs-source-dirs: src internal
-  exposed-modules: LibTmux LibTmux.Creation LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
+  exposed-modules: LibTmux LibTmux.Capabilities LibTmux.Creation LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
     LibTmux.Query LibTmux.Query.Pane LibTmux.Query.Session LibTmux.Query.Window
     LibTmux.Query.Link LibTmux.Query.Occurrence LibTmux.Query.Client
     LibTmux.Query.ClientAttachment LibTmux.Query.ServerInfo
@@ -223,7 +224,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: VersionProbeTest LibTmux.Internal.VersionProbe CreationTest CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
+  other-modules: CapabilitiesTest VersionProbeTest LibTmux.Internal.VersionProbe CreationTest CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
