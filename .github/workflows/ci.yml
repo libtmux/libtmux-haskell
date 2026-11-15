@@ -34,6 +34,12 @@ jobs:
         with:
           version: '0.12.0'
           enable-cache: false
+      - name: Script format, lint and type checks
+        run: |
+          uv sync --locked
+          uv run --locked ruff format --check scripts
+          uv run --locked ruff check scripts
+          uv run --locked ty check scripts
       - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
