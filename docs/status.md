@@ -24,7 +24,7 @@ and correlated recovery.
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
 interface. Additional commands, interchange and event contracts remain separate
 qualification work.
-The [behavior inventory](contracts/README.md) records the intended scope.
+The [contract notes](contracts/README.md) propose the remaining operations.
 
 ## Package policy
 

@@ -1,0 +1,73 @@
+# Tooling for the maintainer scripts under scripts/. The Haskell package has no
+# Python dependency and does not build or install this project.
+[project]
+name = "libtmux-haskell-scripts"
+version = "0.0.0"
+description = "Format, lint, type and test configuration for scripts/"
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.2",
+  "ruff>=0.17",
+  "ty>=0.0.101",
+]
+
+[tool.uv]
+package = false
+# Lock only releases at least three days old. Project settings override a
+# contributor's own uv configuration, so `uv lock --check` gives the same
+# answer on every machine. A relative value needs uv 0.9.17 or newer.
+exclude-newer = "3 days"
+
+[tool.pytest.ini_options]
+# Each script is a plain module in its own directory, so tests import it, and
+# the scripts that call a sibling import it, by directory.
+pythonpath = [
+  "scripts/capture_benchmark",
+  "scripts/check_docs",
+  "scripts/check_sdist",
+  "scripts/check_types",
+  "scripts/ci_tmux",
+  "scripts/prepare_haddock",
+  "scripts/release",
+]
+testpaths = ["scripts"]
+addopts = [
+  "--doctest-modules",
+  "--strict-config",
+  "--strict-markers",
+  "-p",
+  "no:cacheprovider",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = [
+  "scripts/capture_benchmark",
+  "scripts/check_docs",
+  "scripts/check_sdist",
+  "scripts/check_types",
+  "scripts/ci_tmux",
+  "scripts/prepare_haddock",
+  "scripts/release",
+]
+
+[tool.ruff.lint]
+extend-select = ["ANN", "B", "C4", "I", "PT", "PTH", "RUF", "SIM", "UP"]
+
+[tool.ty.environment]
+python-version = "3.12"
+extra-paths = [
+  "scripts/capture_benchmark",
+  "scripts/check_docs",
+  "scripts/check_sdist",
+  "scripts/check_types",
+  "scripts/ci_tmux",
+  "scripts/prepare_haddock",
+  "scripts/release",
+]
+
+[tool.ty.src]
+include = ["scripts"]

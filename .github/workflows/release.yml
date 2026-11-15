@@ -29,6 +29,10 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.0'
+          enable-cache: false
       - name: Require matching version tags on master for publication
         env:
           PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
@@ -40,10 +44,10 @@ jobs:
               echo '::error::Publication requires a version tag; use publish=false for a candidate.'
               exit 1
             fi
-            python3 scripts/release.py check --tag "$RELEASE_TAG"
+            uv run scripts/release/release.py check --tag "$RELEASE_TAG"
             git merge-base --is-ancestor HEAD origin/master
           else
-            python3 scripts/release.py check
+            uv run scripts/release/release.py check
           fi
 
   verify:
@@ -70,6 +74,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.0'
+          enable-cache: false
       - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
@@ -88,7 +96,7 @@ jobs:
           name: ${{ needs.verify.outputs.release-artifact }}
           path: dist-newstyle/release
       - name: Check archive identity and hashes before upload
-        run: python3 scripts/release.py verify
+        run: uv run scripts/release/release.py verify
       - name: Upload source and documentation and test the public archive
         env:
           HACKAGE_AUTH_TOKEN: ${{ secrets.HACKAGE_AUTH_TOKEN }}
@@ -96,7 +104,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if [ "$PUBLISH" = true ]; then
-            python3 scripts/release.py upload --publish --tag "$RELEASE_TAG"
+            uv run scripts/release/release.py upload --publish --tag "$RELEASE_TAG"
           else
-            python3 scripts/release.py upload
+            uv run scripts/release/release.py upload
           fi

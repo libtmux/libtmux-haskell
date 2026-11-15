@@ -67,6 +67,6 @@ function. `lastPane` selects the last pane or changes that pane's input-enabled
 state; it has no mark/direction modes. `nextLayout` and `previousLayout` select
 only their named navigation action. `enter`, `sendPrefix`, `clockMode`,
 `clearHistory`, `clear` and `reset` retain their individual inputs and outcomes
-in the inventory. Floating placement distinguishes default geometry from checked
+in this contract. Floating placement distinguishes default geometry from checked
 width/height and signed x/y offsets; requested geometry is not a guarantee about
 the eventual layout after border rules and constraints.

@@ -38,7 +38,7 @@ $ cabal haddock lib:libtmux-haskell --offline
 Prepare a separate browser copy with checked local navigation:
 
 ```console
-$ python3 scripts/prepare_haddock.py \
+$ uv run scripts/prepare_haddock/prepare_haddock.py \
     dist-newstyle/haddock-prepared \
     --build-plan dist-newstyle/cache/plan.json
 ```
@@ -93,7 +93,7 @@ The complete [capture example](../examples/capture-graph/Main.hs),
 [creation example](../examples/create-session/Main.hs) and
 [typed-value example](../examples/typed-values/Main.hs) use only public
 exports. Their source and output are checked against the source archive by
-the [consumer check](../scripts/check_sdist.py).
+the [consumer check](../scripts/check_sdist/check_sdist.py).
 
 Private graph, framing and transport modules are implementation details.
 The source layout does not define visibility: Cabal's `exposed-modules`

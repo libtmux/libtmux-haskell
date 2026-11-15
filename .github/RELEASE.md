@@ -86,7 +86,7 @@ $ git pull --ff-only origin master
 Check that the version, tag and versioned changelog agree:
 
 ```console
-$ python3 scripts/release.py check --tag v0.0.1.0
+$ uv run scripts/release/release.py check --tag v0.0.1.0
 ```
 
 Create the annotated release tag:
