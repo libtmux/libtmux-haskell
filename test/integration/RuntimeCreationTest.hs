@@ -1,9 +1,11 @@
 module RuntimeCreationTest (tests) where
 
+import Control.Concurrent.Async (asyncThreadId, wait, withAsync)
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Exception.Context qualified as Context
-import Control.Monad (forM_, void)
+import Data.List.NonEmpty (NonEmpty (..))
+import Control.Monad (forM_, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -15,12 +17,16 @@ import Fixture qualified
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as C
+import LibTmux.Internal.Creation qualified as Create
+import LibTmux.Internal.Graph qualified as G
+import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
-import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Snapshot qualified as Snapshot
 import LibTmux.Value qualified as Value
 import System.Directory (createDirectory)
 import System.OsString.Posix qualified as Os
@@ -39,7 +45,7 @@ tests = testGroup "owned Runtime creation"
         configured fixture server ["set-option", "-g", "status", "off"]
         configured fixture server ["set-option", "-g", "update-environment", "LIBTMUX_CLIENT_CONTEXT"]
         let options = (optionsFor "literal-#{pid}")
-              { C.windowName = Just (Label.fromBytes "#[#{pid}];")
+              { C.windowName = Just (Snapshot.labelFromBytes "#[#{pid}];")
               , C.workingDirectory = Just (Os.fromBytestring cwd)
               , C.environment = [(Os.fromBytestring "KEY", Os.fromBytestring "#{pid};")]
               , C.width = Just width, C.height = Just height }
@@ -184,6 +190,91 @@ tests = testGroup "owned Runtime creation"
               _ -> assertFailure "creation allocation failure lost its correlation"
           Right _ -> assertFailure "worker-allocation failure returned success"
 
+  , testCase "facade cancellation retains a receipt consumed before cancellation" $
+      withRuntime P.normalFork $ \runtime server fixture ->
+        withHook fixture server "wait-for release-facade" $
+          flip finally (configured fixture server ["wait-for", "-S", "release-facade"]) $ do
+            ready <- newEmptyTMVarIO
+            prefix <- newIORef Bytes.empty
+            let observeOutput stream = do
+                  chunk <- N.readChunk stream
+                  forM_ chunk $ \bytes -> do
+                    observed <- atomicModifyIORef' prefix $ \old ->
+                      let next = Bytes.take 512 (old <> bytes) in (next, next)
+                    -- Controlled stdout starts with %begin and the receipt.
+                    when (Bytes.count 10 observed >= 2) (atomically (void (tryPutTMVar ready ())))
+                  pure chunk
+                hooks = P.defaultHooks {P.readOutput = observeOutput}
+            withAsync (tryWithContext @SomeException (Create.performCreation hooks 10000000 runtime server
+              (Ascii.pack fixture.executable) (optionsFor "cancel-facade"))) $ \worker -> do
+                bounded (atomically (readTMVar ready))
+                pid <- readOutput fixture server ["display-message", "-p", "-t", "=cancel-facade:", "-F", "#{pane_pid}"]
+                nativeSession <- readOutput fixture server ["display-message", "-p", "-t", "=cancel-facade:", "-F", "#{session_id}"]
+                Fixture.withTrackedPane (Lazy.fromStrict pid)
+                  (void (invoke fixture server ["kill-session", "-t", "=cancel-facade"])) $ do
+                    throwTo (asyncThreadId worker) ThreadKilled
+                    bounded (wait worker) >>= \case
+                      Left (ExceptionWithContext annotations problem) -> do
+                        fromException @AsyncException problem @?= Just ThreadKilled
+                        recovery <- case Context.getExceptionAnnotations @Create.CreationRecovery annotations of
+                          [value] -> pure value
+                          _ -> fail "cancellation lost creation recovery"
+                        observed <- bounded (Create.awaitRecovery recovery)
+                        observed.logical.outcome @?= Just S.OutcomeUnknown
+                        created <- atomically (Create.observedReceipt recovery) >>= maybe (fail "consumed receipt was lost") pure
+                        let G.SessionRef _ session = created.session
+                        Utf8.encodeUtf8 (Id.renderSessionId session) <> "\n" @?= nativeSession
+                        atomically (Create.detachRecovery recovery) >>= (@?= True)
+                      Right _ -> assertFailure "cancelled facade returned success"
+
+  , testCase "synchronous creation retains journals before Request handoff fails" $
+      forM_ [False, True] $ \expires -> do
+        first <- newIORef True
+        gate <- newEmptyTMVarIO
+        let fork :: P.Fork
+            fork action = atomicModifyIORef' first (\old -> (False, old)) >>= \case
+              True | expires -> atomically (readTMVar gate) >> fail "unexpected allocation"
+                   | otherwise -> throwIO ThreadKilled
+              False -> P.normalFork action
+            duration = if expires then 20000 else 1000000
+        withRuntime fork $ \runtime server fixture -> do
+          let options = (optionsFor "before-handoff") {C.process = C.ShellCommand "exec /bin/cat -"}
+          bounded (tryWithContext @SomeException (Create.performCreation P.defaultHooks duration
+            runtime server (Ascii.pack fixture.executable) options)) >>= \case
+              Left (ExceptionWithContext context problem) -> do
+                if expires then case fromException @Scope.TmuxException problem of
+                  Just Scope.MutationTimedOut -> pure ()
+                  _ -> assertFailure "allocation timeout changed exception"
+                else fromException @AsyncException problem @?= Just ThreadKilled
+                recovery <- case Context.getExceptionAnnotations @Create.CreationRecovery context of
+                  [value] -> pure value
+                  _ -> fail "pre-Request failure lost creation recovery"
+                atomically (Create.observedReceipt recovery) >>= (@?= Nothing)
+                observed <- bounded (Create.awaitRecovery recovery)
+                observed.logical.outcome @?= Just S.NotDispatched
+                observed.logical.retained @?= False
+              Right _ -> assertFailure "failed allocation returned a creation"
+
+  , testCase "launch context limits give typed refusals without admitted recovery" $
+      withRuntime P.normalFork $ \runtime server fixture -> do
+        forM_ [(["LARGE=" <> Bytes.replicate 65536 120], "native vector byte limit"),
+               (replicate 4097 "A=x", "native vector count limit")] $ \(environment, reason) -> do
+          let context = (launchContext fixture) {N.env = environment}
+              submit remaining = do
+                duration <- remaining
+                R.creationRequest <$> R.createSessionWith P.defaultHooks duration runtime server context (optionsFor "context-refusal")
+          tryWithContext @SomeException (M.performRequest 1000000 runtime server submit (const (pure ()))) >>= \case
+            Left (ExceptionWithContext annotations problem) -> do
+              case fromException @Scope.TmuxException problem of
+                Just (Scope.InvalidConfiguration message) -> message @?= "native launch: " <> reason
+                _ -> assertFailure (show problem)
+              assertBool "refused context retained an operation"
+                (null (Context.getExceptionAnnotations @M.MutationRecovery annotations))
+              assertBool "refused context acquired an operation receipt"
+                (null (Context.getExceptionAnnotations @R.ReadReceipt annotations))
+            Right _ -> assertFailure "oversized launch context was admitted"
+          atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
+
   , testCase "invalid options and launch contexts create no operation" $ do
       forks <- newIORef (0 :: Int)
       let fork :: P.Fork
@@ -242,6 +333,21 @@ tests = testGroup "owned Runtime creation"
             length report.readWorkers @?= 0
             length report.unresolved @?= 0
 
+  , testCase "malformed completion retains IDs and uncertainty after native cleanup" $
+      withRuntime P.normalFork $ \runtime server fixture -> do
+        let hooks = P.defaultHooks {P.launchNative = \spec -> N.launch spec
+              {N.file = "/bin/sh", N.args = ["/bin/sh", "-c",
+                "\"$@\" || exit; printf 'after-exit\\n'", "corrupt-footer"] <> spec.args}}
+        created <- R.createSessionWith hooks 1000000 runtime server (launchContext fixture) (optionsFor "malformed-created")
+        withCreated fixture server created $ \receipt -> do
+          unavailable created
+          let correlation = R.readReceipt (R.creationRequest created)
+          recovery <- settled runtime server correlation
+          recovery.logical.outcome @?= Just S.OutcomeUnknown
+          recovery.logical.retained @?= True
+          atomically (R.journalReceipt (R.creationJournal created)) >>= (@?= Just receipt)
+          atomically (R.detachReceipt runtime server correlation) >>= (@?= True)
+
   , testCase "overflow after receipt retains IDs while releasing physical ownership" $
       withRuntime P.normalFork $ \runtime server fixture ->
         -- tmux caps each padding modifier at 10000 cells.
@@ -259,7 +365,7 @@ tests = testGroup "owned Runtime creation"
 optionsFor :: ByteString -> C.SessionOptions
 optionsFor name = C.defaultSessionOptions
   {C.name = Just (Utf8.decodeUtf8 name)
-  ,C.process = C.DirectCommand (Os.fromBytestring "/bin/cat") [Os.fromBytestring "-"]}
+  ,C.process = C.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])}
 
 launchContext :: Fixture.Fixture -> N.Spec
 launchContext fixture = (N.spec (Ascii.pack fixture.executable) []) {N.cwd = Ascii.pack fixture.directory}

@@ -28,6 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Release guard regressions
         run: |
@@ -83,7 +84,7 @@ jobs:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: |
           python3 scripts/test_check_docs.py
-          python3 examples/capture-graph/test_run.py
+          "$RUNNER_TEMP/release-tests/bin/python" -B -m pytest -q -p no:cacheprovider examples/capture-graph/test_run.py examples/capture-graph/test_readme.py
           python3 scripts/check_docs.py --run
       - name: Public type contracts
         run: scripts/check-types

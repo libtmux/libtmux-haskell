@@ -1,5 +1,6 @@
 module CreationTest (tests) where
 
+import Data.List.NonEmpty (NonEmpty (..))
 import Control.Monad (forM_)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
@@ -7,7 +8,7 @@ import Data.Text qualified as Text
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Frame qualified as F
-import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Snapshot qualified as Snapshot
 import LibTmux.Value qualified as Value
 import System.OsString.Posix qualified as Os
 import Test.Tasty (TestTree, testGroup)
@@ -24,7 +25,7 @@ tests = testGroup "session creation receipts"
       width <- require (Value.mkDimension 120)
       let options = C.defaultSessionOptions
             { C.name = Just "#{pid};"
-            , C.windowName = Just (Label.fromBytes "#[red]")
+            , C.windowName = Just (Snapshot.labelFromBytes "#[red]")
             , C.workingDirectory = Just (Os.fromBytestring "/tmp/#{pid};")
             , C.environment = [(Os.fromBytestring "KEY", Os.fromBytestring "#{pid};")]
             , C.width = Just width
@@ -36,19 +37,15 @@ tests = testGroup "session creation receipts"
         , "-s", "#{a:35}{pid}\\;", "-n", "#{a:35}[red]"
         , "-c", "/tmp/#{a:35}{pid}\\;", "-x", "120", "-E"
         , "-e", "KEY=#{pid}\\;", "--", "printf '%s' '#{pid}'\\;"]
-  , testCase "native argv and an empty pane remain distinct from a shell command" $ do
+  , testCase "native argv and empty shell input retain their distinct command forms" $ do
       nonce <- require (F.parseNonce token)
       let compile process = C.compileSessionCreation nonce
             C.defaultSessionOptions {C.process = process}
           base = ["new-session", "-d", "-P", "-F", C.sessionCreationFormat nonce, "--"]
       compile (C.DirectCommand (Os.fromBytestring "/bin/printf")
-        [Os.fromBytestring "%s", Os.fromBytestring "#{pid};"]) @?=
+        (Os.fromBytestring "%s" :| [Os.fromBytestring "#{pid};"])) @?=
         Right (base <> ["/bin/printf", "%s", "#{pid}\\;"])
-      compile C.EmptyPane @?= Right (base <> [""])
-      compile (C.DirectCommand (Os.fromBytestring "/bin/true") []) @?=
-        Left (C.InvalidOperand "initialProcess" "direct execution requires at least one argument")
-      compile (C.ShellCommand "") @?=
-        Left (C.InvalidOperand "initialProcess" "empty shell command; use EmptyPane")
+      compile (C.ShellCommand "") @?= Right (base <> [""])
   , testCase "creation rejects invalid domains and bounded vectors before expansion" $ do
       nonce <- require (F.parseNonce token)
       large <- require (Value.mkDimension 65536)
@@ -62,11 +59,11 @@ tests = testGroup "session creation receipts"
       compile C.defaultSessionOptions {C.width = Just large} @?=
         Left (C.InvalidOperand "width" "dimension exceeds 65535 cells")
       compile C.defaultSessionOptions {C.process = C.DirectCommand (Os.fromBytestring "/bin/echo")
-        (repeat (Os.fromBytestring "x"))} @?=
+        (Os.fromBytestring "x" :| repeat (Os.fromBytestring "x"))} @?=
         Left (C.InvalidOperand "initialProcess" "argument count exceeds 4096")
       compile C.defaultSessionOptions {C.environment = repeat (Os.fromBytestring "A", Os.fromBytestring "x")} @?=
         Left (C.InvalidOperand "environment" "variable count exceeds 4096")
-      compile C.defaultSessionOptions {C.windowName = Just (Label.fromBytes (Bytes.replicate 10000 35))} @?=
+      compile C.defaultSessionOptions {C.windowName = Just (Snapshot.labelFromBytes (Bytes.replicate 10000 35))} @?=
         Left (C.EncodedCommandTooLarge "session.creation")
   , testCase "creation fits the native command message including argv terminators" $ do
       nonce <- require (F.parseNonce token)
@@ -77,6 +74,16 @@ tests = testGroup "session creation receipts"
             C.defaultSessionOptions {C.name = Just (Text.replicate count "x")}
       compile available @?= Right 16364
       compile (available + 1) @?= Left (C.EncodedCommandTooLarge "session.creation")
+  , testCase "creation bounds expanded argv with room for client arguments" $ do
+      nonce <- require (F.parseNonce token)
+      let compile options = length <$> C.compileSessionCreation nonce options
+          direct count = C.defaultSessionOptions {C.process = C.DirectCommand
+            (Os.fromBytestring "/bin/echo") (Os.fromBytestring "x" :| replicate (count - 1) (Os.fromBytestring "x"))}
+      compile (direct 4083) @?= Right 4090
+      compile (direct 4084) @?= Left (C.EncodedCommandTooLarge "session.creation")
+      compile C.defaultSessionOptions {C.environment = replicate 2043
+        (Os.fromBytestring "A", Os.fromBytestring "x")} @?=
+        Left (C.EncodedCommandTooLarge "session.creation")
   , testCase "creation prints only nonce-qualified native identities" $ do
       nonce <- require (F.parseNonce token)
       C.sessionCreationFormat nonce @?= F.scalarFormat nonce

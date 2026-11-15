@@ -1,7 +1,7 @@
 -- | One synchronous mutation and its retained ownership. A deadline bounds
 -- submission as well as waiting; recovery never dispatches the command again.
 module LibTmux.Internal.Mutation
-  ( performMutation, MutationRecovery, recoveryReceipt, inspectRecovery
+  ( performMutation, performRequest, MutationRecovery, recoveryReceipt, inspectRecovery
   , resumeRecovery, awaitRecovery, detachRecovery
   ) where
 
@@ -17,10 +17,12 @@ import Control.Monad (when)
 import Data.ByteString (ByteString)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Maybe (listToMaybe)
+import Data.Text qualified as Text
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Process qualified as P
+import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scope (TmuxException (..))
 import System.Timeout (timeout)
@@ -54,7 +56,20 @@ detachRecovery :: MutationRecovery -> STM Bool
 detachRecovery (MutationRecovery runtime server receipt) = R.detachReceipt runtime server receipt
 
 performMutation :: P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> ByteString -> C.Mutation -> IO ()
-performMutation hooks duration runtime server executable mutation = mask $ \restore -> do
+performMutation hooks duration runtime server executable mutation =
+  performRequest duration runtime server
+    (\remainingTime -> remainingTime >>= \left -> R.mutateWith hooks left runtime server executable mutation) $ \case
+      C.Applied -> pure ()
+      C.Rejected diagnostic -> throwIO (MutationRejected diagnostic)
+      C.AppliedWithErrors diagnostic -> throwIO (MutationAppliedWithErrors diagnostic)
+
+-- | Share one absolute deadline and correlated owner across typed mutations.
+-- Submission obtains remaining time after its own context acquisition; the
+-- decoder runs within the same deadline. Recovery never resubmits the action.
+performRequest
+  :: Int -> R.Runtime -> R.ServerHandle
+  -> (IO Int -> IO (R.Request value)) -> (value -> IO result) -> IO result
+performRequest duration runtime server submit decode = mask $ \restore -> do
   when (duration < 1 || duration > 10000000)
     (throwIO (InvalidConfiguration "mutation timeout must be positive and at most ten seconds"))
   receipt <- newIORef Nothing
@@ -65,23 +80,22 @@ performMutation hooks duration runtime server executable mutation = mask $ \rest
           Nothing -> rethrowIO (ExceptionWithContext context problem)
           Just value -> recovering (MutationRecovery runtime server value)
             (rethrowIO (ExceptionWithContext context problem))
-      owned left = mask $ \unmask -> do
-        request <- catchNoPropagate (R.mutateWith hooks left runtime server executable mutation) $
+      owned deadline = mask $ \unmask -> do
+        request <- catchNoPropagate (submit (remaining deadline)) $
           \failure@(ExceptionWithContext context (problem :: SomeException)) -> do
-            -- System.Timeout consumes its exception, so remember correlation
-            -- before conversion even if allocation never returns a Request.
+            -- Timeout consumes its exception; retain correlation before conversion.
             writeIORef receipt (listToMaybe (Context.getExceptionAnnotations @R.ReadReceipt context))
-            case fromException @R.ReadError problem of
-              Just (R.InvalidCommandOperands invalid) -> rethrowIO
+            case (fromException @R.ReadError problem, fromException @N.Failure problem) of
+              (Just (R.InvalidCommandOperands invalid), _) -> rethrowIO
                 (ExceptionWithContext context (toException (InvalidMutationArgument (argumentError invalid))))
+              (_, Just (N.InvalidInput reason)) -> rethrowIO
+                (ExceptionWithContext context (toException (InvalidConfiguration ("native launch: " <> Text.pack reason))))
               _ -> rethrowIO failure
         let !current = R.readReceipt request
         writeIORef receipt (Just current)
         response <- unmask (R.awaitRead request) `onException` R.cancelRead runtime request
         case response of
-          R.ReadValue C.Applied -> pure ()
-          R.ReadValue (C.Rejected diagnostic) -> throwIO (MutationRejected diagnostic)
-          R.ReadValue (C.AppliedWithErrors diagnostic) -> throwIO (MutationAppliedWithErrors diagnostic)
+          R.ReadValue value -> decode value
           R.ReadUnavailable _ (Just problem)
             | Just R.ReadExpired <- fromException problem -> throwIO MutationTimedOut
             | otherwise -> throwIO problem
@@ -91,10 +105,10 @@ performMutation hooks duration runtime server executable mutation = mask $ \rest
         let delta = fromIntegral duration * 1000
         when (started > maxBound - delta) (throwIO R.ReadClockOverflow)
         let deadline = started + delta
-        completed <- timeout duration (remaining deadline >>= owned)
+        completed <- timeout duration (owned deadline)
         case completed of
           Nothing -> throwIO MutationTimedOut
-          Just () -> remaining deadline >> pure ()
+          Just value -> remaining deadline >> pure value
   catchNoPropagate (restore timed) annotate
   where
     argumentError (C.NulOperand field) = field <> " contains NUL"

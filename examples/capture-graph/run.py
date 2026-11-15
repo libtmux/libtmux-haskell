@@ -71,13 +71,14 @@ def await_socket(watch, daemon):
 
 
 @contextmanager
-def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None):
+def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expected_panes=None):
     environment = {key: value for key, value in os.environ.items()
                    if key not in {"TMUX", "TMUX_PANE"}}
     environment["LC_ALL"] = "C.UTF-8"
     with tempfile.TemporaryDirectory(prefix="libtmux-haskell-example-") as directory, ExitStack() as owners:
         socket = str(Path(directory) / "s")
         descriptors = []
+        tracked_pids = set()
         watch = watch_socket(directory, owners)
         errors = owners.enter_context(tempfile.TemporaryFile())
         daemon = subprocess.Popen([binary, "-u", "-D", "-S", socket, "-f", "/dev/null"],
@@ -120,6 +121,7 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None):
                 descriptor = os.pidfd_open(int(value))
                 owners.callback(os.close, descriptor)
                 descriptors.append(descriptor)
+                tracked_pids.add(int(value))
             pane_tracked = True
             checkpoint("pane-ready", tuple(descriptors), socket)
             linked = subprocess.run(
@@ -131,6 +133,33 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None):
             primary = problem
             raise
         finally:
+            cleanup_errors = []
+            try:
+                if pane_tracked and daemon.poll() is None:
+                    result = subprocess.run(
+                        [binary, "-u", "-N", "-S", socket, "list-panes", "-a", "-F", "#{pane_id} #{pane_pid}"],
+                        env=environment, capture_output=True, check=True, timeout=1)
+                    if result.stderr:
+                        raise RuntimeError("owned pane inspection emitted stderr")
+                    panes = {}
+                    for row in result.stdout.splitlines():
+                        fields = row.split()
+                        if (len(fields) != 2 or not fields[0].startswith(b"%")
+                                or not fields[0][1:].isdigit() or not fields[1].isdigit() or int(fields[1]) <= 0):
+                            raise RuntimeError("invalid owned pane receipt")
+                        ident, pid = fields[0], int(fields[1])
+                        if ident in panes and panes[ident] != pid:
+                            raise RuntimeError("conflicting owned pane receipts")
+                        panes[ident] = pid
+                        if pid not in tracked_pids:
+                            descriptor = os.pidfd_open(pid)
+                            owners.callback(os.close, descriptor)
+                            descriptors.append(descriptor)
+                            tracked_pids.add(pid)
+                    if primary is None and expected_panes is not None and len(panes) != expected_panes:
+                        raise RuntimeError("example changed the expected physical pane count")
+            except BaseException as cleanup:
+                cleanup_errors.append(cleanup)
             try:
                 if daemon.poll() is None:
                     daemon.terminate()
@@ -145,15 +174,21 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None):
                 if session_dispatched and not pane_tracked:
                     raise RuntimeError("session creation failed before pane exit ownership was established")
             except BaseException as cleanup:
+                cleanup_errors.append(cleanup)
+            if cleanup_errors:
                 if primary is None:
-                    raise
-                primary.add_note(f"owned fixture cleanup: {cleanup}")
+                    primary = cleanup_errors.pop(0)
+                    for cleanup in cleanup_errors:
+                        primary.add_note(f"owned fixture cleanup: {cleanup}")
+                    raise primary
+                for cleanup in cleanup_errors:
+                    primary.add_note(f"owned fixture cleanup: {cleanup}")
 
 
-def run(program, binary, expected_output=None):
+def run(program, binary, expected_output=None, expected_panes=1):
     expected_path = Path(expected_output) if expected_output is not None else Path(__file__).with_name("expected.stdout")
     expected = expected_path.read_bytes()
-    with fixture(binary) as (socket, environment):
+    with fixture(binary, expected_panes=expected_panes) as (socket, environment):
         result = subprocess.run([program, socket, binary], env=environment,
                                 capture_output=True, check=True, timeout=3)
         if result.stdout != expected or result.stderr:
@@ -166,6 +201,7 @@ def main():
     parser.add_argument("--program", help="already-built public consumer executable")
     parser.add_argument("--executable", default="capture-graph", help="Cabal executable to build in this checkout")
     parser.add_argument("--expected-output", type=Path, help="asserted stdout for a shared fixture consumer")
+    parser.add_argument("--expected-panes", type=int, default=1, help="verified physical pane count after the program")
     args = parser.parse_args()
     binary = shutil.which(os.environ.get("LIBTMUX_TEST_TMUX", "tmux"))
     if binary is None:
@@ -178,7 +214,7 @@ def main():
         program = subprocess.check_output(
             ["cabal", "list-bin", "exe:" + args.executable, "--offline", "-v0"],
             cwd=directory, text=True).strip()
-    run(program, binary, args.expected_output)
+    run(program, binary, args.expected_output, args.expected_panes)
 
 
 if __name__ == "__main__":

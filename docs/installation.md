@@ -56,8 +56,9 @@ $ cabal run --verbose=0 capture-graph -- \
 - The [capture guide](capture.md) covers the object graph, pure lookups and
   scope cleanup.
 
-The API is experimental. The package provides observation and rename/title
-operations. Creation, pane input and events remain under development.
+The API is experimental. The package provides observation, rename/title
+and existing-server session creation operations. First-server bootstrap,
+window/pane creation, pane input and events remain under development.
 Check [status](status.md) before choosing it for automation.
 
 Browse the [manual](https://libtmux.org/en/haskell/) and
@@ -77,7 +78,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: v0.0.1.0
+  tag: 6dad60a7ffef2111bb7eb21f6514c0b097bce325
 ```
 
 ## Native backend host requirements

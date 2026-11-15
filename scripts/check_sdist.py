@@ -46,35 +46,62 @@ def main():
             for index, entry in enumerate(examples):
                 consumer = directory / entry["id"]
                 consumer.mkdir()
-                for field in ["source", "package"]:
-                    (consumer / Path(entry[field]).name).write_bytes(source.extractfile(prefix + entry[field]).read())
-                if "runner" in entry:
-                    for field in ["runner", "stdout"]:
-                        (consumer / Path(entry[field]).name).write_bytes(source.extractfile(prefix + entry[field]).read())
-                expected = source.extractfile(prefix + entry["stdout"]).read()
-                (consumer / "cabal.project").write_text(
-                    f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n")
-                target = "exe:" + entry["executable"]
-                run(["cabal", "build", target, "--offline"], consumer)
-                executable = subprocess.check_output(
-                    ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True).strip()
-                command = (["python3", str(consumer / Path(entry["runner"]).name), "--program", executable]
-                           if "runner" in entry else [executable])
-                result = subprocess.run(command, cwd=directory, check=True, capture_output=True)
-                if result.stdout != expected or result.stderr:
-                    raise ValueError("Archive example produced unexpected output")
+                check_example_consumer(entry, consumer, f"../archives/libtmux-haskell-{version}.tar.gz",
+                                       lambda path: source.extractfile(prefix + path).read())
                 if index == 0:
                     check_haddock_examples(consumer, doctest_modules, doctests)
-            check_public_mutations(source, prefix, directory, version)
+            check_installation_pin(directory, examples)
+            check_public_commands(source, prefix, directory, version)
         print("PASS: archive members, documented public example and Haddock examples")
 
 
-def check_public_mutations(source, prefix, directory, version):
-    """Run the public mutation cases against the archived library, without its internals."""
+def check_installation_pin(directory, examples):
+    """Run current programs against the source revision offered for installation."""
+    project = (ROOT / next(entry["vcs_project"] for entry in examples if entry["id"] == "capture-graph")).read_text()
+    pins = re.findall(r"^\s+tag:\s+([a-f0-9]{40})\s*$", project, re.MULTILINE)
+    if len(pins) != 1:
+        raise ValueError("Installation must name one reviewed source revision")
+    pin = pins[0]
+    run(["git", "merge-base", "--is-ancestor", pin, "HEAD"], ROOT)
+    manifest = subprocess.check_output(["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, text=True)
+    version = re.search(r"^version:\s*(\S+)", manifest, re.MULTILINE).group(1)
+    name = f"libtmux-haskell-{version}"
+    archive = directory / (name + ".tar.gz")
+    archive.write_bytes(subprocess.check_output(
+        ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin], cwd=ROOT))
+    for entry in examples:
+        consumer = directory / ("installation-" + entry["id"])
+        consumer.mkdir()
+        check_example_consumer(entry, consumer, "../" + archive.name,
+                               lambda path: (ROOT / path).read_bytes())
+    print("PASS: documented installation pin supports the current public examples")
+
+
+def check_example_consumer(entry, consumer, library, read_source):
+    for field in ["source", "package", *(["runner", "stdout"] if "runner" in entry else [])]:
+        (consumer / Path(entry[field]).name).write_bytes(read_source(entry[field]))
+    (consumer / "cabal.project").write_text(
+        f"packages: . {library}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n")
+    target = "exe:" + entry["executable"]
+    run(["cabal", "build", target, "--offline"], consumer)
+    executable = subprocess.check_output(
+        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True).strip()
+    command = (["python3", str(consumer / Path(entry["runner"]).name), "--program", executable]
+               if "runner" in entry else [executable])
+    if "fixture_panes" in entry:
+        command += ["--expected-panes", str(entry["fixture_panes"])]
+    result = subprocess.run(command, cwd=consumer.parent, check=True, capture_output=True)
+    if result.stdout != read_source(entry["stdout"]) or result.stderr:
+        raise ValueError("Installed example produced unexpected output")
+
+
+def check_public_commands(source, prefix, directory, version):
+    """Run public command cases against the archive, without private imports."""
     consumer = directory / "public-mutations"
     consumer.mkdir()
     for origin, name in [
         ("test/integration/PublicMutationTest.hs", "PublicMutationTest.hs"),
+        ("test/integration/PublicCreationTest.hs", "PublicCreationTest.hs"),
         ("test-support/Fixture.hs", "Fixture.hs"),
         ("test-support/fixture-watch.c", "fixture-watch.c"),
     ]:
@@ -82,9 +109,10 @@ def check_public_mutations(source, prefix, directory, version):
     (consumer / "Main.hs").write_text(
         "module Main (main) where\n"
         "import PublicMutationTest qualified\n"
-        "import Test.Tasty (defaultMain)\n"
+        "import PublicCreationTest qualified\n"
+        "import Test.Tasty (defaultMain, testGroup)\n"
         "main :: IO ()\n"
-        "main = defaultMain PublicMutationTest.tests\n"
+        "main = defaultMain (testGroup \"installed public commands\" [PublicMutationTest.tests, PublicCreationTest.tests])\n"
     )
     (consumer / "cabal.project").write_text(
         f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"
@@ -95,14 +123,14 @@ def check_public_mutations(source, prefix, directory, version):
         "build-type: Simple\n"
         "executable public-mutations-consumer\n"
         "  main-is: Main.hs\n"
-        "  other-modules: Fixture PublicMutationTest\n"
+        "  other-modules: Fixture PublicMutationTest PublicCreationTest\n"
         "  default-language: GHC2024\n"
         "  default-extensions: OverloadedRecordDot OverloadedStrings DuplicateRecordFields NoFieldSelectors\n"
         "  ghc-options: -Wall -Werror -threaded\n"
         "  c-sources: fixture-watch.c\n"
         "  cc-options: -std=c11 -Wall -Wextra\n"
         "  build-depends: base >=4.22 && <4.23, async, bytestring, directory, filepath,\n"
-        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, typed-process, unix\n"
+        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, text, typed-process, unix\n"
     )
     target = "exe:public-mutations-consumer"
     run(["cabal", "build", target, "--offline"], consumer)
@@ -112,7 +140,7 @@ def check_public_mutations(source, prefix, directory, version):
     result = subprocess.run([executable, "--hide-successes"], cwd=directory, check=True, capture_output=True)
     if result.stderr:
         raise ValueError("Installed public mutation consumer emitted stderr")
-    print("PASS: installed public mutation behavior and recovery")
+    print("PASS: installed public command behavior and recovery")
 
 
 def haddock_examples(source):
