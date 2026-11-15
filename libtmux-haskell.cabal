@@ -72,8 +72,6 @@ extra-source-files:
   cbits/process.h
   test-support/process-child.c
   test-support/process-policy.c
-  docs/contracts/python.json
-  docs/contracts/traceability.json
   scripts/check-types
   scripts/check_sdist.py
   scripts/release.py

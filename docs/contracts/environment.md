@@ -2,7 +2,7 @@
 
 Proposed contract; implementation and release-matrix qualification are pending.
 These five operations cover the environment mixin in the pinned Python
-inventory. They operate on an explicit global or exact-session scope through
+source. They operate on an explicit global or exact-session scope through
 the client generation. None selects a current session implicitly.
 
 An environment name is a nonempty byte string without NUL or `=`. A value is
