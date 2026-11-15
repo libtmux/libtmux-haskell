@@ -7,9 +7,10 @@ description:
   physical windows, panes and contextual links with ordinary Haskell values.
   Scoped handles retain cleanup ownership after cancellation and failure.
   Typed queries inspect captured values with explicit cardinality and ordering.
-  Rename sessions and physical windows and set pane titles with checked
-  references, bounded deadlines and correlated recovery. Creation, pane input
-  and events remain under development.
+  Create detached sessions, rename sessions and physical windows, and set
+  pane titles with checked references, bounded deadlines and correlated
+  recovery. Additional window and pane commands and events remain under
+  development.
   .
   See the <https://libtmux.org/en/haskell/ documentation> for installation
   and examples, and the
