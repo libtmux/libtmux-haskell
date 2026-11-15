@@ -79,8 +79,8 @@ detached pane %0 belongs to @0
 
 ## Use the installed package
 
-To build the program on its own, use this project, which pins the release that
-provides the shared Runtime API, and its package file:
+To build the program on its own, use this project, which pins the source
+revision that provides the shared Runtime API, and its package file:
 
 <!-- example-project: shared-runtime -->
 ```cabal

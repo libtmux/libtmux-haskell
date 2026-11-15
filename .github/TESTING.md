@@ -258,7 +258,8 @@ These cases qualify [private physical ownership](../docs/contracts/process.md#pr
 not logical dispatch integration, operation deadlines or daemon-job completion.
 
 The [Runtime read cases](../test/integration/RuntimeReadTest.hs) bind fixed
-framed PID and stable-version observations to logical admission and physical ownership. They cover
+framed PID and version observations, whether a release, candidate or
+development build, to logical admission and physical ownership. They cover
 foreign-context refusal, queued and active deadlines, cancelled outcome waiters,
 late native refusal, constructor handoff, interpreter recovery and cleanup-fork
 refusal. Actual PID receipts exercise inspection's protected child and parent

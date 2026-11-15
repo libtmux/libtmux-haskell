@@ -11,7 +11,7 @@ import Test.QuickCheck
 
 spec :: Spec
 spec = describe "tmux version admission" $ do
-  it "admits the complete tested range including intermediate releases" $
+  it "admits 3.3a through 3.8, including intermediate releases" $
     mapM_ (\raw -> fmap renderVersion (parseVersion raw >>= requireSupported) `shouldBe` Right raw)
       ["3.3a", "3.4", "3.5", "3.5a", "3.6", "3.6a", "3.6b", "3.7", "3.7a", "3.7b", "3.7c", "3.8"]
   it "admits newer numeric releases and patch letters without an upper bound" $
