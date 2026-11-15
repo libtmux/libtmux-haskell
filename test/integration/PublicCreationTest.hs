@@ -76,7 +76,8 @@ tests = testGroup "public session creation"
                   session = Text.unpack (Tmux.renderSessionId (Tmux.sessionId created.session))
               (code, path, errors) <- Fixture.command fixture ["display-message", "-p", "-t", pane, "-F", "#{pane_start_path}"]
               (code, errors) @?= (ExitSuccess, "")
-              Lazy.toStrict path @?= cwd <> "\n"
+              -- pane_start_path keeps tmux's literal relative-path suffix.
+              Lazy.toStrict path @?= cwd <> "/.\n"
               (envCode, values, envErrors) <- Fixture.command fixture ["show-environment", "-t", session]
               (envCode, envErrors) @?= (ExitSuccess, "")
               filter ("HOME=" `Bytes.isPrefixOf`) (Bytes.lines (Lazy.toStrict values)) @?=
