@@ -1,8 +1,8 @@
 # Behavior inventory
 
-The supported tmux range is 3.3a through 3.8 inclusive. CI tests those two
-endpoints. Notes below also retain source-pinned research on plain 3.3; that
-historical evidence does not change the supported floor.
+The supported tmux floor is 3.3a, with no upper bound. CI tests 3.3a and 3.8,
+the newest release tested. Notes below also retain source-pinned research on
+plain 3.3; that historical evidence does not change the supported floor.
 
 [python.json](python.json) maps 216 source declarations to proposed native
 contracts: the 201 research rows plus 15 inherited option, hook and observed
