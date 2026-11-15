@@ -5,7 +5,8 @@
 -- whose primary success response is empty. The Runtime owns the client until
 -- normal exit; later hook output remains opaque to this decoder.
 module LibTmux.Internal.Command
-  ( Mutation (..), ArgumentError (..), compileMutation
+  ( Mutation (..), ProgramCommand (..), ProgramIdentity (..), ArgumentError (..), compileMutation
+  , compileProgramMutation, decodeProgramReply
   , MutationReply (..), ReplyError (..), decodeControlReply
   , SessionReceipt (..), SessionCreationReply (..)
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
@@ -38,6 +39,27 @@ data Mutation
   | RenameWindow !Id.WindowId !TmuxText
   | SetPaneTitle !Id.PaneId !Text
   deriving stock (Eq, Show)
+
+-- | Closed application operations. Payload-bearing capture is saved separately
+-- so terminal bytes cannot impersonate a control reply or an after-hook.
+data ProgramCommand
+  = ProgramRemain !Id.PaneId
+  | ProgramRemainFormat !Id.PaneId
+  | ProgramHistory !Id.SessionId !Int
+  | ProgramGeometry !Id.WindowId !Int !Int
+  | ProgramCapture !Id.PaneId !ByteString !Int !Int !Int
+  | ProgramSave !ByteString !ByteString
+  | ProgramDeleteBuffer !ByteString
+  | ProgramInputBytes !Id.PaneId !ByteString
+  | ProgramKillSession !Id.SessionId
+  | ProgramGuarded !ProgramIdentity !ByteString !Bool !ProgramCommand
+  deriving stock Eq
+
+data ProgramIdentity = ProgramIdentity !Id.SessionId !Id.WindowId !Id.PaneId !Integer
+  deriving stock (Eq, Show)
+
+instance Show ProgramCommand where
+  show _ = "ProgramCommand"
 
 -- | Refusal before a command tail exists, carrying its catalogue field key.
 data ArgumentError
@@ -292,6 +314,102 @@ mutationParts mutation = case mutation of
   SetPaneTitle ident text ->
     (["select-pane", "-t", Utf8.encodeUtf8 (Id.renderPaneId ident), "-T"],
      Utf8.encodeUtf8 text, Field.fieldKey Field.PaneTitle)
+
+-- The claim and effect run in one daemon queue. Nonce acknowledgements belong
+-- to the composite operation; arbitrary hook output is not parsed as framing.
+compileProgramMutation :: Frame.Nonce -> ProgramCommand -> Either ArgumentError [ByteString]
+compileProgramMutation nonce command = do
+  values <- case command of
+    ProgramGuarded identity client live action -> do
+      unless (validClient client) (Left (InvalidOperand "program" "invalid witness client"))
+      actionArgs <- case action of
+        ProgramCapture {} -> compileProgramCommand action
+        ProgramInputBytes {} -> compileProgramCommand action
+        ProgramKillSession {} -> compileProgramCommand action
+        _ -> Left (InvalidOperand "program" "unsupported guarded action")
+      let ProgramIdentity session window pane pid = identity
+          equals key value = "#{==:#{" <> key <> "}," <> value <> "}"
+          both left right = "#{&&:" <> left <> "," <> right <> "}"
+          process = if live then both (equals "pane_dead" "0") (equals "pane_pid" (Ascii.pack (show pid)))
+            else "#{||:#{pane_dead}," <> equals "pane_pid" (Ascii.pack (show pid)) <> "}"
+          captureBounds = case action of
+            ProgramCapture _ _ _ columns rows ->
+              [equals "pane_width" (Ascii.pack (show columns)), equals "pane_height" (Ascii.pack (show rows))]
+            _ -> []
+          condition = foldr1 both
+            ([ equals "session_id" (Utf8.encodeUtf8 (Id.renderSessionId session))
+            , equals "window_id" (Utf8.encodeUtf8 (Id.renderWindowId window))
+            , equals "pane_id" (Utf8.encodeUtf8 (Id.renderPaneId pane))
+            , equals "session_windows" "1", equals "window_panes" "1", process ] <> captureBounds)
+          failure = renderArguments ["has-session", "-t", "=libtmux-refused-" <> Frame.recordMarker nonce]
+      pure (["wait-for", "-E", "-w", client, "pane-created", ";"]
+        <> acknowledge "claimed" <> [";", "if-shell", "-F", "-t",
+          Utf8.encodeUtf8 (Id.renderSessionId session) <> ":", condition, renderArguments actionArgs, failure]
+        <> [";"] <> acknowledge "applied")
+    _ -> (<> ([";"] <> acknowledge "applied")) <$> compileProgramCommand command
+  checkProgramCost values
+  pure values
+  where
+    acknowledge stage = ["display-message", "-p", Frame.scalarFormat nonce stage]
+    validClient value = case Bytes.stripPrefix "client-" value of
+      Just digits -> not (Bytes.null digits) && Bytes.length digits <= 10
+        && Bytes.all (\byte -> byte >= 48 && byte <= 57) digits
+      Nothing -> False
+    renderArguments = Bytes.intercalate " " . map (\value -> "'" <> Bytes.intercalate "'\\''" (Bytes.split 39 value) <> "'")
+
+-- | Interpret one fully drained composite Program command. A claimed failure
+-- proves that the old witness was consumed, not that its later action ran.
+decodeProgramReply :: Bool -> Frame.Nonce -> Maybe Int -> ByteString -> ByteString -> Either ReplyError MutationReply
+decodeProgramReply guarded nonce exit output errors
+  | Bytes.length output > 1048576 || Bytes.length errors > 1048576 = Left ReplyTooLarge
+  | otherwise = case exit of
+      Just 0 | Bytes.null errors && applied && (not guarded || claimed) -> Right Applied
+      Just 1 | applied || guarded && claimed -> Right (AppliedWithErrors diagnostic)
+      Just 1 -> Right (Rejected diagnostic)
+      _ -> Left UnexpectedReply
+  where
+    claimedLine = Frame.scalarFormat nonce "claimed"
+    appliedLine = Frame.scalarFormat nonce "applied"
+    outputLines = Ascii.lines output
+    claimed = length (filter (== claimedLine) outputLines) == 1
+    applied = Bytes.isSuffixOf (appliedLine <> "\n") output
+      && length (filter (== appliedLine) outputLines) == 1
+    diagnostic = Bytes.copy (Bytes.take 4096 (errors <> output))
+
+compileProgramCommand :: ProgramCommand -> Either ArgumentError [ByteString]
+compileProgramCommand command = do
+  let values = case command of
+        ProgramRemain pane -> ["set-option", "-p", "-t", paneBytes pane, "remain-on-exit", "on"]
+        ProgramRemainFormat pane -> ["set-option", "-p", "-t", paneBytes pane, "remain-on-exit-format", ""]
+        ProgramHistory session count -> ["set-option", "-t", sessionBytes session, "history-limit", number count]
+        ProgramGeometry window columns rows ->
+          ["resize-window", "-t", Utf8.encodeUtf8 (Id.renderWindowId window), "-x", number columns, "-y", number rows]
+        ProgramCapture pane buffer count _ _ ->
+          ["capture-pane", "-J", "-S", number (negate count), "-t", paneBytes pane, "-b", buffer]
+        ProgramSave buffer path -> ["save-buffer", "-b", buffer, protectFormat path]
+        ProgramDeleteBuffer buffer -> ["delete-buffer", "-b", buffer]
+        ProgramInputBytes pane bytes -> ["send-keys", "-H", "-t", paneBytes pane]
+          <> map hexByte (Bytes.unpack bytes)
+        ProgramKillSession session -> ["kill-session", "-t", sessionBytes session]
+        ProgramGuarded {} -> []
+  case command of ProgramGuarded {} -> Left (InvalidOperand "program" "nested lifetime gate"); _ -> pure ()
+  let lowered = map protectSeparator values
+  checkProgramCost lowered
+  pure lowered
+  where
+    paneBytes = Utf8.encodeUtf8 . Id.renderPaneId
+    sessionBytes = Utf8.encodeUtf8 . Id.renderSessionId
+    number = Ascii.pack . show
+    hexByte value = let alphabet = "0123456789abcdef" in
+      Bytes.pack [Bytes.index alphabet (fromIntegral value `div` 16),
+        Bytes.index alphabet (fromIntegral value `mod` 16)]
+
+checkProgramCost :: [ByteString] -> Either ArgumentError ()
+checkProgramCost values = do
+  when (length (take 4091 values) > 4090) (Left (EncodedCommandTooLarge "program"))
+  mapM_ (\value -> when (Bytes.elem 0 value) (Left (NulOperand "program"))) values
+  when (sum (map ((+ 1) . toInteger . Bytes.length) values) > commandLimitBytes)
+    (Left (EncodedCommandTooLarge "program"))
 
 checkCost :: Text -> ByteString -> Integer -> Integer -> Either ArgumentError ()
 checkCost key value minimumCost expansionCost

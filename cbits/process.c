@@ -4,11 +4,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <poll.h>
 #include <spawn.h>
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/wait.h>
+#include <sys/inotify.h>
 #include <unistd.h>
 
 typedef int (*spawn_call)(int *, const char *, const posix_spawn_file_actions_t *,
@@ -167,4 +170,91 @@ int libtmux_process_wait(int fd, int *result) {
 
 int libtmux_process_signal(int fd, int value) {
     return syscall(SYS_pidfd_send_signal, fd, value, NULL, 0) < 0 ? errno : 0;
+}
+
+int libtmux_process_group_probe(void) {
+    int fd = syscall(SYS_pidfd_open, getpid(), 0);
+    if (fd < 0) return errno;
+    /* Linux 6.9 flag 4; signal zero has no effect. A nonleader has no PGID. */
+    int rc = syscall(SYS_pidfd_send_signal, fd, 0, NULL, 4) < 0 ? errno : 0;
+    close(fd);
+    return rc == ESRCH ? 0 : rc;
+}
+
+int libtmux_process_group_open(int pid) {
+    int fd = syscall(SYS_pidfd_open, pid, 0);
+    if (fd < 0) return -errno;
+    if (getpgid(pid) != pid || getsid(pid) != pid) {
+        close(fd);
+        return -EINVAL;
+    }
+    return fd;
+}
+
+int libtmux_process_group_signal(int fd, int value) {
+    return syscall(SYS_pidfd_send_signal, fd, value, NULL, 4) < 0 ? errno : 0;
+}
+
+int libtmux_process_pidfd_open(int pid) {
+    int fd = syscall(SYS_pidfd_open, pid, 0);
+    return fd < 0 ? -errno : fd;
+}
+
+int libtmux_process_pidfd_ready(int fd) {
+    struct pollfd value = {.fd = fd, .events = POLLIN};
+    int rc = poll(&value, 1, 0);
+    if (rc < 0) return -errno;
+    if (value.revents & (POLLERR | POLLNVAL)) return -EBADF;
+    return !!(value.revents & POLLIN);
+}
+
+int libtmux_program_watch(const char *directory) {
+    int fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (fd < 0) return -errno;
+    if (inotify_add_watch(fd, directory, IN_CLOSE_WRITE | IN_DELETE_SELF) < 0) {
+        int error = errno;
+        close(fd);
+        return -error;
+    }
+    return fd;
+}
+
+int libtmux_program_watch_read(int fd) {
+    char bytes[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+    ssize_t size = read(fd, bytes, sizeof bytes);
+    if (size < 0) return errno == EAGAIN ? 0 : -errno;
+    for (char *next = bytes; next < bytes + size;) {
+        struct inotify_event *event = (struct inotify_event *)next;
+        if (event->mask & (IN_Q_OVERFLOW | IN_DELETE_SELF | IN_IGNORED)) return -EIO;
+        if (event->mask & IN_CLOSE_WRITE) return 1;
+        next += sizeof *event + event->len;
+    }
+    return 0;
+}
+
+static int program_peer(const char *path, int expected_pid) {
+    struct sockaddr_un address = {.sun_family = AF_UNIX};
+    struct ucred peer;
+    socklen_t size = sizeof peer;
+    if (strlen(path) >= sizeof address.sun_path) return -ENAMETOOLONG;
+    strcpy(address.sun_path, path);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -errno;
+    int rc = connect(fd, (struct sockaddr *)&address, sizeof address);
+    if (rc == 0) rc = getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &size);
+    int error = rc < 0 ? errno : peer.pid != expected_pid || peer.uid != geteuid() ? EPERM : 0;
+    close(fd);
+    return -error;
+}
+
+int libtmux_program_daemon_watch(const char *path, int expected_pid) {
+    int rc = program_peer(path, expected_pid);
+    if (rc < 0) return rc;
+    int fd = syscall(SYS_pidfd_open, expected_pid, 0);
+    if (fd < 0) return -errno;
+    /* A new connection authenticates the still-live endpoint after acquisition. */
+    rc = program_peer(path, expected_pid);
+    if (rc == 0 && syscall(SYS_pidfd_send_signal, fd, 0, NULL, 0) < 0) rc = -errno;
+    if (rc < 0) { close(fd); return rc; }
+    return fd;
 }
