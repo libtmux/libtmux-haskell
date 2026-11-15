@@ -32,11 +32,15 @@ known creation receipts and uncertainty without automatic replay or rebinding.
 
 The [private command protocol](../../internal/LibTmux/Internal/Command.hs)
 decodes the IDs printed by a detached `new-session -P -F` through an existing
-pin. A nonce binds the daemon PID, session, initial window/pane and link index
-to one response. Primary rejection, successful creation, following hook
+pin. A nonce correlates the daemon PID, session, initial window/pane and link
+index with one response; see the [framing contract](framing.md) for its limits.
+Primary rejection, successful creation, following hook
 errors and incomplete native completion remain distinct. The decoder retains
 a complete receipt when the supplied following bytes are truncated or exceed
 its limits. Capturing that evidence during IO still needs its own journal.
+Complete primary rejection takes precedence over receipt-shaped diagnostic
+lines. An unknown outcome retains matching prefix evidence without establishing
+successful creation.
 
 The [owned-server cases](../../test/integration/CommandIntegrationTest.hs)
 cover duplicate names, control-shaped hook output and deletion after the

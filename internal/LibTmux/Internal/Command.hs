@@ -67,6 +67,8 @@ instance NFData SessionReceipt where
 
 -- | Primary completion and historical creation evidence are independent.
 -- Unknown completion retains a receipt only when its entire nonce line passed.
+-- A complete primary rejection takes precedence over receipt-shaped diagnostics.
+-- An unknown outcome's receipt carries prefix evidence without completion.
 data SessionCreationReply
   = SessionCreated !SessionReceipt
   | SessionCreatedWithErrors !SessionReceipt !ByteString
@@ -102,14 +104,15 @@ decodeSessionCreation nonce exit output errors
           Just tailBytes | exit == Just 0 -> SessionCreated receipt
                          | exit == Just 1 && not (Bytes.null tailBytes) ->
                              SessionCreatedWithErrors receipt (Bytes.copy tailBytes)
-          _ -> unknown UnexpectedReply
-      Nothing -> case initial of
+          _ -> rejected
+      Nothing -> rejected
+  where
+    rejected = case initial of
         Just (stamp, body) | exit == Just 1
           , Just packet <- stripControlExit body
           , Right (diagnostic, following) <- errorBody stamp packet ->
               SessionCreationRejected (Bytes.copy (diagnostic <> following))
         _ -> unknown UnexpectedReply
-  where
     initial = do
       (header, body) <- boundedLine 64 output
       stamp <- either (const Nothing) Just (guardStamp header)

@@ -22,17 +22,18 @@ tests = testGroup "session creation receipts"
       C.decodeSessionCreation nonce (Just 0) (packet line "") "" @?= C.SessionCreated expected
   , testCase "a rejected command cannot acquire receipts from its diagnostic" $ do
       nonce <- require (F.parseNonce token)
-      let diagnostic = "duplicate session: bad\n" <> line
-      C.decodeSessionCreation nonce (Just 1) (begin <> diagnostic <> failed <> footer) "" @?=
-        C.SessionCreationRejected diagnostic
+      forM_ [line, line <> "following diagnostic\n", "duplicate session: bad\n" <> line] $ \diagnostic ->
+        C.decodeSessionCreation nonce (Just 1) (begin <> diagnostic <> failed <> footer) "" @?=
+          C.SessionCreationRejected diagnostic
   , testCase "following hooks cannot replace the primary receipt" $ do
       nonce <- require (F.parseNonce token)
       expected <- receipt
-      let hook = "%begin 1794000000 28 0\n" <> framed "200 $9 @8 %7 6" <>
+      let guardedHook = "%begin 1794000000 28 0\n" <> framed "200 $9 @8 %7 6" <>
             "%error 1794000000 28 0\n"
-      C.decodeSessionCreation nonce (Just 0) (packet line hook) "" @?= C.SessionCreated expected
-      C.decodeSessionCreation nonce (Just 1) (packet line hook) "" @?=
-        C.SessionCreatedWithErrors expected hook
+      forM_ [guardedHook, "plain hook output\n"] $ \hook -> do
+        C.decodeSessionCreation nonce (Just 0) (packet line hook) "" @?= C.SessionCreated expected
+        C.decodeSessionCreation nonce (Just 1) (packet line hook) "" @?=
+          C.SessionCreatedWithErrors expected hook
   , testCase "incomplete native completion preserves a proved historical receipt" $ do
       nonce <- require (F.parseNonce token)
       expected <- receipt
@@ -44,6 +45,9 @@ tests = testGroup "session creation receipts"
       forM_ [Nothing, Just 1, Just 2] $ \status ->
         C.decodeSessionCreation nonce status (packet line "") "" @?= unknown
       C.decodeSessionCreation nonce (Just 0) (packet line "") "unexpected stderr" @?= unknown
+      forM_ [begin <> Bytes.init line, begin <> Bytes.take 100 line] $ \output ->
+        C.decodeSessionCreation nonce Nothing output "" @?=
+          C.SessionCreationUnknown Nothing C.UnexpectedReply
   , testCase "native fields require canonical bounded domains and the matching nonce" $ do
       nonce <- require (F.parseNonce token)
       let unknown = C.SessionCreationUnknown Nothing C.UnexpectedReply
