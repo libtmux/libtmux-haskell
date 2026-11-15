@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Refuse encoded mutation commands over tmux's native message limit before
+  admission. Oversized names no longer leave an uncertain operation waiting
+  for explicit recovery.
+
 ## 0.0.1.0
 
 ### Added
