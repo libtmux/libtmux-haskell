@@ -2,8 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- Create detached sessions through `createSession` and `createSessionWith`.
+  `LibTmux.Creation` supplies session options and historical created session,
+  window and pane references. ([#19])
+- Retain observed creation identities through cancellation, deadlines and
+  failing hooks. `CreationRecovery` exposes the original operation and
+  generation, receipt inspection and explicit cleanup recovery without
+  replaying creation. ([#19])
+
 ### Fixed
 
+- Report a refused native creation context as `InvalidConfiguration` before
+  admission. Oversized options raise `InvalidMutationArgument`. ([#19])
 - Refuse encoded mutation commands over tmux's native message limit before
   admission. Oversized names no longer leave an uncertain operation waiting
   for explicit recovery.
@@ -84,6 +96,7 @@
   servers and source-archive consumers. ([#2])
 
 [#2]: https://github.com/libtmux/libtmux-haskell/pull/2
+[#19]: https://github.com/libtmux/libtmux-haskell/pull/19
 [#10]: https://github.com/libtmux/libtmux-haskell/pull/10
 [#11]: https://github.com/libtmux/libtmux-haskell/pull/11
 [#4]: https://github.com/libtmux/libtmux-haskell/pull/4
