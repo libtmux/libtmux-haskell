@@ -73,6 +73,8 @@ compileSessionCreation nonce options = do
              literal "environment" (osBytes key <> "=" <> osBytes value)]) options.environment
         <> [literal "session.creation" "--"] <> process
       rawCost = sum [toInteger (Bytes.length value) + 1 | (_, _, value) <- arguments]
+  -- The native argv also holds the executable, -u, -N, -S, socket and -C.
+  when (length arguments + 6 > 4096) (Left (EncodedCommandTooLarge "session.creation"))
   when (rawCost > commandLimitBytes) (Left (EncodedCommandTooLarge "session.creation"))
   mapM_ (\(key, _, value) -> when (Bytes.elem 0 value) (Left (NulOperand key))) arguments
   mapM_ (\(key, _) -> when (Os.null key || Bytes.elem 61 (osBytes key))
