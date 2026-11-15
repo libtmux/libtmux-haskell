@@ -89,34 +89,54 @@ $ cabal test unit --offline --test-show-details=direct
 The two runners have separate executables. Read [testing](TESTING.md)
 for specification authoring, generation/shrinking, and suite assembly.
 
-Python helper tests use pytest fixtures, `tmp_path` and `monkeypatch`. Provision
-pytest before timed checks, then run the release guards without network access:
+Support scripts live in `scripts/<name>/` with a README and `tests/`, as
+[SCRIPTS.md](SCRIPTS.md) requires. They are typed Python 3.12 or newer with
+PEP 723 inline metadata, run with `uv run`. The root `pyproject.toml` and
+`uv.lock` pin pytest, ruff and ty for these checks only; the Haskell package
+has no Python dependency. They need uv 0.9.17 or newer, which reads the
+relative `exclude-newer` cutoff in `pyproject.toml`. Provision them before
+timed checks:
 
 ```console
-$ uv run --no-project \
-    --offline \
-    --with pytest==9.2.0 \
-    python -B -m pytest scripts/test_release.py
+$ uv sync --locked
 ```
 
-Check the example catalogue, displayed source/output and local guide links
-without compiling or contacting a server:
+Check formatting, lint rules and types for every script:
 
 ```console
-$ python3 scripts/check_docs.py
+$ uv run --locked ruff format --check scripts
 ```
 
-Verify that deliberate documentation defects are rejected:
+```console
+$ uv run --locked ruff check scripts
+```
 
 ```console
-$ python3 scripts/test_check_docs.py
+$ uv run --locked ty check scripts
+```
+
+Run every script's fixture-based tests and doctests without network access.
+The build-cache tests copy the tmux executable named by `CI_TEST_TMUX` and only
+run `tmux -V` on it; they start no server:
+
+```console
+$ CI_TEST_TMUX="$(command -v tmux)" uv run --locked --offline pytest
+```
+
+Check the example catalogue, displayed source/output and local guide links in
+the working tree, without compiling or contacting a server. The `pytest`
+command above runs this check's regression cases, which introduce deliberate
+documentation defects into disposable copies:
+
+```console
+$ uv run scripts/check_docs/check_docs.py
 ```
 
 Run the exact documented checkout commands after provisioning. The outer
 check compares exit status, stdout and stderr:
 
 ```console
-$ python3 scripts/check_docs.py --run
+$ uv run scripts/check_docs/check_docs.py --run
 ```
 
 Run the outer integration tier against an explicitly selected tmux binary.
@@ -129,12 +149,12 @@ $ LIBTMUX_TEST_TMUX="$(command -v tmux)" cabal test integration \
 ```
 
 Check public record access, scalar types and typed queries with positive and
-intended negative compilation cases in the outer tier. The runner requires
-Bash and `jq`, and checks the specific GHC diagnostic rather than accepting
-any compiler failure:
+intended negative compilation cases in the outer tier. The check builds the
+library, then verifies the specific GHC diagnostic rather than accepting any
+compiler failure:
 
 ```console
-$ scripts/check-types
+$ uv run scripts/check_types/check_types.py
 ```
 
 Check package metadata:
@@ -159,7 +179,7 @@ Prepare the separate native browser copy and its local-link/digest report.
 The output directory must be new:
 
 ```console
-$ python3 scripts/prepare_haddock.py \
+$ uv run scripts/prepare_haddock/prepare_haddock.py \
     dist-newstyle/haddock-prepared \
     --build-plan dist-newstyle/cache/plan.json
 ```
@@ -168,7 +188,7 @@ The [API guide](../docs/api.md) explains the navigation corrections and
 qualification limits. Run the fast artifact regression suite:
 
 ```console
-$ python3 -B scripts/test_prepare_haddock.py
+$ uv run --locked --offline pytest scripts/prepare_haddock
 ```
 
 Create the source archive for isolated consumer verification:
@@ -181,7 +201,7 @@ Build and execute every declared consumer and the public Haddock examples
 from the archive outside the checkout:
 
 ```console
-$ python3 scripts/check_sdist.py
+$ uv run scripts/check_sdist/check_sdist.py
 ```
 
 Check whitespace in tracked changes:
@@ -237,7 +257,9 @@ with a one-line reason and place them in the outer loop. Fix an over-budget
 loop before adding tests; do not raise its budget.
 
 Benchmarks are a separate tier: under ten minutes per run and under one
-hour for a sweep. Reduce workload sizes when needed.
+hour for a sweep. Reduce workload sizes when needed. The capture benchmark
+driver is `scripts/capture_benchmark`; [performance](../docs/performance.md)
+describes how to run it.
 
 ## Testing tmux behavior
 

@@ -30,11 +30,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Release guard regressions
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.0'
+          enable-cache: false
+      - name: Script format, lint and type checks
         run: |
-          python3 -m venv "$RUNNER_TEMP/release-tests"
-          "$RUNNER_TEMP/release-tests/bin/pip" install --disable-pip-version-check pytest==9.2.0
-          "$RUNNER_TEMP/release-tests/bin/python" -B -m pytest -q -p no:cacheprovider scripts/test_release.py
+          uv sync --locked
+          uv run --locked ruff format --check scripts
+          uv run --locked ruff check scripts
+          uv run --locked ty check scripts
       - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
@@ -59,7 +64,7 @@ jobs:
           cabal build all --enable-documentation --only-dependencies
       - name: Identify example tmux build
         id: tmux
-        run: python3 scripts/ci_tmux.py plan 3.8
+        run: uv run scripts/ci_tmux/ci_tmux.py plan 3.8
       - name: Restore example tmux build
         id: tmux-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -69,7 +74,11 @@ jobs:
       - name: Validate example tmux build
         env:
           CACHE_HIT: ${{ steps.tmux-cache.outputs.cache-hit }}
-        run: python3 scripts/ci_tmux.py prepare 3.8
+        run: uv run scripts/ci_tmux/ci_tmux.py prepare 3.8
+      - name: Script tests and doctests
+        env:
+          CI_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
+        run: uv run --locked pytest
       - name: Record toolchain and dependency plan
         run: |
           ghc --numeric-version
@@ -83,21 +92,15 @@ jobs:
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
         run: |
-          python3 scripts/test_check_docs.py
-          "$RUNNER_TEMP/release-tests/bin/python" -B -m pytest -q -p no:cacheprovider examples/capture-graph/test_run.py examples/capture-graph/test_readme.py
-          python3 scripts/check_docs.py --run
+          uv run --locked pytest -q examples/capture-graph/test_run.py examples/capture-graph/test_readme.py
+          uv run scripts/check_docs/check_docs.py --run
       - name: Public type contracts
-        run: scripts/check-types
-      - name: Build-cache regressions
-        env:
-          CI_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
-        run: python3 -B scripts/test_ci_tmux.py
+        run: uv run scripts/check_types/check_types.py
       - name: Metadata and API documentation
         run: |
           cabal check
           cabal haddock lib:libtmux-haskell --offline
-          python3 -B scripts/test_prepare_haddock.py
-          python3 scripts/prepare_haddock.py \
+          uv run scripts/prepare_haddock/prepare_haddock.py \
             dist-newstyle/haddock-prepared \
             --build-plan dist-newstyle/cache/plan.json
       - name: Preserve checked native documentation
@@ -111,9 +114,9 @@ jobs:
       - name: Isolated source-archive consumer
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
-        run: python3 scripts/check_sdist.py
+        run: uv run scripts/check_sdist/check_sdist.py
       - name: Prepare checked Hackage archives
-        run: python3 scripts/release.py prepare
+        run: uv run scripts/release/release.py prepare
       - name: Retain source and Haddock release archives
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -129,7 +132,7 @@ jobs:
           key: ${{ steps.tmux.outputs.key }}
       - name: Required exact tmux releases
         id: matrix
-        run: python3 scripts/ci_tmux.py matrix
+        run: uv run scripts/ci_tmux/ci_tmux.py matrix
       - name: Save Haskell dependencies
         if: steps.dependencies.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -185,11 +188,15 @@ jobs:
         run: |
           cabal update
           cabal build test:integration --only-dependencies
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.0'
+          enable-cache: false
       - name: Identify source and build environment
         id: tmux
         env:
           TMUX_VERSION: ${{ matrix.tmux }}
-        run: python3 scripts/ci_tmux.py plan "$TMUX_VERSION"
+        run: uv run scripts/ci_tmux/ci_tmux.py plan "$TMUX_VERSION"
       - name: Restore tmux build
         id: cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -200,7 +207,7 @@ jobs:
         env:
           TMUX_VERSION: ${{ matrix.tmux }}
           CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
-        run: python3 scripts/ci_tmux.py prepare "$TMUX_VERSION"
+        run: uv run scripts/ci_tmux/ci_tmux.py prepare "$TMUX_VERSION"
       - name: Owned fixture, scalar, pin and process integration tests
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
