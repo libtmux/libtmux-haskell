@@ -13,7 +13,7 @@ import Data.Text qualified as Text
 import LibTmux.Version (TmuxVersion, parseVersion, renderVersion)
 
 -- | Individually discoverable operations on an owned application.
-data Capability = ProgramExecution | ProgramInput | ProgramScreen | ProgramExit
+data Capability = ManagedPrograms | ProgramInput | RenderedScreen | ProgramExitEvents
   deriving stock (Eq, Ord, Enum, Bounded, Show)
 
 -- | One canonical feature requirement. Below 'since', the operation refuses.
@@ -56,10 +56,10 @@ capabilityInfo selected = CapabilityInfo selected key minimumVersion names nativ
   where
     minimumVersion = either (error . show) id (parseVersion "3.8")
     (key, names, native) = case selected of
-      ProgramExecution -> ("program-execution", ["withProgram", "runProgram"], ["new-session", "respawn-pane", "wait-for -E"])
+      ManagedPrograms -> ("program-execution", ["withProgram", "runProgram", "terminateProgram"], ["new-session", "wait-for -E"])
       ProgramInput -> ("program-input", ["sendProgramInput"], ["send-keys -H", "wait-for -E"])
-      ProgramScreen -> ("program-screen", ["readProgramScreen"], ["capture-pane", "save-buffer", "wait-for -E"])
-      ProgramExit -> ("program-exit", ["waitProgram"], ["wait-for -E", "pane-died"])
+      RenderedScreen -> ("program-screen", ["readProgramScreen"], ["capture-pane", "save-buffer", "wait-for -E"])
+      ProgramExitEvents -> ("program-exit", ["waitProgram", "waitProgramFor"], ["wait-for -E", "pane-died"])
 
 -- | Whether this complete operation is available. This is a version check;
 -- host process-group support and endpoint liveness are checked separately.

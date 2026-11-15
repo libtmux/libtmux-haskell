@@ -446,3 +446,22 @@ progress ticket = readTVar ticket.counts
 -- These are observed bytes; they establish no native or daemon completion.
 stdoutPrefix :: Ticket -> STM ByteString
 stdoutPrefix ticket = readTVar ticket.prefix
+
+-- | Identify this native client while retaining its pidfd borrow. This does
+-- not infer an application's PID from a command client's process identity.
+clientProcessId :: Ticket -> IO Integer
+clientProcessId ticket = do
+  atomically (readTMVar ticket.launchEvidence) >>= \case
+    LaunchRefused problem -> throwIO problem
+    NativeStarted -> pure ()
+  withMVar ticket.signalLock $ \_ -> mask_ $ do
+    child <- readIORef ticket.child >>= maybe (throwIO Aborted) pure
+    owned <- Set.member (fromIntegral child.pidfd) <$> readIORef ticket.descriptors
+    unless owned (throwIO Aborted)
+    pid <- N.pidfdPid child.pidfd
+    alive <- N.cSignal child.pidfd 0
+    unless (alive == 0) (throwIO Aborted)
+    pure pid
+
+ticketOwned :: Pool -> Ticket -> STM Bool
+ticketOwned pool ticket = Map.member ticket.key <$> readTVar pool.jobs

@@ -25,6 +25,8 @@ module LibTmux.Server
   , MutationOptions (..), defaultMutationOptions
     -- * Detached session creation
   , createSession, createSessionWith
+    -- * Owned terminal applications
+  , withProgram, runProgram
     -- * Rename and title
   , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
     -- * Shared ownership
@@ -74,6 +76,8 @@ import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Mutation (MutationRecovery)
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
+import LibTmux.Internal.Program qualified as Program
+import LibTmux.Program (Program, ProgramOptions, ProgramResult)
 import LibTmux.Internal.Runtime (ReadRecovery (..))
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler (Operation, Status (..), Stage (..), Outcome (..))
@@ -207,6 +211,29 @@ serverGeneration (Server _ handle _ _ _) = Pin.pinGeneration (R.serverPin handle
 -- replacement daemon; subsequent operations fail through that same pin.
 serverCapabilities :: Server -> Capabilities.Capabilities
 serverCapabilities (Server _ _ _ _ available) = available
+
+-- | Run a literal executable/argv application in a new owned session on this
+-- daemon, then terminate its group and remove its resources. The callback may
+-- send input and observe bounded rendered output. Cancellation of this owning
+-- scope initiates bounded cleanup; cancellation of 'LibTmux.Program.waitProgram'
+-- alone does not. Async exceptions retain their original class.
+--
+-- tmux 3.8 and Linux 6.9 pidfd process-group signaling are required and checked
+-- before application effects. A separately owned pin and bounded native Runtime
+-- keep t'LibTmux.Program.ProgramRecovery' usable after this Server closes. The
+-- borrowed daemon and its other sessions remain running. See "LibTmux.Program"
+-- for the initial contract and explicit limits.
+withProgram :: Server -> ProgramOptions -> (Program -> IO a) -> IO a
+withProgram (Server _ handle executable _ available) =
+  Program.withOwnedProgram handle executable available
+
+-- | Wait for a terminal application, capture its bounded final rendered output,
+-- and clean up before returning a detached result. Cancellation initiates bounded
+-- cleanup. Set 'LibTmux.Program.executionTimeout' for an owning setup/observation
+-- deadline; cleanup has a separate budget. Without it there is no total limit.
+runProgram :: Server -> ProgramOptions -> IO ProgramResult
+runProgram (Server _ handle executable _ available) =
+  Program.runOwnedProgram handle executable available
 
 -- | Per-command deadline, checked before admission. Start from
 -- 'defaultMutationOptions' and update 'timeout' in seconds.

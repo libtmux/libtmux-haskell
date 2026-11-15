@@ -10,6 +10,7 @@ import Control.Monad (unless, when)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
+import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Unsafe qualified as UnsafeBytes
 import Data.Word (Word8)
 import Foreign.C.Error (Errno (..), eAGAIN, eCHILD, eINTR, errnoToIOError)
@@ -21,6 +22,7 @@ import Foreign.Marshal.Utils (withMany)
 import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import Foreign.Storable (sizeOf)
 import GHC.Conc (closeFdWith, threadWaitWrite)
+import System.IO (IOMode (ReadMode), withBinaryFile)
 import System.Posix.IO.ByteString qualified as Posix
 import System.Posix.Types (Fd (..))
 
@@ -34,6 +36,43 @@ foreign import ccall safe "libtmux_process_wait" cWait :: WaitCall
 foreign import ccall unsafe "libtmux_process_read" cRead :: CInt -> Ptr a -> CSize -> IO CInt
 foreign import ccall unsafe "libtmux_process_write" cWrite :: CInt -> Ptr a -> CSize -> IO CInt
 foreign import ccall unsafe "libtmux_process_signal" cSignal :: CInt -> CInt -> IO CInt
+foreign import ccall unsafe "libtmux_process_group_probe" groupSignalSupport :: IO CInt
+foreign import ccall unsafe "libtmux_process_group_open" cOpenGroup :: CInt -> IO CInt
+foreign import ccall unsafe "libtmux_process_group_signal" signalGroup :: CInt -> CInt -> IO CInt
+foreign import ccall unsafe "libtmux_process_pidfd_open" cOpenPid :: CInt -> IO CInt
+foreign import ccall unsafe "libtmux_process_pidfd_ready" cPidReady :: CInt -> IO CInt
+foreign import ccall unsafe "libtmux_program_watch" cWatch :: CString -> IO CInt
+foreign import ccall unsafe "libtmux_program_watch_read" watchRead :: CInt -> IO CInt
+foreign import ccall unsafe "libtmux_program_daemon_watch" cDaemonWatch :: CString -> CInt -> IO CInt
+
+daemonWatch :: ByteString -> Integer -> IO CInt
+daemonWatch path pid = Bytes.useAsCString path $ \socket ->
+  cDaemonWatch socket (fromInteger pid) >>= \fd -> if fd < 0 then raise (-fd) else pure fd
+
+openPid :: CInt -> IO CInt
+openPid pid = cOpenPid pid >>= \fd -> if fd < 0 then raise (-fd) else pure fd
+
+pidReady :: CInt -> IO Bool
+pidReady fd = cPidReady fd >>= \value -> if value < 0 then raise (-value) else pure (value == 1)
+
+watchDirectory :: ByteString -> IO CInt
+watchDirectory path = Bytes.useAsCString path $ \name ->
+  cWatch name >>= \fd -> if fd < 0 then raise (-fd) else pure fd
+
+-- | Read an owned pidfd's kernel identity. The caller holds its descriptor
+-- lifetime lock and checks liveness; a dead/reaped identity is refused.
+pidfdPid :: CInt -> IO Integer
+pidfdPid fd = do
+  bytes <- withBinaryFile ("/proc/self/fdinfo/" <> show fd) ReadMode (\file -> Bytes.hGet file 4096)
+  case [value | line <- Bytes.split 10 bytes, Just raw <- [Bytes.stripPrefix "Pid:\t" line],
+         Just (value, rest) <- [Ascii.readInteger raw], Bytes.null rest, value > 0] of
+    [value] -> pure value
+    _ -> throwIO (InvalidInput "pidfd has no live process identity")
+
+-- | Acquire an application group while its bootstrap is blocked. The caller
+-- must additionally validate its per-run token before releasing that gate.
+openGroup :: CInt -> IO CInt
+openGroup pid = cOpenGroup pid >>= \fd -> if fd < 0 then raise (-fd) else pure fd
 
 data Feature = AtomicPidfdSpawn | ChildDirectory | CloseUnrelatedDescriptors
   deriving stock (Eq, Show)
