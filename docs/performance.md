@@ -18,7 +18,7 @@ Run the three workloads against a tmux binary. The output directory must not
 exist yet; it receives raw CSV samples, host context and a JSON summary:
 
 ```console
-$ python3 bench/capture.py \
+$ uv run scripts/capture_benchmark/capture_benchmark.py \
     --tmux "$(command -v tmux)" \
     --output .cache/capture-benchmark
 ```
@@ -28,9 +28,9 @@ minimum supported tmux, 3.3a, and the newest release tested, 3.8. Benchmarks
 stay out of routine tests.
 
 - The [Haskell harness](../bench/Capture.hs) uses the public API.
-- The [fixture driver](../bench/capture.py) owns a foreground daemon, tracks
-  each pane with a pidfd, and checks graph sizes and exits before accepting a
-  result.
+- The [fixture driver](../scripts/capture_benchmark/capture_benchmark.py) owns
+  a foreground daemon, tracks each pane with a pidfd, and checks graph sizes and
+  exits before accepting a result.
 - Medium and large cases link three physical windows across sessions. Every
   case keeps two appearances of the initial window.
 
@@ -39,7 +39,11 @@ stay out of routine tests.
 The [recorded samples](../bench/results/capture-2026-11-08.json) date from
 2026-11-08: default `-O1` build, one RTS capability, a four-core CPU quota and
 an 8 GiB memory limit on a shared Linux host. The file records the compiler
-and Cabal versions. All six cases completed setup and teardown.
+and Cabal versions. Its `harnessSha256` entry for `bench/capture.py` hashes the
+fixture driver at its path then; the driver now lives at
+[`scripts/capture_benchmark`](../scripts/capture_benchmark/capture_benchmark.py)
+and has changed, so that hash does not match the current file. All six cases
+completed setup and teardown.
 
 | tmux | Sessions | Physical windows | Physical panes | Median capture | Maximum capture |
 | --- | ---: | ---: | ---: | ---: | ---: |

@@ -10,7 +10,7 @@ public status is below and in the [implementation guide](../status.md).
 
 `LibTmux.Server`, `LibTmux.Snapshot` and `LibTmux.Snapshot.Fixture` are public.
 Installed consumers exercise capture, detached navigation and validated
-offline construction. The [source-archive checker](../../scripts/check_sdist.py)
+offline construction. The [source-archive checker](../../scripts/check_sdist/check_sdist.py)
 executes every declared program and the scalar Haddock examples.
 
 The common Server scope has cases for callback/cleanup double failure,

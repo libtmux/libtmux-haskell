@@ -21,8 +21,9 @@
         "job": "checks",
         "step": "Isolated source-archive consumer",
         "command": [
-          "python3",
-          "scripts/check_sdist.py"
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
         ],
         "checks": [
           "exit-status",
@@ -51,8 +52,9 @@
         "job": "checks",
         "step": "Isolated source-archive consumer",
         "command": [
-          "python3",
-          "scripts/check_sdist.py"
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
         ],
         "checks": [
           "exit-status",
@@ -82,8 +84,9 @@
         "job": "checks",
         "step": "Isolated source-archive consumer",
         "command": [
-          "python3",
-          "scripts/check_sdist.py"
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
         ],
         "checks": [
           "exit-status",
@@ -116,8 +119,9 @@
         "job": "checks",
         "step": "Isolated source-archive consumer",
         "command": [
-          "python3",
-          "scripts/check_sdist.py"
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
         ],
         "checks": [
           "exit-status",
@@ -150,8 +154,9 @@
         "job": "checks",
         "step": "Isolated source-archive consumer",
         "command": [
-          "python3",
-          "scripts/check_sdist.py"
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
         ],
         "checks": [
           "exit-status",
@@ -184,8 +189,9 @@
         "job": "checks",
         "step": "Isolated source-archive consumer",
         "command": [
-          "python3",
-          "scripts/check_sdist.py"
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
         ],
         "checks": [
           "exit-status",
@@ -220,8 +226,9 @@
         "job": "checks",
         "step": "Isolated source-archive consumer",
         "command": [
-          "python3",
-          "scripts/check_sdist.py"
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
         ],
         "checks": [
           "exit-status",
