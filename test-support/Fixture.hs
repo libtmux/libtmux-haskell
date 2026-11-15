@@ -64,11 +64,10 @@ withFixtureAt checkpoint action = do
             config = setEnv environment . setStdin nullStream . setStdout nullStream $
               proc executable ["-D", "-S", socket, "-f", "/dev/null"]
         withProcessTerm config $ \daemon -> do
-          readiness <- timeout 1000000 (race (waitExitCode daemon) (waitReady watch))
+          readiness <- race (waitExitCode daemon) (waitReady watch)
           case readiness of
-            Just (Right ()) -> pure ()
-            Just (Left code) -> throwIO (userError ("fixture daemon exited at startup: " <> show code))
-            Nothing -> throwIO (userError "fixture socket did not become ready within one second")
+            Right () -> pure ()
+            Left code -> throwIO (userError ("fixture daemon exited at startup: " <> show code))
           let fixture = Fixture {directory, socket, executable, environment, daemon, paneExitObserved}
           checkpoint SocketReady fixture
           (code, output, errors) <- command fixture
