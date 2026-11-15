@@ -9,6 +9,7 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef
+import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
 import LibTmux.Id qualified as Id
@@ -186,6 +187,28 @@ tests = testGroup "owned Runtime creation"
         atomically (R.inspect runtime) >>= \report -> do
           length report.readWorkers @?= 0
           length report.unresolved @?= 0
+
+  , testCase "oversized creation refuses before admission or a worker fork" $ do
+      forks <- newIORef (0 :: Int)
+      let fork :: P.Fork
+          fork worker = do
+            atomicModifyIORef' forks (\count -> (count + 1, ()))
+            P.normalFork worker
+      withRuntime fork $ \runtime server fixture -> do
+        beforeForks <- readIORef forks
+        beforeUsage <- atomically (R.usage runtime)
+        let options = (optionsFor "large") {C.name = Just (Text.replicate 20000 "x")}
+        tryWithContext @SomeException
+          (R.createSessionWith P.defaultHooks 1000000 runtime server (launchContext fixture) options) >>= \case
+            Left (ExceptionWithContext annotations problem) -> do
+              case fromException @R.ReadError problem of
+                Just (R.InvalidCommandOperands (C.EncodedCommandTooLarge "session.creation")) -> pure ()
+                _ -> assertFailure (show problem)
+              assertBool "invalid input acquired an operation receipt"
+                (null (Context.getExceptionAnnotations @R.ReadReceipt annotations))
+            Right _ -> assertFailure "oversized creation was admitted"
+        readIORef forks >>= (@?= beforeForks)
+        atomically (R.usage runtime) >>= (@?= beforeUsage)
 
   , testCase "a foreign Runtime cannot admit creation through another owner" $
       withRuntime P.normalFork $ \runtime server fixture ->

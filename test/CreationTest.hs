@@ -3,6 +3,7 @@ module CreationTest (tests) where
 import Control.Monad (forM_)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
+import Data.Text qualified as Text
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Frame qualified as F
@@ -67,6 +68,15 @@ tests = testGroup "session creation receipts"
         Left (C.InvalidOperand "environment" "variable count exceeds 4096")
       compile C.defaultSessionOptions {C.windowName = Just (Label.fromBytes (Bytes.replicate 10000 35))} @?=
         Left (C.EncodedCommandTooLarge "session.creation")
+  , testCase "creation fits the native command message including argv terminators" $ do
+      nonce <- require (F.parseNonce token)
+      base <- require (C.compileSessionCreation nonce C.defaultSessionOptions)
+      let cost = sum . map ((+ 1) . Bytes.length)
+          available = 16364 - cost base - 4
+          compile count = cost <$> C.compileSessionCreation nonce
+            C.defaultSessionOptions {C.name = Just (Text.replicate count "x")}
+      compile available @?= Right 16364
+      compile (available + 1) @?= Left (C.EncodedCommandTooLarge "session.creation")
   , testCase "creation prints only nonce-qualified native identities" $ do
       nonce <- require (F.parseNonce token)
       C.sessionCreationFormat nonce @?= F.scalarFormat nonce

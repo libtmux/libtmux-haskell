@@ -55,14 +55,14 @@ tests = testGroup "typed mutation arguments"
       C.compileMutation (C.SetPaneTitle pane "x\NULy") @?= Left (C.NulOperand "pane.title")
   , testCase "the encoded limit counts terminators, hash expansions and the final escape" $ do
       window <- require (Id.parseWindowId "@7")
-      let compile bytes = C.compileMutation (C.RenameWindow window (Label.fromBytes bytes))
-      fmap (map Bytes.length) (compile (Bytes.replicate 65512 120)) @?= Right [13, 2, 2, 2, 65512]
-      compile (Bytes.replicate 65513 120) @?= Left (C.EncodedCommandTooLarge "window.name")
-      fmap (map Bytes.length) (compile (Bytes.replicate 9358 35)) @?= Right [13, 2, 2, 2, 65506]
-      compile (Bytes.replicate 9359 35) @?= Left (C.EncodedCommandTooLarge "window.name")
-      fmap (map Bytes.length) (compile (Bytes.replicate 9358 35 <> "xxxx;")) @?= Right [13, 2, 2, 2, 65512]
-      compile (Bytes.replicate 9358 35 <> "xxxxx;") @?= Left (C.EncodedCommandTooLarge "window.name")
-      compile (Bytes.replicate 65511 120 <> ";") @?= Left (C.EncodedCommandTooLarge "window.name")
+      let compile bytes = map Bytes.length <$> C.compileMutation (C.RenameWindow window (Label.fromBytes bytes))
+      compile (Bytes.replicate 16340 120) @?= Right [13, 2, 2, 2, 16340]
+      compile (Bytes.replicate 16341 120) @?= Left (C.EncodedCommandTooLarge "window.name")
+      compile (Bytes.replicate 2334 35) @?= Right [13, 2, 2, 2, 16338]
+      compile (Bytes.replicate 2335 35) @?= Left (C.EncodedCommandTooLarge "window.name")
+      compile (Bytes.replicate 2334 35 <> ";") @?= Right [13, 2, 2, 2, 16340]
+      compile (Bytes.replicate 2334 35 <> "x;") @?= Left (C.EncodedCommandTooLarge "window.name")
+      compile (Bytes.replicate 16339 120 <> ";") @?= Left (C.EncodedCommandTooLarge "window.name")
 
   , testCase "closed control replies separate primary and following failures" $ do
       let begin = "%begin 1794000000 27 0\n"
