@@ -14,7 +14,7 @@ import System.Posix.Types (Fd)
 import System.Timeout (timeout)
 import System.Directory (doesDirectoryExist)
 import System.Exit (ExitCode (..))
-import System.IO.Error (ioeGetErrorString, isDoesNotExistError)
+import System.IO.Error (ioeGetErrorString, ioeGetLocation, isDoesNotExistError, isPermissionError)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
@@ -103,6 +103,11 @@ tests = testGroup "owned tmux fixture"
       refused <- try @IOException (withDaemon retirement "missing" "/nonexistent/fixture-daemon" [] [] (\_ -> assertFailure "ran"))
       either (assertBool "refusal is not a missing file" . isDoesNotExistError) (const (assertFailure "a missing program started")) refused
       withDaemon retirement "exits at once" "/bin/false" [] [] awaitDaemon >>= (@?= ExitFailure 1)
+  , testCase "a waiter blocked on a daemon is released with its status by the retirement" $
+      withDaemon retirement "sleeper" "/bin/sleep" ["30"] [] $ \sleeper ->
+        withAsync (awaitDaemon sleeper) $ \waiter -> do
+          retireDaemon sleeper
+          timeout 2000000 (wait waiter) >>= (@?= Just (ExitFailure (-15)))
   , testCase "retirement signals only a live child, escalates to SIGKILL, and keeps one that survives" retireBounds
   ]
 
@@ -132,8 +137,12 @@ retireBounds = do
   fmap (either ioeGetErrorString (const "returned")) failing @?= Just "body failed"
   clean <- timeout 2000000 (try @IOException (sleeper stuck (\_ -> pure ())))
   fmap (either ioeGetErrorString (const "returned")) clean @?= Just "fixture daemon did not exit: sleeper"
+  -- A refused delivery is raised with its cause instead of waiting out the bound; the child stays owned.
+  refused <- try @IOException (sleeper quick {deliver = \_ _ -> pure 1} (\_ -> pure ()))
+  either (\problem -> (isPermissionError problem, ioeGetLocation problem)) (const (False, "returned")) refused
+    @?= (True, "fixture daemon signal")
   owners <- retainedDaemons
-  map (.label) owners @?= ["sleeper", "sleeper"]
+  map (.label) owners @?= ["sleeper", "sleeper", "sleeper"]
   -- End them for real through the retained pidfds.
   for_ owners $ \owner -> retireDaemon owner {how = quick}
   retainedDaemons >>= (@?= []) . map (.label)

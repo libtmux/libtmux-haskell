@@ -108,8 +108,16 @@ static long long monotonic_ms(void)
     return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
 }
 
+/* A private close-on-exec duplicate of `fd`, or -1. It shares the open file description, so it
+ * stays valid and means the same process however the original is closed afterwards. */
+int libtmux_fixture_dup(int fd)
+{
+    return fcntl(fd, F_DUPFD_CLOEXEC, 0);
+}
+
 /* One when the pidfd is readable (its process ended), zero when `milliseconds`
- * pass first, otherwise -errno. A signal restarts the wait against the same deadline. */
+ * pass first, otherwise -errno; a descriptor that is not open is -EBADF, not readable.
+ * A signal restarts the wait against the same deadline. */
 int libtmux_fixture_pidfd_wait(int pidfd, int milliseconds)
 {
     long long deadline = monotonic_ms() + milliseconds;
@@ -117,6 +125,8 @@ int libtmux_fixture_pidfd_wait(int pidfd, int milliseconds)
         struct pollfd entry = {.fd = pidfd, .events = POLLIN, .revents = 0};
         long long left = deadline - monotonic_ms();
         int rc = poll(&entry, 1, left > 0 ? (int)left : 0);
+        if (rc > 0 && (entry.revents & POLLNVAL))
+            return -EBADF;
         if (rc >= 0)
             return rc > 0;
         if (errno != EINTR)

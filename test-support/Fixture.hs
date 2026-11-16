@@ -6,8 +6,8 @@ module Fixture
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Concurrent.MVar (MVar, modifyMVarMasked, modifyMVarMasked_, newMVar, withMVarMasked)
-import Control.Exception (IOException, SomeException, bracket, finally, mask, mask_, onException, throwIO, try, uninterruptibleMask_)
-import Control.Monad (unless, void)
+import Control.Exception (SomeException, bracket, finally, mask, mask_, onException, throwIO, try, uninterruptibleMask_)
+import Control.Monad (unless, when)
 import Data.ByteString qualified as Strict
 import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy (ByteString)
@@ -15,7 +15,7 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as Bytes
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
-import Foreign.C.Error (Errno (..), errnoToIOError, throwErrnoIfMinus1)
+import Foreign.C.Error (Errno (..), eSRCH, errnoToIOError, throwErrnoIfMinus1)
 import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Alloc (alloca)
@@ -58,6 +58,9 @@ foreign import ccall unsafe "libtmux_fixture_pidfd_signal"
 
 foreign import ccall unsafe "libtmux_fixture_reap"
   reapPidfd :: CInt -> Ptr CInt -> IO CInt
+
+foreign import ccall unsafe "libtmux_fixture_dup"
+  duplicatePidfd :: CInt -> IO CInt
 
 -- Safe: it blocks this OS thread for at most the bound, and no exception interrupts it.
 foreign import ccall safe "libtmux_fixture_pidfd_wait"
@@ -112,7 +115,8 @@ data Daemon = Daemon
   , how :: !Retirement
   }
 
--- | The pidfd is read, signaled and closed only under the 'phase' lock, in this order.
+-- | The pidfd is signaled, read for status and closed only under the 'phase' lock, in this order.
+-- A wait never uses it directly: it waits on a private duplicate ('withCopy').
 data Phase = Live | Reaped !ExitCode | Closed !ExitCode
 
 -- | How long each retirement step waits, and how a signal is delivered. The kernel offers no
@@ -162,7 +166,6 @@ retireDaemon daemon = uninterruptibleMask_ $ do
   (end >> closeDaemon daemon) `onException` keep
   atomicModifyIORef' retained (\kept -> (filter ((/= daemon.phase) . (.phase)) kept, ()))
   where
-    Fd raw = daemon.pidfd
     end = pollDaemon daemon >>= \case
       Just _ -> pure ()
       Nothing -> do
@@ -174,7 +177,9 @@ retireDaemon daemon = uninterruptibleMask_ $ do
             ended <- endedWithin
             unless ended (ioError (userError ("fixture daemon did not exit: " <> daemon.label)))
     endedWithin = do
-      _ <- waitPidfd raw (fromIntegral (daemon.how.step `div` 1000))
+      withCopy daemon $ \(Fd copy) -> do
+        rc <- waitPidfd copy (fromIntegral (daemon.how.step `div` 1000))
+        when (rc < 0) (ioError (errnoToIOError "fixture daemon wait" (Errno (negate rc)) Nothing (Just daemon.label)))
       (/= Nothing) <$> pollDaemon daemon
     keep = do
       atomicModifyIORef' retained (\kept -> (daemon : filter ((/= daemon.phase) . (.phase)) kept, ()))
@@ -205,16 +210,33 @@ awaitDaemon :: Daemon -> IO ExitCode
 awaitDaemon daemon = pollDaemon daemon >>= \case
   Just code -> pure code
   Nothing -> do
-    -- A concurrent retirement closes the pidfd, which ends this wait with an error.
-    woken <- try @IOException (threadWaitRead daemon.pidfd)
+    withCopy daemon threadWaitRead
     pollDaemon daemon >>= \case
       Just code -> pure code
-      Nothing -> either throwIO (\() -> ioError (userError ("fixture daemon pidfd readable without a status: " <> daemon.label))) woken
+      Nothing -> ioError (userError ("fixture daemon pidfd readable without a status: " <> daemon.label))
 
+-- | A failed delivery is an error: waiting out the bound would hide its cause. ESRCH is not one,
+-- because the status read that follows reports a child something else collected.
 signalDaemon :: Daemon -> CInt -> IO ()
 signalDaemon daemon number = withMVarMasked daemon.phase $ \case
-  Live -> void (daemon.how.deliver daemon.pidfd number)
+  Live -> do
+    rc <- daemon.how.deliver daemon.pidfd number
+    unless (rc == 0 || Errno rc == eSRCH) $
+      ioError (errnoToIOError "fixture daemon signal" (Errno rc) Nothing (Just daemon.label))
   _ -> pure ()
+
+-- | Run a wait on a private close-on-exec duplicate of the pidfd. The duplicate is made under the
+-- lock, while the state proves the original open, so a concurrent retirement that closes the
+-- original cannot hand the wait a recycled descriptor number. A cached status needs no wait.
+withCopy :: Daemon -> (Fd -> IO ()) -> IO ()
+withCopy daemon wait = bracket copy discard (maybe (pure ()) wait)
+  where
+    copy = withMVarMasked daemon.phase $ \case
+      Live -> do
+        let Fd raw = daemon.pidfd
+        Just . Fd <$> throwErrnoIfMinus1 "fixture daemon pidfd duplicate" (duplicatePidfd raw)
+      _ -> pure Nothing
+    discard = maybe (pure ()) (closeFdWith closeFd)
 
 closeDaemon :: Daemon -> IO ()
 closeDaemon daemon = modifyMVarMasked_ daemon.phase $ \case
