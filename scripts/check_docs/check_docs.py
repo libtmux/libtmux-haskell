@@ -19,6 +19,10 @@ MARKER = re.compile(
     re.DOTALL,
 )
 
+# Seconds a documented command may run unless its catalogue entry sets "timeout".
+DEFAULT_TIMEOUT = 120
+MAX_TIMEOUT = 900
+
 type Entry = dict[str, Any]
 
 
@@ -52,12 +56,18 @@ def check_catalogue(root: Path) -> dict[str, Entry]:
     examples: dict[str, Entry] = {}
     paths = {"source", "package", "project", "vcs_project", "stdout"}
     fields = paths | {"id", "executable", "capability", "command", "verification"}
+    optional = {"runner", "fixture_panes", "timeout"}
     for entry in entries:
+        keys = set(entry)
         if (
-            set(entry) not in [fields, fields | {"runner"}, fields | {"runner", "fixture_panes"}]
+            not fields <= keys <= fields | optional
+            or ("fixture_panes" in keys and "runner" not in keys)
             or entry["id"] in examples
         ):
             raise ValueError("Invalid or duplicate example entry")
+        timeout = entry.get("timeout", DEFAULT_TIMEOUT)
+        if type(timeout) is not int or not 1 <= timeout <= MAX_TIMEOUT:
+            raise ValueError(f"Invalid example timeout for {entry['id']}")
         for key in paths | ({"runner"} if "runner" in entry else set()):
             path = Path(entry[key])
             if path.is_absolute() or ".." in path.parts or not (root / path).is_file():
@@ -173,6 +183,28 @@ def check(root: Path = ROOT) -> list[Entry]:
     return list(examples.values())
 
 
+def run_entry(entry: Entry, root: Path = ROOT) -> None:
+    """Run one documented command and compare its exit status, stdout and stderr.
+
+    The command is stopped after the entry's ``timeout`` seconds, or ``DEFAULT_TIMEOUT``.
+    """
+    timeout = entry.get("timeout", DEFAULT_TIMEOUT)
+    try:
+        result = subprocess.run(
+            entry["command"], cwd=root, capture_output=True, check=False, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(
+            f"Documented command timed out after {timeout} s: {entry['id']}"
+        ) from error
+    expected = (root / entry["stdout"]).read_bytes()
+    if result.returncode or result.stdout != expected or result.stderr:
+        raise ValueError(
+            f"Documented command failed: {entry['id']}; exit={result.returncode}; "
+            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
+
+
 def main() -> None:
     """Run the checks, and with ``--run`` execute each documented command."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -183,13 +215,7 @@ def main() -> None:
     entries = check()
     if args.run:
         for entry in entries:
-            result = subprocess.run(entry["command"], cwd=ROOT, capture_output=True, check=False)
-            expected = (ROOT / entry["stdout"]).read_bytes()
-            if result.returncode or result.stdout != expected or result.stderr:
-                raise ValueError(
-                    f"Documented command failed: {entry['id']}; exit={result.returncode}; "
-                    f"stdout={result.stdout!r}; stderr={result.stderr!r}"
-                )
+            run_entry(entry)
     print(f"PASS: {len(entries)} declared example, displayed assets and local guide links")
 
 

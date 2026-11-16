@@ -24,6 +24,9 @@ named by `LIBTMUX_TEST_TMUX` for the examples and public command tests.
 $ uv run scripts/check_sdist/check_sdist.py
 ```
 
+Each `cabal`, `git` and example run has a time limit, so a hang fails with the
+command's name; an example's own run follows its catalogue `timeout`.
+
 The tests cover the archive-member and Haddock-example checks, which need no
 build:
 

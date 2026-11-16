@@ -22,6 +22,11 @@ ROOT = Path(__file__).resolve().parents[2]
 PLAN = Path("dist-newstyle/cache/plan.json")
 PACKAGES = ("base", "text", "libtmux-haskell")
 
+# Seconds. Every external command is bounded so a hang fails with the command's
+# name before the job's time limit stops it without one.
+COMPILE = 120
+BUILD = 600
+
 
 @dataclass(frozen=True)
 class Rejection:
@@ -157,8 +162,9 @@ def compile_source(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            timeout=COMPILE,
         )
-    return subprocess.run(command, cwd=root, check=False, text=True)
+    return subprocess.run(command, cwd=root, check=False, text=True, timeout=COMPILE)
 
 
 def check_accepted(root: Path, units: list[str], scratch: Path, source: str) -> None:
@@ -180,7 +186,10 @@ def check_rejected(root: Path, units: list[str], scratch: Path, case: Rejection)
 def check(root: Path = ROOT) -> str:
     """Build the library, run every case and return the pass summary."""
     subprocess.run(
-        ["cabal", "build", "lib:libtmux-haskell", "--offline", "-v0"], cwd=root, check=True
+        ["cabal", "build", "lib:libtmux-haskell", "--offline", "-v0"],
+        cwd=root,
+        check=True,
+        timeout=BUILD,
     )
     units = library_units(json.loads((root / PLAN).read_text()))
     with tempfile.TemporaryDirectory(prefix="libtmux-haskell-types-") as directory:
@@ -199,7 +208,13 @@ def main() -> None:
     """Run the checks and exit nonzero on the first failed case."""
     try:
         print(check())
-    except (TypeCheckError, subprocess.CalledProcessError, OSError, ValueError) as error:
+    except (
+        TypeCheckError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        OSError,
+        ValueError,
+    ) as error:
         sys.exit(f"Type check failed: {error}")
 
 
