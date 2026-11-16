@@ -11,7 +11,7 @@
 -- Linux 6.9 process-group pidfd signaling and a local daemon in the same PID
 -- and filesystem namespaces are required. The selected 'bootstrapShell' must
 -- provide Bash dynamic descriptors, timed reads and execfail. It defaults to
--- @/bin/bash@ and is probed before application creation. The gate read uses
+-- @\/bin\/bash@ and is probed before application creation. The gate read uses
 -- 'commandTimeout', capped at one second, and its descriptor closes before exec.
 -- The host operation and tmux 3.8 capability are checked before application
 -- resources are created.
