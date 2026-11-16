@@ -16,6 +16,10 @@ The command builds `lib:libtmux-haskell` offline, then reads
 `dist-newstyle/cache/plan.json` to pass GHC the exact `base`, `text` and
 library units. It needs Cabal and a provisioned dependency store.
 
+Each `ghc` check has the `QUICK` limit and the library build the `BUILD`
+limit from [bounded](../bounded/README.md), which also records what they sit
+above: the whole command took 9 s in CI.
+
 A new case file must be listed in `ACCEPTED` or `REJECTED`; the tests fail on
 an unlisted file.
 

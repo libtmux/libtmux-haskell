@@ -477,8 +477,8 @@ def commands(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
         seen.append((command[0], kwargs.get("timeout")))
         return "program"
 
-    monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(subprocess, "check_output", output)
+    monkeypatch.setattr(check_sdist, "bounded_run", run)
+    monkeypatch.setattr(check_sdist, "output", output)
     return seen
 
 

@@ -1,0 +1,10 @@
+@media screen {
+  html.libtmux-source-scroll body > pre { overflow-x: auto; }
+}
+span.annot span.annottext[popover] {
+  position: fixed; inset: 0 auto auto 0; margin: 0; box-sizing: border-box;
+  width: max-content; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+  white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto;
+}
+span.annot span.annottext[popover]:not(:popover-open) { display: none; }
+span.annot span.annottext[popover]:popover-open { display: block; }

@@ -17,24 +17,21 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "libtmux-haskell.cabal"
-for sibling in ("check_docs", "prepare_haddock"):
+for sibling in ("bounded", "check_docs", "prepare_haddock"):
     sys.path.append(str(SCRIPTS / sibling))
 
+from bounded import BUILD, QUICK, output
+from bounded import run as bounded_run
 from check_docs import DEFAULT_TIMEOUT, Entry
 from check_docs import check as check_docs
 from prepare_haddock import cabal_modules
 
 type Example = tuple[str, str]
 
-# Seconds. Every external command is bounded so a hang fails with the command's
-# name before the job's time limit stops it without one.
-QUICK = 120
-BUILD = 600
-
 
 def run(args: list[str], cwd: Path, timeout: int = QUICK) -> None:
     """Run a command that must succeed within ``timeout`` seconds."""
-    subprocess.run(args, cwd=cwd, check=True, timeout=timeout)
+    bounded_run(args, cwd=cwd, check=True, timeout=timeout)
 
 
 def archived(source: tarfile.TarFile, name: str) -> bytes:
@@ -140,21 +137,20 @@ def check_installation_pin(directory: Path, examples: list[Entry]) -> None:
     capture = next(entry for entry in examples if entry["id"] == "capture-graph")
     pin = installation_pin((ROOT / capture["vcs_project"]).read_text())
     run(["git", "merge-base", "--is-ancestor", pin, "HEAD"], ROOT)
-    manifest = subprocess.check_output(
-        ["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, text=True, timeout=QUICK
-    )
+    manifest = output(["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, timeout=QUICK)
     match = re.search(r"^version:\s*(\S+)", manifest, re.MULTILINE)
     if match is None:
         raise ValueError("The pinned Cabal manifest has no version")
     name = f"libtmux-haskell-{match.group(1)}"
     archive = directory / (name + ".tar.gz")
-    archive.write_bytes(
-        subprocess.check_output(
-            ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin],
-            cwd=ROOT,
-            timeout=QUICK,
-        )
+    tarball = bounded_run(
+        ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin],
+        cwd=ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+        timeout=QUICK,
     )
+    archive.write_bytes(tarball.stdout)
     check_example_consumers(
         examples,
         directory / "installation",
@@ -190,8 +186,8 @@ def check_example_consumers(
     targets = ["exe:" + entry["executable"] for entry in examples] + list(extra.values())
     run(["cabal", "build", *targets, "--offline"], workspace, BUILD)
     executables = {
-        target: subprocess.check_output(
-            ["cabal", "list-bin", target, "--offline"], cwd=workspace, text=True, timeout=QUICK
+        target: output(
+            ["cabal", "list-bin", target, "--offline"], cwd=workspace, timeout=QUICK
         ).strip()
         for target in targets
     }
@@ -206,7 +202,7 @@ def check_example(
     """Run one built example and compare its exit status, stdout and stderr with the catalogue."""
     command = (
         [
-            "python3",
+            sys.executable,
             str(workspace / entry["id"] / Path(entry["runner"]).name),
             "--program",
             executable,
@@ -216,7 +212,7 @@ def check_example(
     )
     if "fixture_panes" in entry:
         command += ["--expected-panes", str(entry["fixture_panes"])]
-    result = subprocess.run(
+    result = bounded_run(
         command,
         cwd=workspace.parent,
         check=True,
@@ -276,7 +272,7 @@ def check_public_commands(executable: str, directory: Path) -> None:
     exits 3 and names the owners when a fixture daemon survived retirement, so a leak that
     retirement reports to nobody still fails here.
     """
-    result = subprocess.run(
+    result = bounded_run(
         [executable, "--hide-successes"],
         cwd=directory,
         check=False,
@@ -333,7 +329,7 @@ def check_haddock_examples(consumer: Path, modules: list[str], examples: list[Ex
         raise ValueError("No executable Haddock examples")
     plan = json.loads((consumer / "dist-newstyle/cache/plan.json").read_text())
     command = haddock_command(plan, modules, examples)
-    result = subprocess.run(
+    result = bounded_run(
         command, cwd=consumer, capture_output=True, text=True, check=False, timeout=BUILD
     )
     if result.returncode:

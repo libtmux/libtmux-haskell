@@ -19,13 +19,12 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(Path(__file__).resolve().parents[1] / "bounded"))
+
+from bounded import BUILD, QUICK, run
+
 PLAN = Path("dist-newstyle/cache/plan.json")
 PACKAGES = ("base", "text", "libtmux-haskell")
-
-# Seconds. Every external command is bounded so a hang fails with the command's
-# name before the job's time limit stops it without one.
-COMPILE = 120
-BUILD = 600
 
 
 @dataclass(frozen=True)
@@ -161,16 +160,16 @@ def compile_source(
         source,
     ]
     if capture:
-        return subprocess.run(
+        return run(
             command,
             cwd=root,
             check=False,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=COMPILE,
+            timeout=QUICK,
         )
-    return subprocess.run(command, cwd=root, check=False, text=True, timeout=COMPILE)
+    return run(command, cwd=root, check=False, text=True, timeout=QUICK)
 
 
 def check_accepted(root: Path, units: list[str], scratch: Path, source: str) -> None:
@@ -191,7 +190,7 @@ def check_rejected(root: Path, units: list[str], scratch: Path, case: Rejection)
 
 def check(root: Path = ROOT) -> str:
     """Build the library, run every case and return the pass summary."""
-    subprocess.run(
+    run(
         ["cabal", "build", "lib:libtmux-haskell", "--offline", "-v0"],
         cwd=root,
         check=True,

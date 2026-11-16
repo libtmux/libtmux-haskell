@@ -175,9 +175,9 @@ def test_each_compilation_has_a_time_limit(
         seen.append(kwargs.get("timeout"))
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(check_types, "run", run)
     check_types.compile_source(tmp_path, UNITS, tmp_path, "Case.hs", capture=capture)
-    assert seen == [check_types.COMPILE]
+    assert seen == [check_types.QUICK]
 
 
 def test_the_library_build_has_a_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,7 +188,7 @@ def test_the_library_build_has_a_time_limit(monkeypatch: pytest.MonkeyPatch) -> 
         seen.append(kwargs.get("timeout"))
         raise subprocess.TimeoutExpired(command, 1)
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(check_types, "run", run)
     with pytest.raises(SystemExit, match="timed out"):
         check_types.main()
     assert seen == [check_types.BUILD]
