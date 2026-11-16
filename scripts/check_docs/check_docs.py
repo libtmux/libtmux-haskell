@@ -9,10 +9,15 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(Path(__file__).resolve().parents[1] / "bounded"))
+
+from bounded import run
+
 MARKER = re.compile(
     r"<!-- example(?P<kind>-output|-project|-package)?: (?P<id>[^ ]+) -->\n"
     r"```(?P<language>[^\n]+)\n(?P<body>.*?)```",
@@ -190,9 +195,7 @@ def run_entry(entry: Entry, root: Path = ROOT) -> None:
     """
     timeout = entry.get("timeout", DEFAULT_TIMEOUT)
     try:
-        result = subprocess.run(
-            entry["command"], cwd=root, capture_output=True, check=False, timeout=timeout
-        )
+        result = run(entry["command"], cwd=root, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as error:
         raise ValueError(
             f"Documented command timed out after {timeout} s: {entry['id']}"
