@@ -1,6 +1,6 @@
 module FixtureTest (tests) where
 
-import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, waitEither, withAsync)
 import Control.Exception (Exception, SomeException, bracket, IOException, fromException, throwIO, try)
 import Control.Monad (void, when)
@@ -129,40 +129,59 @@ data Boom = Boom deriving (Eq, Show)
 
 instance Exception Boom
 
+-- | Run an action that may block uninterruptibly, as a retirement does and 'timeout' cannot
+-- interrupt, and fail the test at the bound. A worker that never returns is abandoned.
+boundedly :: IO a -> IO a
+boundedly action = do
+  done <- newEmptyMVar
+  _ <- forkIO (try action >>= putMVar done)
+  timeout 2000000 (takeMVar done) >>= \case
+    Nothing -> assertFailure "retirement blocked past its bound"
+    Just result -> either (throwIO @SomeException) pure result
+
 -- | Signals are logged in delivery order. A swallowed signal reaches the pidfd's owner as
--- success, as it would for a child that ignores it.
+-- success, as it would for a child that ignores it. A delivered signal ends the sleeping child,
+-- and the stub sees that before it returns, so the short step below never races the child's exit:
+-- only a swallowed signal lets a step expire.
 retireBounds :: IO ()
 retireBounds = do
   sent <- newIORef []
-  let quick = retirement {step = 50000}
+  let quick = retirement {step = 20000}
       logged :: [CInt] -> Retirement
       logged swallow = quick {deliver = \fd number -> do
         modifyIORef' sent (<> [number])
-        if number `elem` swallow then pure 0 else quick.deliver fd number}
-      signalsOf :: IO a -> IO [CInt]
-      signalsOf action = writeIORef sent [] >> action >> readIORef sent
+        if number `elem` swallow then pure 0 else do
+          rc <- quick.deliver fd number
+          when (rc == 0) (threadWaitRead fd)
+          pure rc}
+      observe :: IO a -> IO (a, [CInt])
+      observe action = writeIORef sent [] >> action >>= \result -> (result,) <$> readIORef sent
       sleeper retiring = withDaemon retiring "sleeper" "/bin/sleep" ["30"] []
+      describe :: Either SomeException () -> String
+      describe = \case
+        Right () -> "returned"
+        Left problem -> case (fromException problem, fromException problem) of
+          (Just Boom, _) -> "Boom"
+          (_, Just io) -> ioeGetErrorString io
+          _ -> show problem
   -- Already collected: nothing is signaled.
-  signalsOf (withDaemon (logged []) "exited" "/bin/true" [] [] awaitDaemon) >>= (@?= [])
+  boundedly (observe (withDaemon (logged []) "exited" "/bin/true" [] [] awaitDaemon)) >>= (@?= (ExitSuccess, []))
   -- A live child gets SIGTERM only.
-  signalsOf (sleeper (logged []) (\_ -> pure ())) >>= (@?= [15])
+  boundedly (observe (sleeper (logged []) (\_ -> pure ()))) >>= (@?= ((), [15]))
   -- SIGTERM swallowed: SIGKILL ends it within the second step.
-  signalsOf (sleeper (logged [15]) pure >>= \daemon -> pollDaemon daemon >>= (@?= Just (ExitFailure (-9))))
-    >>= (@?= [15, 9])
+  boundedly (observe (sleeper (logged [15]) pure >>= pollDaemon)) >>= (@?= (Just (ExitFailure (-9)), [15, 9]))
   -- Both swallowed: bounded, the body's exception keeps its class, and the owner is kept.
   let stuck = logged [15, 9]
-  failing <- timeout 2000000 (try @IOException (sleeper stuck (\_ -> throwIO (userError "body failed"))))
-  fmap (either ioeGetErrorString (const "returned")) failing @?= Just "body failed"
-  clean <- timeout 2000000 (try @IOException (sleeper stuck (\_ -> pure ())))
-  fmap (either ioeGetErrorString (const "returned")) clean @?= Just "fixture daemon did not exit: sleeper"
+  try @SomeException (boundedly (sleeper stuck (\_ -> throwIO Boom))) >>= (@?= "Boom") . describe
+  try @SomeException (boundedly (sleeper stuck (\_ -> pure ()))) >>= (@?= "fixture daemon did not exit: sleeper") . describe
   -- A refused delivery is raised with its cause instead of waiting out the bound; the child stays owned.
-  refused <- try @IOException (sleeper quick {deliver = \_ _ -> pure 1} (\_ -> pure ()))
+  refused <- try @IOException (boundedly (sleeper quick {deliver = \_ _ -> pure 1} (\_ -> pure ())))
   either (\problem -> (isPermissionError problem, ioeGetLocation problem)) (const (False, "returned")) refused
     @?= (True, "fixture daemon signal")
   owners <- retainedDaemons
   map (.label) owners @?= ["sleeper", "sleeper", "sleeper"]
-  -- End them for real through the retained pidfds.
-  for_ owners $ \owner -> retireDaemon owner {how = quick}
+  -- End them for real through the retained pidfds, with the default bounds.
+  for_ owners $ \owner -> retireDaemon owner {how = retirement}
   retainedDaemons >>= (@?= []) . map (.label)
 
 cancelDuringStartup :: Bool -> IO ()
