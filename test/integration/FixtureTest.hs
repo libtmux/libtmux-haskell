@@ -1,9 +1,12 @@
 module FixtureTest (tests) where
 
-import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, waitEither, withAsync)
-import Control.Exception (bracket, IOException, fromException, throwIO, try)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Control.Exception (Exception, SomeException, bracket, IOException, fromException, throwIO, try)
+import Control.Monad (void, when)
+import Data.Foldable (for_)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Foreign.C.Types (CInt)
 import Fixture
 import GHC.Conc (closeFdWith, threadWaitRead)
 import System.Posix.IO (closeFd)
@@ -11,8 +14,7 @@ import System.Posix.Types (Fd)
 import System.Timeout (timeout)
 import System.Directory (doesDirectoryExist)
 import System.Exit (ExitCode (..))
-import System.IO.Error (ioeGetErrorString)
-import System.Process.Typed (getExitCode)
+import System.IO.Error (ioeGetErrorString, ioeGetLocation, isDoesNotExistError, isPermissionError)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
@@ -79,7 +81,108 @@ tests = testGroup "owned tmux fixture"
         let teardown = command fixture ["kill-window", "-t", "fixture:1"] >>= (@?= (ExitSuccess, "", ""))
         result <- try @AsyncCancelled (withTrackedPane pid teardown (throwIO AsyncCancelled))
         result @?= Left @AsyncCancelled @() AsyncCancelled
+  , testCase "a failing pane teardown never replaces the body's exception and is raised after a clean body" $
+      withFixture $ \fixture -> for_ [True, False] $ \failing -> do
+        (code, pid, errors) <- command fixture
+          ["new-window", "-d", "-t", "fixture:1", "-P", "-F", "#{pane_pid}", "/bin/cat", "-"]
+        (code, errors) @?= (ExitSuccess, "")
+        let teardown = do
+              command fixture ["kill-window", "-t", "fixture:1"] >>= (@?= (ExitSuccess, "", ""))
+              throwIO (userError "teardown failed")
+        result <- try @SomeException (withTrackedPane pid teardown (when failing (throwIO Boom)))
+        case (failing, result) of
+          (True, Left problem) -> fromException problem @?= Just Boom
+          (False, Left problem) -> fmap ioeGetErrorString (fromException problem) @?= Just "teardown failed"
+          _ -> assertFailure ("unexpected outcome: " <> show result)
+  , testCase "a daemon ended outside the fixture is collected once, after success and after failure" $
+      for_ [False, True] $ \failing -> do
+        saved <- newIORef Nothing
+        result <- try @IOException $ withFixture $ \fixture -> do
+          writeIORef saved (Just fixture)
+          void (command fixture ["kill-server"])
+          when failing (throwIO (userError "body failed"))
+        case (failing, result) of
+          (False, Right ()) -> pure ()
+          (True, Left problem) -> ioeGetErrorString problem @?= "body failed"
+          _ -> assertFailure ("unexpected outcome: " <> show result)
+        readIORef saved >>= maybe (assertFailure "callback never started") assertReleased
+  , testCase "retiring a daemon collects no other child" $
+      withDaemon retirement "bystander" "/bin/sh" ["-c", "exit 7"] [] $ \bystander -> do
+        -- A readable pidfd means the bystander has exited and is waiting to be collected.
+        threadWaitRead bystander.pidfd
+        withFixture (\_ -> pure ())
+        awaitDaemon bystander >>= (@?= ExitFailure 7)
+  , testCase "a refused daemon never runs its body, and one that exits at once reports its status" $ do
+      refused <- try @IOException (withDaemon retirement "missing" "/nonexistent/fixture-daemon" [] [] (\_ -> assertFailure "ran"))
+      either (assertBool "refusal is not a missing file" . isDoesNotExistError) (const (assertFailure "a missing program started")) refused
+      withDaemon retirement "exits at once" "/bin/false" [] [] awaitDaemon >>= (@?= ExitFailure 1)
+  , testCase "a waiter blocked on a daemon is released with its status by the retirement" $
+      withDaemon retirement "sleeper" "/bin/sleep" ["30"] [] $ \sleeper ->
+        withAsync (awaitDaemon sleeper) $ \waiter -> do
+          retireDaemon sleeper
+          timeout 2000000 (wait waiter) >>= (@?= Just (ExitFailure (-15)))
+  , testCase "retirement signals only a live child, escalates to SIGKILL, and keeps one that survives" retireBounds
   ]
+
+-- | A body failure of a class no cleanup raises, so only its preservation can pass the test.
+data Boom = Boom deriving (Eq, Show)
+
+instance Exception Boom
+
+-- | Run an action that may block uninterruptibly, as a retirement does and 'timeout' cannot
+-- interrupt, and fail the test at the bound. A worker that never returns is abandoned.
+boundedly :: IO a -> IO a
+boundedly action = do
+  done <- newEmptyMVar
+  _ <- forkIO (try action >>= putMVar done)
+  timeout 2000000 (takeMVar done) >>= \case
+    Nothing -> assertFailure "retirement blocked past its bound"
+    Just result -> either (throwIO @SomeException) pure result
+
+-- | Signals are logged in delivery order. A swallowed signal reaches the pidfd's owner as
+-- success, as it would for a child that ignores it. A delivered signal ends the sleeping child,
+-- and the stub sees that before it returns, so the short step below never races the child's exit:
+-- only a swallowed signal lets a step expire.
+retireBounds :: IO ()
+retireBounds = do
+  sent <- newIORef []
+  let quick = retirement {step = 20000}
+      logged :: [CInt] -> Retirement
+      logged swallow = quick {deliver = \fd number -> do
+        modifyIORef' sent (<> [number])
+        if number `elem` swallow then pure 0 else do
+          rc <- quick.deliver fd number
+          when (rc == 0) (threadWaitRead fd)
+          pure rc}
+      observe :: IO a -> IO (a, [CInt])
+      observe action = writeIORef sent [] >> action >>= \result -> (result,) <$> readIORef sent
+      sleeper retiring = withDaemon retiring "sleeper" "/bin/sleep" ["30"] []
+      describe :: Either SomeException () -> String
+      describe = \case
+        Right () -> "returned"
+        Left problem -> case (fromException problem, fromException problem) of
+          (Just Boom, _) -> "Boom"
+          (_, Just io) -> ioeGetErrorString io
+          _ -> show problem
+  -- Already collected: nothing is signaled.
+  boundedly (observe (withDaemon (logged []) "exited" "/bin/true" [] [] awaitDaemon)) >>= (@?= (ExitSuccess, []))
+  -- A live child gets SIGTERM only.
+  boundedly (observe (sleeper (logged []) (\_ -> pure ()))) >>= (@?= ((), [15]))
+  -- SIGTERM swallowed: SIGKILL ends it within the second step.
+  boundedly (observe (sleeper (logged [15]) pure >>= pollDaemon)) >>= (@?= (Just (ExitFailure (-9)), [15, 9]))
+  -- Both swallowed: bounded, the body's exception keeps its class, and the owner is kept.
+  let stuck = logged [15, 9]
+  try @SomeException (boundedly (sleeper stuck (\_ -> throwIO Boom))) >>= (@?= "Boom") . describe
+  try @SomeException (boundedly (sleeper stuck (\_ -> pure ()))) >>= (@?= "fixture daemon did not exit: sleeper") . describe
+  -- A refused delivery is raised with its cause instead of waiting out the bound; the child stays owned.
+  refused <- try @IOException (boundedly (sleeper quick {deliver = \_ _ -> pure 1} (\_ -> pure ())))
+  either (\problem -> (isPermissionError problem, ioeGetLocation problem)) (const (False, "returned")) refused
+    @?= (True, "fixture daemon signal")
+  owners <- retainedDaemons
+  map (.label) owners @?= ["sleeper", "sleeper", "sleeper"]
+  -- End them for real through the retained pidfds, with the default bounds.
+  for_ owners $ \owner -> retireDaemon owner {how = retirement}
+  retainedDaemons >>= (@?= []) . map (.label)
 
 cancelDuringStartup :: Bool -> IO ()
 cancelDuringStartup afterCreation = bracket (newIORef Nothing) closeProbe $ \probe -> do
@@ -160,7 +263,7 @@ assertReleased fixture = do
 
 assertStopped :: Fixture -> IO ()
 assertStopped fixture = do
-  getExitCode fixture.daemon >>= \case
+  pollDaemon fixture.daemon >>= \case
     Nothing -> assertFailure "owned daemon remains alive"
     Just _ -> pure ()
   present <- doesDirectoryExist fixture.directory

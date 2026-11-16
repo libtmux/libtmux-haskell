@@ -14,10 +14,11 @@ import PublicMutationTest qualified
 import PublicCreationTest qualified
 import EntityCaptureTest qualified
 import CommandIntegrationTest qualified
+import Fixture (guardRetained)
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = ProcessTest.withTests $ \processTests -> defaultMain $
+main = ProcessTest.withTests $ \processTests -> guardRetained $ defaultMain $
   testGroup "real tmux"
     [FixtureTest.tests, FrameIntegrationTest.tests, SocketPinTest.tests,
      RuntimeTest.tests, RuntimeReadTest.tests, RuntimeMutationTest.tests, RuntimeCreationTest.tests, ScopeTest.tests, PublicServerTest.tests, PublicMutationTest.tests, PublicCreationTest.tests,
