@@ -763,8 +763,9 @@ cleanup program = withMVar program.gate $ \_ -> mask $ \restore -> do
       void (atomically (Create.detachRecovery recovery)))
     report <- atomically (R.inspect program.runtime)
     atomically $ forM_ report.unresolved $ \(operation, _) -> void (R.detachOperation program.runtime operation)
-    readIORef program.watch >>= mapM_ N.close
-    writeIORef program.watch Nothing
+    mask_ $ do
+      readIORef program.watch >>= mapM_ N.close
+      writeIORef program.watch Nothing
     readIORef program.files >>= mapM_ (\(path, _, _) -> removePrivateFile program path)
     readIORef program.directory >>= mapM_ Directory.removeDirectory
     writeIORef program.retired True
