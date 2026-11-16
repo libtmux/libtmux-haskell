@@ -164,6 +164,7 @@ data Program = Program
   , group :: !(IORef (Maybe CInt))
   , processId :: !(IORef (Maybe Integer))
   , eventWaiter :: !(TVar (Maybe P.Ticket))
+  , lossWaiters :: !(TVar [P.Ticket])
   , exitResult :: !(TMVar ProgramExit)
   , buffers :: !(IORef [ByteString])
   , creations :: !(IORef [Create.CreationRecovery])
@@ -240,6 +241,7 @@ withOwnedProgram source executable available options action = mask $ \restore ->
   group <- newIORef Nothing
   processId <- newIORef Nothing
   eventWaiter <- newTVarIO Nothing
+  lossWaiters <- newTVarIO []
   exitResult <- newEmptyTMVarIO
   buffers <- newIORef []
   creations <- newIORef []
@@ -250,7 +252,7 @@ withOwnedProgram source executable available options action = mask $ \restore ->
   let program = Program {runtime, backend, clientExecutable = executable, available,
         settings = options, duration, token, directory, errorFile, acceptedFile,
         fifo, writer, watch, daemon, candidate, successor, generation, handoff, observers,
-        released, files, created, group, processId, eventWaiter, exitResult, buffers,
+        released, files, created, group, processId, eventWaiter, lossWaiters, exitResult, buffers,
         creations, mutations, gate, closed, retired}
       acquire = do
         let socket = Pin.pinPath (R.serverPin source)
@@ -392,6 +394,16 @@ setup program = do
   writeIORef program.successor (Just next)
   exited <- observe program "pane-died" (panePredicate pane)
   atomically (writeTVar program.eventWaiter (Just exited.ticket))
+  let windowPredicate = "#{==:#{window}," <> Utf8.encodeUtf8 (Id.renderWindowId window) <> "}"
+      -- Event filters expose payload IDs without an attached target. Select
+      -- the recorded session/window explicitly before reading its pane count.
+      paneCount = "#{S:#{?#{==:#{session_id}," <> Utf8.encodeUtf8 (Id.renderSessionId session)
+        <> "},#{W:#{?#{==:#{window_id}," <> Utf8.encodeUtf8 (Id.renderWindowId window)
+        <> "},#{window_panes},}},}}"
+  unlinked <- observe program "window-unlinked" ("#{&&:" <> windowPredicate <>
+    ",#{==:#{session}," <> Utf8.encodeUtf8 (Id.renderSessionId session) <> "}}")
+  changed <- observe program "window-layout-changed" ("#{&&:" <> windowPredicate <> ",#{!=:" <> paneCount <> ",1}}")
+  atomically (writeTVar program.lossWaiters [unlinked.ticket, changed.ticket])
   mask_ $ do
     writer <- readIORef program.writer >>= maybe (throwIO ProgramCleanupIncomplete) pure
     writeIORef program.released True
@@ -452,7 +464,7 @@ observe program event predicate = mask $ \restore -> do
   registered <- newTVarIO False
   let register ticket = do
         current <- readTVar program.observers
-        when (length current >= 4) (throwSTM P.ResourceLimit)
+        when (length current >= 5) (throwSTM P.ResourceLimit)
         writeTVar program.observers (PendingObserver ticket lease : current)
         writeTVar registered True
       undo = atomically $ readTVar registered >>= \present -> unless present (B.releaseBytes lease)
@@ -662,7 +674,11 @@ waitExitReady program = atomically $ do
         current <- readTVar program.generation >>= maybe (throwSTM ProgramClosed) pure
         void (readTMVar current.ticket.result)
         throwSTM (ProgramObservationLost "pane process generation changed")
-  exited `orElse` replaced
+      lost = do
+        tickets <- readTVar program.lossWaiters
+        foldr orElse retry [void (readTMVar ticket.result) | ticket <- tickets]
+        throwSTM (ProgramObservationLost "owned pane layout or window lifetime changed")
+  exited `orElse` replaced `orElse` lost
 
 data PaneState = PaneState {pid :: !(Maybe Integer), dead :: !Bool, status :: !(Maybe Int), signal :: !ByteString, history :: !Integer}
 

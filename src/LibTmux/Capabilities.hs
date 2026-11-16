@@ -59,7 +59,7 @@ capabilityInfo selected = CapabilityInfo selected key minimumVersion names nativ
       ManagedPrograms -> ("program-execution", ["withProgram", "runProgram", "terminateProgram"], ["new-session", "wait-for -E"])
       ProgramInput -> ("program-input", ["sendProgramInput"], ["send-keys -H", "wait-for -E"])
       RenderedScreen -> ("program-screen", ["readProgramScreen"], ["capture-pane", "save-buffer", "wait-for -E"])
-      ProgramExitEvents -> ("program-exit", ["waitProgram", "waitProgramFor"], ["wait-for -E", "pane-died"])
+      ProgramExitEvents -> ("program-exit", ["waitProgram", "waitProgramFor"], ["wait-for -E", "pane-died", "window-unlinked", "window-layout-changed"])
 
 -- | Whether this complete operation is available. This is a version check;
 -- host process-group support and endpoint liveness are checked separately.
