@@ -703,6 +703,10 @@ releaseRead probe recovery = void $ timeout (probe.clientMs * 1000) $ atomically
 killAdopted :: Kill -> IO Retirement
 killAdopted (Kill owner) = killOwner owner
 
+-- | Whether this handle still admits operations. Rechecked inside the owner gate.
+admissionOpen :: R.ServerHandle -> IO Bool
+admissionOpen server = not <$> atomically (readTVar (R.serverPool server).closing)
+
 -- | 'killAdopted' that refuses with 'ServerClosed' unless @admitted@ holds once this request
 -- owns the gate. The public Server passes its pool's admission, so a kill racing the callback's
 -- exit cannot turn the scope's release into a termination.

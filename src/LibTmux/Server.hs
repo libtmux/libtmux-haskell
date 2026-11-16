@@ -49,7 +49,7 @@ module LibTmux.Server
   , Operation, Status (..), Stage (..), Outcome (..), operationStatus
   ) where
 
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO)
+import Control.Concurrent.STM (atomically, readTVar)
 import Control.DeepSeq (force)
 import Control.Exception
   ( ExceptionWithContext (..), IOException, SomeAsyncException, SomeException
@@ -154,7 +154,7 @@ data ServerConfig = ServerConfig
   { socketPath :: !PosixPath -- ^ Existing tmux socket, with an absolute trusted path.
   , executable :: !PosixPath -- ^ Executable path or a program resolved once through PATH.
   , pinDirectory :: !PosixPath -- ^ Writable trusted directory on the socket's filesystem.
-  , captureTimeout :: !NominalDiffTime -- ^ Capture and initial version-check deadline in seconds, positive and at most ten.
+  , captureTimeout :: !NominalDiffTime -- ^ Per-read admission and capture deadline in seconds, positive and at most ten.
   }
   deriving stock (Eq, Show)
 
@@ -203,7 +203,7 @@ checkedExecutable field executable limit = do
 -- socket is not configurable: the scope creates and removes its own.
 data OwnedServerConfig = OwnedServerConfig
   { tmuxExecutable :: !PosixPath -- ^ Executable path or a program resolved once through PATH.
-  , operationTimeout :: !NominalDiffTime -- ^ Version-check and 'capture' deadline in seconds, positive and at most ten.
+  , operationTimeout :: !NominalDiffTime -- ^ Per-read admission and 'capture' deadline in seconds, positive and at most ten.
   }
   deriving stock (Eq, Show)
 
@@ -221,9 +221,9 @@ defaultOwnedServerConfig = OwnedServerConfig (Os.fromBytestring "tmux") 2
 -- On return, exception or cancellation the scope signals the original daemon
 -- through a process descriptor and counts it as gone only when the descriptor
 -- reports exit; a missing socket or finished client proves nothing. It then
--- removes the socket, lock file and directory it created. The callback keeps
--- the caller's masking state, and its result, exception or cancellation leaves
--- unchanged. A retained Server raises 'ServerClosed' afterwards.
+-- removes its socket and directory while their identities still match. Replaced
+-- names retain their cleanup owner. The callback keeps the caller's masking
+-- state and exception class. A retained Server raises 'ServerClosed' afterwards.
 --
 -- A known startup failure raises 'OperationFailed'. Cleanup that fails after a
 -- successful callback raises 'CleanupFailed', as 'withServer' does. If exit is
@@ -235,7 +235,8 @@ defaultOwnedServerConfig = OwnedServerConfig (Os.fromBytestring "tmux") 2
 -- found no listener it cannot wait for anything: the retry fails and the owner
 -- stays, because no listener and a finished client do not prove the daemon gone.
 -- Needs Linux 6.5 or newer. Panes receive SIGHUP; a background job started by
--- a hook can outlive the daemon.
+-- a hook can outlive the daemon. SIGKILL and process crashes bypass cleanup and
+-- can leave the daemon and directory behind.
 withOwnedServer :: OwnedServerConfig -> (Server -> IO a) -> IO a
 withOwnedServer config action = do
   (executable, duration) <- checkedExecutable "operationTimeout" config.tmuxExecutable config.operationTimeout
@@ -272,7 +273,7 @@ withAdoptedRetirement runtime handle executable duration action =
     Owned.withKillCapability Owned.defaultProbe {Owned.versionMicros = duration} executable runtime handle $ \admitted ->
       tracked (action (either throwIO retire admitted))
   where
-    open = not <$> readTVarIO (R.serverPool handle).closing
+    open = Owned.admissionOpen handle
     retire capability = do
       _ <- Owned.killAdoptedIf open capability
       report <- R.shutdownServerHandle runtime handle
@@ -283,7 +284,7 @@ withAdoptedRetirement runtime handle executable duration action =
         (.unresolved) <$> R.inspectServerHandle runtime handle
       unless (null remaining) (throwIO (Owned.OperationsUnresolved (length remaining)))
 
--- | Retire the daemon behind an adopted Server and return after its exit is
+-- | Retire the daemon behind an owned or adopted Server and return after its exit is
 -- observed through a process descriptor. The descriptor comes from the pinned
 -- socket when the Server is admitted, and the daemon's reported process ID must
 -- match it. Retirement needs no tmux response or command lane. A socket rebound
@@ -292,7 +293,8 @@ withAdoptedRetirement runtime handle executable duration action =
 -- scope's callback has left; a call admitted before that finishes. Interrupted
 -- cleanup keeps a t'CleanupRecovery'; known failures raise 'OperationFailed',
 -- including the failure that prevented holding the descriptor at admission.
--- Needs Linux 6.5 or newer.
+-- An owned Server also settles its operation pool and private directory; cleanup
+-- can fail after daemon exit was observed. Needs Linux 6.5 or newer.
 killServer :: Server -> IO ()
 killServer (Server _ handle _ _ retire) = operational $ do
   closed <- atomically (readTVar (R.serverPool handle).closing)

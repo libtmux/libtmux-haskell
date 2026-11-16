@@ -702,6 +702,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
             `finally` void (R.shutdown runtime)
 
     , testCase "a late kill refuses once the callback has left, and the held release stays a release" $
+        isolatedFdAudit "a late kill refuses once the callback has left, and the held release stays a release" $
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
@@ -717,7 +718,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
                   count <- atomicModifyIORef' spawned (\n -> (n + 1, n + 1))
                   when (count == 2) (void (tryPutMVar queued ()))
                   OS.defaultSpawn work}
-              open = not <$> atomically (readTVar (R.serverPool adopted).closing)
+              open = OS.admissionOpen adopted
           before <- fdCount
           (do withAsync (OS.withKillCapability probe exe runtime adopted $ \admitted ->
                            either throwIO (writeIORef escaped . Just) admitted) $ \scope -> do
@@ -744,7 +745,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           proceed <- newEmptyMVar
           escaped <- newEmptyMVar
           let probe = holdingDaemonPhase reached proceed OS.defaultProbe
-              open = not <$> atomically (readTVar (R.serverPool adopted).closing)
+              open = OS.admissionOpen adopted
           -- The kill passes its check and journals its request, then holds the gate; the callback leaves
           -- and closes admission; only then does the kill finish.
           (withAsync (OS.withKillCapability probe exe runtime adopted $ \admitted -> do
@@ -762,6 +763,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
             `finally` (N.close witness >> void (R.shutdown runtime))
 
     , testCase "an unsupported host leaves plain adoption to the callback, and the kill's failure is the stored one" $
+        isolatedFdAudit "an unsupported host leaves plain adoption to the callback, and the kill's failure is the stored one" $
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
@@ -1353,7 +1355,7 @@ fdCount = length <$> listDirectory "/proc/self/fd"
 -- The descriptor table is process-wide; concurrent cases would corrupt its baseline.
 isolatedFdAudit :: String -> Assertion -> Assertion
 isolatedFdAudit selected action = lookupEnv "LIBTMUX_FD_AUDIT_CASE" >>= \case
-  Just current | current == selected -> action
+  Just current | current == selected -> putStrLn ("libtmux-fd-audit: " <> selected) >> action
   _ -> do
     executable <- getExecutablePath
     environment <- filter ((/= "LIBTMUX_FD_AUDIT_CASE") . fst) <$> getEnvironment
@@ -1364,6 +1366,8 @@ isolatedFdAudit selected action = lookupEnv "LIBTMUX_FD_AUDIT_CASE" >>= \case
       assertFailure ("isolated descriptor audit failed: " <> show (code, output, errors))
     assertBool "isolated descriptor audit did not select one case"
       ("All 1 tests passed" `Bytes.isInfixOf` Lazy.toStrict output)
+    assertBool "isolated descriptor audit did not enter its selected case"
+      (Ascii.pack ("libtmux-fd-audit: " <> selected) `Bytes.isInfixOf` Lazy.toStrict output)
 
 -- | Test seams that record the private directory and open independent witnesses.
 watching :: Watch -> Maybe OS.Stage -> OS.Probe -> OS.Probe

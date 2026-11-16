@@ -42,8 +42,8 @@ the daemon exits.
 
 Start from `defaultOwnedServerConfig`. `tmuxExecutable` defaults to `tmux`,
 resolved once through `PATH`. `operationTimeout` defaults to two seconds and
-must be positive and at most ten; it bounds the version check and each
-`capture`. An invalid value or a missing executable raises
+must be positive and at most ten; it bounds each admission identity/version
+read separately and each `capture`. An invalid value or a missing executable raises
 `InvalidConfiguration` before the scope creates a directory or runs a process.
 
 ## Failures and uncertainty
@@ -84,7 +84,8 @@ later operations raise `ServerClosed`.
 
 Adoption stays possible where no descriptor can be verified: an older kernel, a
 forwarded or activated socket whose listener is not the daemon, or a daemon
-that does not answer within `captureTimeout`. The callback still runs, and
+that answers the version check but not the identity read within
+`captureTimeout`. The callback still runs, and
 `killServer` raises the failure that prevented it.
 
 When the callback leaves, that Server's admission closes first, then the
@@ -95,6 +96,8 @@ stay admitted.
 
 ## Limits
 
+- SIGKILL and process crashes bypass cleanup and can leave the daemon and its
+  directory behind. An unproved start retains its cleanup owner and directory.
 - Owned servers and `killServer` need Linux with pidfd support for sockets,
   kernel 6.5 or newer, in addition to the
   [native backend requirements](installation.md#native-backend-host-requirements).

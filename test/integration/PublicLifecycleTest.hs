@@ -211,10 +211,8 @@ tests = localOption (mkTimeout 60000000) $ testGroup "public lifecycle"
             Tmux.killServer server
             exited witness.daemon >>= assertBool "killServer did not retire the original daemon"
             timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the fixture's own child saw the exit" . isJust
-            -- A capture against the dead daemon fails; its retained owner is detached as usual.
-            Tmux.tryTmux (Tmux.capture server) >>= \case
-              Left (ExceptionWithContext context _) -> mapM_ Tmux.detachCaptureRecovery (Tmux.captureRecoveries context)
-              Right _ -> assertFailure "a killed daemon answered a capture"
+            refuses "capture after adopted kill" (Tmux.capture server)
+            refuses "creation after adopted kill" (Tmux.createSession server options)
 
   , testCase "adoption runs no configured command hook" $
       Fixture.withFixture $ \fixture -> do
