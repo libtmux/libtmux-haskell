@@ -278,15 +278,15 @@ API contract.
   test setup disables tmux's ordinary empty-server exit policy. It starts
   `/bin/cat -` directly and observes that initial pane process's exit through a
   Linux pidfd after daemon teardown.
-- Ownership: the fixture starts the daemon with `pidfd_spawnp` (glibc 2.39 or
-  newer) and holds the pidfd the kernel creates with the child. It signals and
-  collects the daemon only through that pidfd and waits on private duplicates
-  of it, so no signal reaches a recycled PID, no wait uses a recycled
-  descriptor number and no other child is reaped. Nothing else in the test
-  process may reap children it did not start.
+- Ownership: the fixture starts the daemon and every client used by `command`
+  and `withAttachedClient` with `pidfd_spawnp` (glibc 2.39 or newer). It holds
+  the pidfd the kernel creates with each child, signals and collects only
+  through that pidfd, and waits on private duplicates. No signal reaches a
+  recycled PID, no wait uses a recycled descriptor number and no other child
+  is reaped. Nothing else in the test process may reap children it did not start.
 - Retirement: the fixture sends SIGTERM, then SIGKILL, waiting at most two
-  seconds after each. A daemon that survives both stays owned, with its pidfd
-  open and its directory in place.
+  seconds after each. A daemon or client that survives both stays owned, with
+  its pidfd open and its fixture's directory in place.
 - Runner guard: retirement writes nothing, so the integration runner and the
   archive consumer each end through `guardRetained`, which exits 3 and names any
   owner left.
@@ -298,8 +298,10 @@ Callback success, failure and cancellation are covered. Startup checkpoints
 also cover cancellation before session dispatch and after its response but
 before pane tracking. A waiting after-new-session hook also covers cancellation
 after creation/output but before command-client completion. Separate test-owned
-pidfds observe the original pane's exit. Captured command readers are scoped
-and joined before process cleanup closes their handles. Earlier daemon
+pidfds observe the original pane's exit. A client's output and error pipes are
+drained concurrently by readers that are joined before retirement closes the
+pipes, and a client's failure, cancellation and refused start keep the
+caller's exception. Earlier daemon
 acquisition, cancellation before creation or its first output, and additional
 descendants remain separate qualification work. No numeric PID is used to signal a pane.
 

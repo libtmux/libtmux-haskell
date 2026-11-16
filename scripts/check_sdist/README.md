@@ -11,7 +11,7 @@ It checks that:
   alone;
 - the public `>>>` Haddock examples run against the archived library;
 - the public mutation and creation tests pass against the archived library,
-  without its internal modules, and end with no fixture daemon still owned:
+  without its internal modules, and end with no fixture daemon or client still owned:
   the generated runner exits 3 and names any owner left, and the check also
   rejects any stderr output;
 - every declared example also builds and passes against the one source revision

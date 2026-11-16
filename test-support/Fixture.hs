@@ -1,6 +1,7 @@
 module Fixture
   ( Fixture (..), StartupStage (..), Daemon (..), Retirement (..), retirement
   , withFixture, withFixtureAt, withDaemon, retireDaemon, awaitDaemon, pollDaemon, retainedDaemons, guardRetained
+  , Client (..), Stdio (..), withClient, readSome
   , withAttachedClient, command, registerPane, withTrackedPane
   ) where
 
@@ -8,7 +9,7 @@ import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Concurrent.MVar (MVar, modifyMVarMasked, modifyMVarMasked_, newMVar, withMVarMasked)
 import Control.Exception
   ( SomeException, finally, mask, mask_, onException, rethrowIO, throwIO
-  , tryWithContext, uninterruptibleMask_
+  , try, tryWithContext, uninterruptibleMask_
   )
 import Control.Monad (unless, when)
 import Data.ByteString qualified as Strict
@@ -18,30 +19,27 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as Bytes
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
-import Foreign.C.Error (Errno (..), eSRCH, errnoToIOError, throwErrnoIfMinus1)
+import Data.Word (Word8)
+import Foreign.C.Error (Errno (..), eAGAIN, eSRCH, errnoToIOError, throwErrnoIfMinus1)
 import Foreign.C.String (CString, withCString)
-import Foreign.C.Types (CInt (..))
-import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (allocaArray, withArray0)
+import Foreign.C.Types (CInt (..), CSize (..))
+import Foreign.Marshal.Alloc (allocaBytes)
+import Foreign.Marshal.Array (allocaArray, withArray, withArray0)
 import Foreign.Marshal.Utils (withMany)
-import Foreign.Ptr (Ptr, nullPtr)
-import Foreign.Storable (peek, peekElemOff)
-import GHC.Conc (closeFdWith, threadWaitRead)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Storable (peekElemOff)
+import GHC.Conc (closeFdWith, threadWaitRead, threadWaitWrite)
 import GHC.Foreign qualified as Foreign
 import GHC.IO.Encoding (getFileSystemEncoding)
 import System.Directory (removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..), exitWith)
 import System.FilePath ((</>))
-import System.IO (hFlush, hPutStrLn, stderr)
+import System.IO (hPutStrLn, stderr)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.IO (closeFd)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
-import System.Process.Typed
-  ( createPipe, getStderr, getStdin, getStdout, nullStream, proc, setEnv, setStderr, setStdin, setStdout
-  , waitExitCode, withProcessTerm
-  )
 import System.Timeout (timeout)
 
 foreign import ccall unsafe "libtmux_fixture_watch"
@@ -54,7 +52,13 @@ foreign import ccall unsafe "libtmux_fixture_pidfd"
   panePidfd :: CInt -> IO CInt
 
 foreign import ccall unsafe "libtmux_fixture_spawn"
-  spawnChild :: CString -> Ptr CString -> Ptr CString -> Ptr CInt -> IO CInt
+  spawnChild :: CString -> Ptr CString -> Ptr CString -> Ptr CInt -> Ptr CInt -> IO CInt
+
+foreign import ccall unsafe "libtmux_fixture_read"
+  readPipe :: CInt -> Ptr Word8 -> CSize -> IO CInt
+
+foreign import ccall unsafe "libtmux_fixture_write"
+  writePipe :: CInt -> Ptr Word8 -> CSize -> IO CInt
 
 foreign import ccall unsafe "libtmux_fixture_pidfd_signal"
   signalPidfd :: CInt -> CInt -> IO CInt
@@ -110,12 +114,27 @@ withFixtureAt checkpoint action = do
 
 -- | A child owned through a pidfd the kernel creates with it, so the pidfd cannot name any
 -- other process. Every signal and every status read goes through it and never through a PID.
--- Nothing else in the process may reap children without naming them.
+-- Nothing else in the process may reap children without naming them. The fixture's server and
+-- every tmux client it starts are owned this way; a retained owner keeps its 'home' directory.
 data Daemon = Daemon
   { label :: !String
+  , home :: !FilePath
   , pidfd :: !Fd
   , phase :: !(MVar Phase)
   , how :: !Retirement
+  }
+
+-- | How a child's standard stream is connected: to @/dev/null@, to the test's own descriptor, or
+-- to a pipe whose other end the test keeps. The constructors' order is the C enumeration's.
+data Stdio = Null | Inherit | Pipe deriving (Enum)
+
+-- | A child and the parent's ends of the pipes its streams were given. An end of a stream that
+-- is not a 'Pipe' is @Fd (-1)@ and is never closed.
+data Client = Client
+  { process :: !Daemon
+  , input :: !Fd
+  , output :: !Fd
+  , errors :: !Fd
   }
 
 -- | The pidfd is signaled, read for status and closed only under the 'phase' lock, in this order.
@@ -148,24 +167,32 @@ scoped acquire release body = mask $ \restore -> do
 -- it is, whether or not the retirement then succeeds; a retirement that fails after a clean
 -- body is raised.
 withDaemon :: Retirement -> String -> FilePath -> [String] -> [(String, String)] -> (Daemon -> IO a) -> IO a
-withDaemon how label executable arguments environment =
-  scoped (startDaemon how label executable arguments environment) retireDaemon
+withDaemon how label executable arguments environment body =
+  scoped (startChild how label label executable arguments environment (Null, Null, Inherit)) (retireDaemon . (.process)) (body . (.process))
 
-startDaemon :: Retirement -> String -> FilePath -> [String] -> [(String, String)] -> IO Daemon
-startDaemon how label executable arguments environment = do
+-- | Start a child with the standard streams connected as given. Call it masked: the pidfd and the
+-- pipe ends the kernel hands back are owned by nothing until the caller's release closes them.
+-- A refused start leaves no child and no descriptor.
+startChild
+  :: Retirement -> String -> FilePath -> FilePath -> [String] -> [(String, String)] -> (Stdio, Stdio, Stdio) -> IO Client
+startChild how label home executable arguments environment (standardIn, standardOut, standardError) = do
   encoding <- getFileSystemEncoding
   let text = Foreign.withCString encoding
-  fd <-
-    withMany text (executable : arguments) $ \argv ->
-      withMany text [key <> "=" <> value | (key, value) <- environment] $ \envp ->
-        withArray0 nullPtr argv $ \argvArray ->
-          withArray0 nullPtr envp $ \envArray ->
-            text executable $ \file -> alloca $ \out -> do
-              rc <- spawnChild file argvArray envArray out
-              unless (rc == 0) (ioError (errnoToIOError "fixture daemon spawn" (Errno rc) Nothing (Just executable)))
-              peek out
-  phase <- newMVar Live
-  pure Daemon {label, pidfd = Fd fd, phase, how}
+  withMany text (executable : arguments) $ \argv ->
+    withMany text [key <> "=" <> value | (key, value) <- environment] $ \envp ->
+      withArray0 nullPtr argv $ \argvArray ->
+        withArray0 nullPtr envp $ \envArray ->
+          withArray (map (fromIntegral . fromEnum) [standardIn, standardOut, standardError]) $ \modes ->
+            text executable $ \file -> allocaArray 4 $ \out -> do
+              rc <- spawnChild file argvArray envArray modes out
+              unless (rc == 0) (ioError (errnoToIOError "fixture spawn" (Errno rc) Nothing (Just executable)))
+              let descriptor = fmap Fd . peekElemOff out
+              pidfd <- descriptor 0
+              input <- descriptor 1
+              output <- descriptor 2
+              errors <- descriptor 3
+              phase <- newMVar Live
+              pure Client {process = Daemon {label, home, pidfd, phase, how}, input, output, errors}
 
 -- | End the child through its pidfd and collect its status. Each wait is bounded; the
 -- escalation is SIGTERM, then SIGKILL. A child that cannot be retired stays owned: its pidfd is
@@ -251,7 +278,7 @@ closeDaemon daemon = modifyMVarMasked_ daemon.phase $ \case
   Reaped code -> closeFdWith closeFd daemon.pidfd >> pure (Closed code)
   state -> pure state
 
--- | Daemons that could not be retired, still owned through their open pidfds.
+-- | Owners that could not be retired, still held through their open pidfds.
 retained :: IORef [Daemon]
 retained = unsafePerformIO (newIORef [])
 {-# NOINLINE retained #-}
@@ -259,61 +286,109 @@ retained = unsafePerformIO (newIORef [])
 retainedDaemons :: IO [Daemon]
 retainedDaemons = readIORef retained
 
--- | Run a test runner and fail it, with exit status 3, if a daemon is still owned when it ends.
+-- | Run a test runner and fail it, with exit status 3, if a fixture process is still owned when it ends.
 -- Retirement is silent, so every runner that uses these fixtures must end through this guard.
 guardRetained :: IO a -> IO a
 guardRetained run = run `finally` (retainedDaemons >>= report)
   where
     report [] = pure ()
     report owners = do
-      hPutStrLn stderr ("fixture daemons still owned: " <> unwords (map (.label) owners))
+      hPutStrLn stderr ("fixture processes still owned: " <> unwords (map (.label) owners))
       exitWith (ExitFailure 3)
 
--- | A retained daemon still needs its directory.
+-- | A retained owner still needs its directory.
 removeUnlessRetained :: FilePath -> IO ()
 removeUnlessRetained directory = do
-  kept <- any ((== directory) . (.label)) <$> readIORef retained
+  kept <- any ((== directory) . (.home)) <$> readIORef retained
   unless kept (removePathForcibly directory)
 
-command :: Fixture -> [String] -> IO (ExitCode, ByteString, ByteString)
-command fixture args = withProcessTerm config $ \client -> do
-  -- Join readers before handle cleanup; a live waiting child cannot supply EOF.
-  withAsync (Strict.hGetContents (getStdout client)) $ \out ->
-    withAsync (Strict.hGetContents (getStderr client)) $ \err -> do
-      (output, errors) <- waitBoth out err
-      code <- waitExitCode client
-      pure (code, Lazy.fromStrict output, Lazy.fromStrict errors)
+-- | Run a tmux client against the fixture's server for the body. The client is owned like the
+-- server: started with a pidfd, retired with bounded SIGTERM and SIGKILL, collected once. Its pipe
+-- ends close after the retirement, so a body that reads them must have joined its readers.
+withClient :: Fixture -> (Stdio, Stdio, Stdio) -> [String] -> (Client -> IO a) -> IO a
+withClient fixture streams arguments = scoped start releaseClient
   where
-    config = setEnv fixture.environment . setStdin nullStream . setStdout createPipe . setStderr createPipe $
-      proc fixture.executable (["-N", "-S", fixture.socket] <> args)
+    start = startChild fixture.daemon.how ("client of " <> fixture.directory) fixture.directory fixture.executable
+      arguments fixture.environment streams
+
+-- | End the client, then close the pipe ends whether or not it ended. The first failure is raised.
+releaseClient :: Client -> IO ()
+releaseClient client = uninterruptibleMask_ $ do
+  attempts <- traverse (try @SomeException) (retireDaemon client.process : map closeEnd [client.input, client.output, client.errors])
+  either throwIO pure (sequence_ attempts)
+  where
+    closeEnd end@(Fd raw) = when (raw >= 0) (closeFdWith closeFd end)
+
+command :: Fixture -> [String] -> IO (ExitCode, ByteString, ByteString)
+command fixture args = withClient fixture (Null, Pipe, Pipe) (["-N", "-S", fixture.socket] <> args) $ \client ->
+  -- Join readers before the release closes their descriptors; a live child cannot supply EOF.
+  withAsync (slurp client.output) $ \out ->
+    withAsync (slurp client.errors) $ \err -> do
+      (written, complained) <- waitBoth out err
+      code <- awaitDaemon client.process
+      pure (code, Lazy.fromStrict written, Lazy.fromStrict complained)
 
 -- | Own one control client through an acknowledged attachment and normal
 -- detachment. These clients qualify listing context, not terminal/PTY behavior.
 withAttachedClient :: Fixture -> String -> IO a -> IO a
-withAttachedClient fixture session action = withProcessTerm config $ \client -> do
-  let output = getStdout client
-      acknowledge = do
-        line <- Ascii.hGetLine output
-        unless ("%end " `Strict.isPrefixOf` line) acknowledge
-      drain = do
-        chunk <- Strict.hGetSome output 4096
-        unless (Strict.null chunk) drain
-      detach = do
-        Ascii.hPutStrLn (getStdin client) "detach-client"
-        hFlush (getStdin client)
-        exited <- timeout 1000000 (waitExitCode client)
+withAttachedClient fixture session action = withClient fixture (Pipe, Pipe, Pipe) arguments $ \client -> do
+  let detach = do
+        writeAll client.input "detach-client\n"
+        exited <- timeout 1000000 (awaitDaemon client.process)
         unless (exited == Just ExitSuccess) (throwIO (userError "owned control client did not exit"))
-  ready <- timeout 1000000 acknowledge
-  unless (ready == Just ()) (throwIO (userError "owned control client did not acknowledge attachment"))
-  withAsync drain $ \out ->
-    withAsync (Strict.hGetContents (getStderr client)) $ \err -> do
+  ready <- timeout 1000000 (acknowledged client.output)
+  unless (ready == Just True) (throwIO (userError "owned control client did not acknowledge attachment"))
+  withAsync (drain client.output) $ \out ->
+    withAsync (slurp client.errors) $ \err -> do
       result <- scoped (pure ()) (\() -> detach) (\() -> action)
-      (_, errors) <- waitBoth out err
-      unless (Strict.null errors) (throwIO (userError ("owned control client stderr: " <> show errors)))
+      (_, complained) <- waitBoth out err
+      unless (Strict.null complained) (throwIO (userError ("owned control client stderr: " <> show complained)))
       pure result
   where
-    config = setEnv fixture.environment . setStdin createPipe . setStdout createPipe . setStderr createPipe $
-      proc fixture.executable ["-u", "-N", "-S", fixture.socket, "-C", "attach-session", "-t", session]
+    arguments = ["-u", "-N", "-S", fixture.socket, "-C", "attach-session", "-t", session]
+
+-- | The next bytes of a pipe's parent end, or Nothing at end of stream. The descriptor is
+-- non-blocking and the wait is the IO manager's, so cancelling a reader needs no signal.
+readSome :: Fd -> IO (Maybe Strict.ByteString)
+readSome end@(Fd raw) = allocaBytes size $ \buffer -> loop buffer
+  where
+    size = 32768
+    loop buffer = do
+      count <- readPipe raw buffer (fromIntegral size)
+      case compare count 0 of
+        GT -> Just <$> Strict.packCStringLen (castPtr buffer, fromIntegral count)
+        EQ -> pure Nothing
+        LT | Errno (negate count) == eAGAIN -> threadWaitRead end >> loop buffer
+           | otherwise -> ioError (errnoToIOError "fixture pipe read" (Errno (negate count)) Nothing Nothing)
+
+slurp :: Fd -> IO Strict.ByteString
+slurp end = Strict.concat . reverse <$> go []
+  where
+    go chunks = readSome end >>= maybe (pure chunks) (\chunk -> go (chunk : chunks))
+
+drain :: Fd -> IO ()
+drain end = readSome end >>= maybe (pure ()) (const (drain end))
+
+-- | Read until a complete line starts with @%end @, the reply that ends the attachment's first
+-- command. False when the stream ends first.
+acknowledged :: Fd -> IO Bool
+acknowledged end = go Strict.empty
+  where
+    go pending = readSome end >>= \case
+      Nothing -> pure False
+      Just chunk ->
+        let (lines', partial) = Strict.breakEnd (== 10) (pending <> chunk)
+        in if any ("%end " `Strict.isPrefixOf`) (Ascii.lines lines') then pure True else go partial
+
+writeAll :: Fd -> Strict.ByteString -> IO ()
+writeAll end@(Fd raw) bytes = unless (Strict.null bytes) $ do
+  count <- Strict.useAsCStringLen bytes $ \(buffer, size) -> writePipe raw (castPtr buffer) (fromIntegral size)
+  if count >= 0
+    then writeAll end (Strict.drop (fromIntegral count) bytes)
+    else
+      if Errno (negate count) == eAGAIN
+        then threadWaitWrite end >> writeAll end bytes
+        else ioError (errnoToIOError "fixture pipe write" (Errno (negate count)) Nothing Nothing)
 
 openWatch :: FilePath -> IO Fd
 openWatch directory = withCString directory $ \path ->
