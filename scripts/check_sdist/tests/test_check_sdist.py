@@ -195,11 +195,21 @@ def public_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable
     return check
 
 
+def test_generated_consumer_ends_through_the_retained_owner_guard(
+    tmp_path: Path, public_consumer: Callable[[int, str], None]
+) -> None:
+    """Retirement writes no diagnostic, so only the runner's guard reports a retained owner."""
+    public_consumer(0, "")
+    runner = (tmp_path / "run-0-0/public-mutations/Main.hs").read_text()
+    assert "import Fixture (guardRetained)\n" in runner
+    assert "main = guardRetained (defaultMain (testGroup" in runner
+
+
 @pytest.mark.parametrize(
     ("status", "errors", "message"),
     [
         pytest.param(
-            3, "fixture daemons still owned: sleeper\n", "exited 3: .*sleeper", id="owned"
+            3, "fixture processes still owned: sleeper\n", "exited 3: .*sleeper", id="owned"
         ),
         pytest.param(1, "", "exited 1", id="failed"),
         pytest.param(0, "noise\n", "emitted stderr: noise", id="stderr"),
@@ -208,7 +218,7 @@ def public_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable
 def test_public_consumer_failures_report_the_status_and_stderr(
     public_consumer: Callable[[int, str], None], status: int, errors: str, message: str
 ) -> None:
-    """A retained daemon, failed test or stderr makes the archive check fail with its cause."""
+    """A retained owner, failed test or stderr makes the archive check fail with its cause."""
     public_consumer(0, "")
     with pytest.raises(ValueError, match=message):
         public_consumer(status, errors)
