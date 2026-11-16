@@ -122,8 +122,9 @@ because argv and environment values can contain credentials.
   tmux treats a single argv entry as shell input, so the type requires at
   least one argument after the executable.
 
-There is no processless session mode. The ordinary creation operation also
-requires an existing daemon; it does not bootstrap a first server, reuse an
+There is no processless session mode. The ordinary creation operation needs a
+running Server, adopted or started by
+[`withOwnedServer`](lifecycle.md). It does not start a daemon itself, reuse an
 existing session, attach a terminal or replace a daemon after failure.
 
 ## Receipts and fresh observations

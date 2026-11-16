@@ -22,7 +22,7 @@ import Control.Exception
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context (ExceptionContext)
 import Control.Exception.Context qualified as Context
-import Control.Monad (forM, forM_, join, unless, void, when)
+import Control.Monad (foldM, forM, forM_, join, unless, void, when)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
@@ -40,7 +40,9 @@ import LibTmux.Internal.Capture qualified as C
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
-import LibTmux.Internal.Scope (TmuxException (UnsupportedTmuxVersion))
+import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Internal.Scope (CleanupStatus (..), TmuxException (ServerClosed, UnsupportedTmuxVersion))
+import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin (PinCheckpoint, pinPath)
 import LibTmux.Version qualified as Version
 import System.IO.Error (isDoesNotExistError)
@@ -61,6 +63,7 @@ foreign import ccall unsafe "libtmux_process_watch_removals" cWatchRemovals :: C
 foreign import ccall unsafe "libtmux_process_watch_drain" cWatchDrain :: CInt -> IO CInt
 foreign import ccall unsafe "libtmux_process_lock_held" cLockHeld :: CString -> IO CInt
 foreign import ccall unsafe "libtmux_process_poll" cPoll :: CInt -> CInt -> IO CInt
+foreign import ccall unsafe "libtmux_process_dup" cDup :: CInt -> IO CInt
 
 -- | The private directory and the socket inside it, both created for this run.
 data Names = Names {directory :: !ByteString, socket :: !ByteString}
@@ -117,7 +120,7 @@ data Probe = Probe
   , lockMs :: !Int
   , clientMs :: !Int
   , versionMicros :: !Int
-    -- ^ Deadline for the version read that admits the daemon.
+    -- ^ Deadline for each read that admits the daemon: its identity, then its release.
   , occupied :: !(Maybe ByteString)
     -- ^ An existing socket path injected by a test to model a borrowed
     -- server. Nothing in it is created, signaled or removed.
@@ -148,7 +151,6 @@ data OwnedError
   | NoDaemon
     -- ^ No listener was found. This does not prove that no daemon exists: the owner is retained.
   | DaemonMismatch !Integer !(Maybe Integer)
-  | DaemonUnreadable !String
   | StaleGeneration
     -- ^ The adopted inode has no live listener while its daemon runs (rebound).
   | NotRetired !Owner !String
@@ -290,7 +292,7 @@ annotatedBy owner cause (ExceptionWithContext context problem)
 -- | Run one cleanup attempt in its own worker and wait for it interruptibly.
 -- Attempts for one owner queue behind its gate, so two settlers never signal or
 -- close the same descriptor, and a failed attempt leaves its journal for the next.
-serialized :: Owner -> IO () -> IO ()
+serialized :: Owner -> IO a -> IO a
 serialized owner work = mask_ $ do
   done <- newEmptyTMVarIO
   owner.probe.spawn $ do
@@ -344,7 +346,7 @@ run owner action = case owner.scope of
     pidfd <- converge owner names >>= maybe (throwIO NoDaemon) pure
     probe.stage DaemonOwned names
     server <- R.adoptServerOwnerWith probe.pinStage runtime serverOwner names.socket names.directory
-    reported <- verifyPinned runtime server executable pidfd
+    reported <- verifyPinned probe runtime server executable pidfd
     probe.stage Verified names
     qualify probe runtime server executable
     probe.stage Admitted names
@@ -452,21 +454,18 @@ pidfdPid pidfd = do
 -- | The pinned daemon's own report must name the process this pidfd holds. The
 -- pidfd is live now and was opened before this answer, so PID reuse cannot
 -- make a different process agree.
-verifyPinned :: R.Runtime -> R.ServerHandle -> ByteString -> CInt -> IO Integer
-verifyPinned runtime server executable pidfd = do
-  request <- R.readServerPid runtime server executable R.ScalarRead
-  R.awaitRead request >>= \case
-    R.ReadValue reported -> do
-      owned <- pidfdPid pidfd
-      gone <- awaitExit pidfd 0
-      when (gone || owned /= Just reported) (throwIO (DaemonMismatch reported owned))
-      pure reported
-    R.ReadUnavailable outcome problem ->
-      throwIO (DaemonUnreadable (show outcome <> maybe "" ((": " <>) . show) problem))
+-- The read runs no command hook, so a configured daemon is identified like any other.
+verifyPinned :: Probe -> R.Runtime -> R.ServerHandle -> ByteString -> CInt -> IO Integer
+verifyPinned probe runtime server executable pidfd = do
+  (_, _, reported) <- C.captureIdentityWith probe.hooks runtime server executable probe.versionMicros
+  owned <- pidfdPid pidfd
+  gone <- awaitExit pidfd 0
+  when (gone || owned /= Just reported) (throwIO (DaemonMismatch reported owned))
+  pure reported
 
 qualify :: Probe -> R.Runtime -> R.ServerHandle -> ByteString -> IO ()
 qualify probe runtime server executable = do
-  (_, _, version) <- C.captureVersionWith P.defaultHooks runtime server executable probe.versionMicros
+  (_, _, version) <- C.captureVersionWith probe.hooks runtime server executable probe.versionMicros
   either (throwIO . UnsupportedTmuxVersion) (const (pure ())) (Version.requireSupported version)
 
 uncertain :: Owner -> String -> IO a
@@ -645,19 +644,39 @@ endNames owner = readIORef owner.held >>= \held -> mask_ $ do
 -- pin or pool.
 newtype Kill = Kill Owner
 
--- | Admit the capability for a pinned server: the listener is reached through the
--- pin by kernel identity and must be the daemon that answers @#{pid}@ now. Its
--- descriptors are released when the callback leaves, whatever happened, unless an
--- explicit kill was requested and has not finished: that request stays journaled, so
--- the scope's release repeats the kill and a failure keeps the descriptors for a resume.
-withKillCapability :: Probe -> ByteString -> R.Runtime -> R.ServerHandle -> (Kill -> IO a) -> IO a
+-- | Run the callback with the capability for a pinned server, or with the failure that prevented
+-- it, so that plain adoption and capture stay possible where no kill can be verified (an
+-- unsupported host, a listener that is not the daemon, an identity read that failed). The
+-- listener is reached through the pin by kernel identity and must be the daemon that answers
+-- @#{pid}@ now. A non-asynchronous admission failure whose partial capability was released
+-- reaches the callback; a failed release, an asynchronous exception, or a failure of the callback
+-- itself never does: each keeps its owner.
+--
+-- When the callback leaves, this server's admission closes before any descriptor is released, so
+-- a kill that has not passed its check refuses. The descriptors are then released unless an
+-- explicit kill was requested and has not finished: that request stays journaled, so the release
+-- repeats the kill and a failure keeps the descriptors for a resume.
+withKillCapability :: Probe -> ByteString -> R.Runtime -> R.ServerHandle -> (Either SomeException Kill -> IO a) -> IO a
 withKillCapability probe executable runtime server action = mask $ \restore -> do
-  requireHost probe False
   owner <- newCell probe executable Nothing Release
-  primary <- tryWithContext @SomeException (restore (admit owner >> action (Kill owner)))
-  closing <- tryWithContext @SomeException (settle owner)
-  conclude owner primary closing
+  admission <- tryWithContext @SomeException (restore (requireHost probe False >> admit owner))
+  case admission of
+    Right () -> scoped owner restore (Right (Kill owner))
+    Left failure@(ExceptionWithContext context cause)
+      | isJust (fromException @SomeAsyncException cause) -> do
+          closing <- tryWithContext @SomeException (settle owner)
+          conclude owner (Left failure) closing
+      | otherwise -> do
+          -- The failure is stored, not rethrown, so nobody else can release what its read still retains.
+          forM_ (Context.getExceptionAnnotations context) (releaseRead probe)
+          closing <- tryWithContext @SomeException (settle owner)
+          either (conclude owner (Left failure) . Left) (const (scoped owner restore (Left cause))) closing
   where
+    scoped owner restore capability = do
+      primary <- tryWithContext @SomeException (restore (action capability))
+      atomically (R.closeServerHandleAdmission runtime server)
+      closing <- tryWithContext @SomeException (settle owner)
+      conclude owner primary closing
     admit owner = do
       anchor <- mask_ $ openAnchor (pinPath (R.serverPin server)) >>= \case
         Left problem -> N.raise problem
@@ -666,7 +685,17 @@ withKillCapability probe executable runtime server action = mask $ \restore -> d
         Left problem | problem == N.errno eAGAIN -> throwIO ListenerBusy
                      | otherwise -> N.raise problem
         Right fd -> fd <$ journal owner (\held -> held {pidfd = Just fd})
-      void (verifyPinned runtime server executable pidfd)
+      void (verifyPinned probe runtime server executable pidfd)
+
+-- | A failed admission read changed nothing in the daemon. Once its worker has published an
+-- outcome its logical debt is dropped; its native owner stays with the pool. A worker that
+-- publishes nothing within the client bound keeps the debt, which then fails the scope's own
+-- cleanup with a recovery instead of disappearing.
+releaseRead :: Probe -> C.CaptureRecovery -> IO ()
+releaseRead probe recovery = void $ timeout (probe.clientMs * 1000) $ atomically $ do
+  state <- C.inspectRecovery recovery
+  check (isJust state.logical.outcome)
+  void (C.detachRecovery recovery)
 
 -- | End the adopted daemon through its held pidfd. 'StaleGeneration' refuses a
 -- rebound socket and leaves the daemon untouched; that refusal withdraws the kill, so the
@@ -674,17 +703,32 @@ withKillCapability probe executable runtime server action = mask $ \restore -> d
 killAdopted :: Kill -> IO Retirement
 killAdopted (Kill owner) = killOwner owner
 
+-- | 'killAdopted' that refuses with 'ServerClosed' unless @admitted@ holds once this request
+-- owns the gate. The public Server passes its pool's admission, so a kill racing the callback's
+-- exit cannot turn the scope's release into a termination.
+killAdoptedIf :: IO Bool -> Kill -> IO Retirement
+killAdoptedIf admitted (Kill owner) = killOwnerIf admitted owner
+
 -- | Request the daemon's termination, retire it through the owner's pidfd and report how it
 -- left. Only the physical daemon is ended: the pool, its operations and the names stay for
 -- the scope's own release ('settle'). The request is journaled first, and a failure or
 -- cancellation carries the owner from the moment it is raised, so a callback that catches it
 -- can still recover.
 killOwner :: Owner -> IO Retirement
-killOwner owner = do
-  requestFate owner Terminate
-  attempt <- tryWithContext @SomeException (serialized owner (daemonPhases owner))
-  either (rethrowIO . annotated owner) pure attempt
-  readIORef owner.held >>= maybe (throwIO NoDaemon) pure . (.exit)
+killOwner = killOwnerIf (pure True)
+
+-- | 'killOwner' for a caller that may refuse. The check and the 'Terminate' request happen inside
+-- the owner's gate, so a refusal ('ServerClosed') leaves the journal as it was and a request that
+-- passed the check keeps its authority over any release attempt that follows it.
+killOwnerIf :: IO Bool -> Owner -> IO Retirement
+killOwnerIf admitted owner = do
+  attempt <- tryWithContext @SomeException $ serialized owner $ admitted >>= \case
+    False -> pure False
+    True -> True <$ (requestFate owner Terminate >> daemonPhases owner)
+  case attempt of
+    Left failure -> rethrowIO (annotated owner failure)
+    Right False -> throwIO ServerClosed
+    Right True -> readIORef owner.held >>= maybe (throwIO NoDaemon) pure . (.exit)
 
 statusIfPresent :: ByteString -> IO (Maybe Files.FileStatus)
 statusIfPresent path = (Just <$> Files.getSymbolicLinkStatus path) `catch` \(problem :: IOException) ->
@@ -693,3 +737,73 @@ statusIfPresent path = (Just <$> Files.getSymbolicLinkStatus path) `catch` \(pro
 ignoreMissing :: IO () -> IO ()
 ignoreMissing action = action `catch` \(problem :: IOException) ->
   if isDoesNotExistError problem then pure () else throwIO problem
+
+-- Public recovery bridge ---------------------------------------------------------------------
+
+-- | Marks an owner whose public recovery already rides on an exception, so that catching and
+-- rethrowing it again attaches nothing new.
+newtype Promoted = Promoted (MVar ())
+instance Show Promoted where
+  show _ = "Promoted"
+instance ExceptionAnnotation Promoted
+
+-- | Give every owner on this exception the public recovery API of "LibTmux.Internal.Scope",
+-- once per owner, so inspection, retry and waiting work through the same functions as for a
+-- Runtime scope.
+promoteRecoveries :: ExceptionWithContext SomeException -> IO (ExceptionWithContext SomeException)
+promoteRecoveries (ExceptionWithContext context problem) = do
+  promoted <- foldM promote context (ownedRecoveries context)
+  pure (ExceptionWithContext promoted problem)
+  where
+    promote current (OwnedRecovery owner failure)
+      | any (\(Promoted gate) -> gate == owner.gate) (Context.getExceptionAnnotations current) = pure current
+      | otherwise = do
+          status <- observeOwned owner
+          pure (Context.addExceptionAnnotation (Promoted owner.gate)
+            (Context.addExceptionAnnotation (Scope.customCleanupRecovery (cleanupActions owner) status failure) current))
+
+cleanupActions :: Owner -> Scope.CleanupActions
+cleanupActions owner = Scope.CleanupActions
+  { Scope.observeCleanup = observeOwned owner
+  , Scope.requestCleanup = settle owner >> observeOwned owner
+  , Scope.waitCleanup = awaitOwned owner >> observeOwned owner
+  , Scope.detachCleanup = \operation -> case owner.scope of
+      Nothing -> pure False
+      Just (runtime, serverOwner) -> atomically (R.detachServerOwnerOperation runtime serverOwner operation)
+  }
+
+-- | The pool's report, with every descriptor, directory, client and unaccounted launch the journal
+-- still holds counted as one pending handle, so a retained owner is never reported complete.
+observeOwned :: Owner -> IO CleanupStatus
+observeOwned owner = do
+  held <- readIORef owner.held
+  status <- case owner.scope of
+    Nothing -> pure (CleanupStatus True 0 0 [] [])
+    Just (runtime, serverOwner) -> Scope.observed <$> atomically (R.inspectServerOwner runtime serverOwner)
+  let pending = isJust held.created || isJust held.client || isJust held.pidfd || isJust held.anchor
+        || isJust held.directoryAnchor || isJust held.socketAnchor
+        || (held.launched && isNothing held.exit)
+  pure status
+    { complete = status.complete && not pending
+    , pendingHandles = status.pendingHandles + if pending then 1 else 0 }
+
+-- | Settle, and when the daemon was not yet seen to exit, wait for the event that can change that
+-- before settling once more. A held daemon descriptor is awaited through a duplicate taken under
+-- the gate, so no attempt can recycle it. Without one, the wait is for the start client's pool job
+-- to leave. A launch that found no listener and a starting daemon that holds its lock have no
+-- event to wait for: the second attempt is one more bounded search, and its failure keeps the
+-- owner. Nothing here polls, and completion is only ever what 'settle' returns.
+awaitOwned :: Owner -> IO ()
+awaitOwned owner = catchNoPropagate (settle owner) $ \problem@(ExceptionWithContext _ cause) ->
+  case fromException @OwnedError cause of
+    Just (NotRetired _ _) -> do
+      bracket (withMVar owner.gate (const (readIORef owner.held >>= traverse duplicate . (.pidfd)))) (mapM_ N.close) $ \case
+        Just descriptor -> threadWaitRead (Fd descriptor)
+        Nothing -> maybe (rethrowIO problem) (uncurry R.awaitServerOwnerCleanup) owner.scope
+      settle owner
+    Just (CleanupPending _) -> do
+      maybe (rethrowIO problem) (uncurry R.awaitServerOwnerCleanup) owner.scope
+      settle owner
+    _ -> rethrowIO problem
+  where
+    duplicate descriptor = cDup descriptor >>= \rc -> if rc < 0 then N.raise (negate rc) else pure rc

@@ -193,6 +193,7 @@ def check_public_commands(
     for origin, name in [
         ("test/integration/PublicMutationTest.hs", "PublicMutationTest.hs"),
         ("test/integration/PublicCreationTest.hs", "PublicCreationTest.hs"),
+        ("test/integration/PublicLifecycleTest.hs", "PublicLifecycleTest.hs"),
         ("test-support/Fixture.hs", "Fixture.hs"),
         ("test-support/fixture-watch.c", "fixture-watch.c"),
     ]:
@@ -201,10 +202,11 @@ def check_public_commands(
         "module Main (main) where\n"
         "import PublicMutationTest qualified\n"
         "import PublicCreationTest qualified\n"
+        "import PublicLifecycleTest qualified\n"
         "import Test.Tasty (defaultMain, testGroup)\n"
         "main :: IO ()\n"
         'main = defaultMain (testGroup "installed public commands"'
-        " [PublicMutationTest.tests, PublicCreationTest.tests])\n"
+        " [PublicMutationTest.tests, PublicCreationTest.tests, PublicLifecycleTest.tests])\n"
     )
     (consumer / "cabal.project").write_text(
         f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"
@@ -215,7 +217,7 @@ def check_public_commands(
         "build-type: Simple\n"
         "executable public-mutations-consumer\n"
         "  main-is: Main.hs\n"
-        "  other-modules: Fixture PublicMutationTest PublicCreationTest\n"
+        "  other-modules: Fixture PublicMutationTest PublicCreationTest PublicLifecycleTest\n"
         "  default-language: GHC2024\n"
         "  default-extensions: OverloadedRecordDot OverloadedStrings DuplicateRecordFields"
         " NoFieldSelectors\n"
@@ -236,7 +238,7 @@ def check_public_commands(
     )
     if result.stderr:
         raise ValueError("Installed public mutation consumer emitted stderr")
-    print("PASS: installed public command behavior and recovery")
+    print("PASS: installed public command, lifecycle and recovery behavior")
 
 
 def haddock_command(plan: dict[str, Any], modules: list[str], examples: list[Example]) -> list[str]:

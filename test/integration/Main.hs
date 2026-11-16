@@ -15,6 +15,7 @@ import PublicCreationTest qualified
 import EntityCaptureTest qualified
 import CommandIntegrationTest qualified
 import OwnedServerTest qualified
+import PublicLifecycleTest qualified
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
@@ -22,4 +23,4 @@ main = ProcessTest.withTests $ \processTests -> defaultMain $
   testGroup "real tmux"
     [FixtureTest.tests, FrameIntegrationTest.tests, SocketPinTest.tests,
      RuntimeTest.tests, RuntimeReadTest.tests, RuntimeMutationTest.tests, RuntimeCreationTest.tests, ScopeTest.tests, PublicServerTest.tests, PublicMutationTest.tests, PublicCreationTest.tests,
-     EntityCaptureTest.tests, CommandIntegrationTest.tests, processTests, OwnedServerTest.tests]
+     EntityCaptureTest.tests, CommandIntegrationTest.tests, processTests, OwnedServerTest.tests, PublicLifecycleTest.tests]

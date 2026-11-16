@@ -7,8 +7,8 @@
 module OwnedServerTest (tests) where
 
 import Control.Concurrent (ThreadId, yield)
-import Control.Concurrent.Async (AsyncCancelled (..), asyncThreadId, cancel, wait, waitCatch, withAsync)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar, tryPutMVar)
+import Control.Concurrent.Async (Async, AsyncCancelled (..), async, asyncThreadId, cancel, race, wait, waitCatch, withAsync)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM (atomically, check, readTMVar, readTVar)
 import Control.Exception
 import Control.Monad (filterM, forM, forM_, replicateM_, unless, void, when)
@@ -45,10 +45,12 @@ import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
 import System.Directory (createDirectory, doesPathExist, listDirectory, removeDirectory, removePathForcibly)
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..))
+import System.IO.Error (ioeGetErrorString)
 import System.FilePath ((</>))
 import System.IO.Error (isDoesNotExistError)
 import System.OsString.Posix qualified as Os
@@ -98,6 +100,13 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
     , testCase "the host probe reports every operation the daemon path needs" $
         OS.cDaemonFeatures >>= (@?= 7)
     , testCase "a full backlog is EAGAIN, not a hang and not an exit" saturatedListener
+    , testCase "a descriptor duplicated for a wait is close-on-exec, unlike a plain dup" $ do
+        (readEnd, writeEnd) <- Posix.createPipe
+        copy <- OS.cDup (fromIntegral readEnd)
+        plain <- Posix.dup readEnd
+        (do assertBool "the wait duplicate would be inherited by an application child" =<< Posix.queryFdOption (Fd copy) Posix.CloseOnExec
+            Posix.queryFdOption plain Posix.CloseOnExec >>= assertBool "control: a plain dup is inheritable" . not)
+          `finally` (mapM_ Posix.closeFd [readEnd, writeEnd, plain, Fd copy])
     ]
   , testGroup "lifecycle"
     [ testCase "normal return: session and capture, daemon retired, names removed, no descriptor kept" $
@@ -127,7 +136,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
               void (createOne owned "owned-cancel")
               putMVar entered ()
               takeMVar never) $ \worker -> do
-            takeMVar entered
+            awaitEvent worker entered
             cancel worker
             waitCatch worker
           assertCancelled outcome
@@ -150,7 +159,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           let probe = (watching watch (Just OS.DaemonOwned) OS.defaultProbe)
                 {OS.pinStage = \point _ -> when (point == Pin.BeforeLink) (putMVar reached () >> takeMVar never)}
           outcome <- withAsync (OS.withOwnedServerWith probe exe (\_ -> pure ())) $ \worker -> do
-            takeMVar reached
+            awaitEvent worker reached
             cancel worker
             waitCatch worker
           assertCancelled outcome
@@ -185,7 +194,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
                   writeIORef watch.names (Just names)
                   when (point == OS.ClientLaunched) (putMVar reached () >> takeMVar never)}
             outcome <- withAsync (OS.withOwnedServerWith probe exe (\_ -> pure ())) $ \worker -> do
-              takeMVar reached
+              awaitEvent worker reached
               cancel worker
               waitCatch worker
             assertCancelled outcome
@@ -221,7 +230,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
                   writeIORef watch.names (Just names)
                   when (point == OS.ClientLaunched) (awaitCreated names "s.lock" >> putMVar reached () >> takeMVar never)}
             outcome <- withAsync (OS.withOwnedServerWith probe exe (\_ -> pure ())) $ \worker -> do
-              takeMVar reached
+              awaitEvent worker reached
               cancel worker
               waitCatch worker
             assertCancelled outcome
@@ -380,6 +389,17 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
     , testCase "a start client that fails, leaves no daemon, or never returns is not proof of no daemon: ownership is retained" startShapes
 
     , testCase "a stopped daemon whose socket vanished after its client exited keeps ownership until a restored endpoint is found and retired" unlistedDaemon
+    , testCase "awaiting a start that left no listener fails with its owner instead of waiting or reporting completion" $
+        withScratch $ \scratch -> do
+          outcome <- try @SomeException $
+            OS.withOwnedServerWith OS.defaultProbe {OS.root = Ascii.pack scratch} "/bin/true" (\_ -> pure ())
+          recovery <- OS.recoveryOwner <$> recoveryOf "a start that left no listener" (\case OS.NoDaemon -> True; _ -> False) outcome
+          let actions = OS.cleanupActions recovery
+          actions.observeCleanup >>= assertBool "an unproved start was reported complete" . not . (.complete)
+          try @SomeException (bounded actions.waitCleanup) >>= \case
+            Left problem | Just (OS.NotRetired _ _) <- fromException problem -> pure ()
+            other -> assertFailure ("await did not keep the unproved start: " <> either show (const "completed") other)
+          actions.observeCleanup >>= assertBool "await reported an unproved start complete" . not . (.complete)
     ]
   , testGroup "start-server contract"
     [ testCase "start-server against a live socket is a no-op: the same daemon answers" $
@@ -550,7 +570,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           self <- getProcessID
           selfFd <- openPidfd (fromIntegral self)
           assertBool "self pidfd" (selfFd >= 0)
-          (try @OS.OwnedError (OS.verifyPinned runtime adopted exe selfFd) >>= \case
+          (try @OS.OwnedError (OS.verifyPinned OS.defaultProbe runtime adopted exe selfFd) >>= \case
               Left (OS.DaemonMismatch _ (Just named)) -> named @?= toInteger self
               other -> assertFailure ("mismatch not detected: " <> either show show other))
             `finally` (N.close selfFd >> void (R.shutdown runtime))
@@ -560,7 +580,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
-          (OS.withKillCapability OS.defaultProbe exe runtime adopted $ \capability -> do
+          (withKill OS.defaultProbe exe runtime adopted $ \capability -> do
               how <- OS.killAdopted capability
               assertBool "ended through the pidfd" (how `elem` [OS.Terminated, OS.Killed])
               code <- timeout 2000000 (waitExitCode fixture.daemon)
@@ -572,13 +592,15 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
         isolatedFdAudit "an adopted kill after the daemon left reports AlreadyGone; admission keeps no descriptor" $
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
-          adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
-          let admit = OS.withKillCapability OS.defaultProbe exe runtime adopted (\_ -> pure ())
-          admit
+          -- Leaving the scope closes a handle's admission, so each admission gets its own handle.
+          first <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          second <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          third <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          withKill OS.defaultProbe exe runtime first (\_ -> pure ())
           before <- fdCount
-          admit
+          withKill OS.defaultProbe exe runtime second (\_ -> pure ())
           fdCount >>= (@?= before)
-          (OS.withKillCapability OS.defaultProbe exe runtime adopted $ \capability -> do
+          (withKill OS.defaultProbe exe runtime third $ \capability -> do
               void (Fixture.command fixture ["kill-server"])
               timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust
               OS.killAdopted capability >>= (@?= OS.AlreadyGone))
@@ -592,7 +614,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           queued <- newIORef []
           let probe = OS.defaultProbe {OS.graceMs = 50}
               pinned = Ascii.unpack (Pin.pinPath (R.serverPin adopted))
-          ((OS.withKillCapability probe exe runtime adopted $ \capability -> do
+          ((withKill probe exe runtime adopted $ \capability -> do
               wedged <- wedge fixture witness
               writeIORef queued wedged
               withAsync (createOn runtime adopted exe "stuck-creation") $ \_stuck -> do
@@ -613,7 +635,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
           witness <- daemonWitness fixture
           queued <- newIORef []
-          (do OS.withKillCapability OS.defaultProbe exe runtime adopted $ \capability -> do
+          (do withKill OS.defaultProbe exe runtime adopted $ \capability -> do
                 -- Stopped and saturated, the daemon holds unaccepted connections to its old
                 -- listener. tmux closes that listener only after it is listening on the new
                 -- socket, so the reset of the last queued connection is a post-listen event.
@@ -628,7 +650,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
                 borrowedAlive fixture
               readIORef queued >>= mapM_ N.close >> writeIORef queued []
               adoptedAgain <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
-              OS.withKillCapability OS.defaultProbe exe runtime adoptedAgain $ \fresh ->
+              withKill OS.defaultProbe exe runtime adoptedAgain $ \fresh ->
                 OS.killAdopted fresh >>= \how -> assertBool "ended through the pidfd" (how `elem` [OS.Terminated, OS.Killed])
               timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
             `finally` (void (N.cSignal witness sigCONT) >> readIORef queued >>= mapM_ N.close >> N.close witness
@@ -643,7 +665,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           let probe = OS.defaultProbe {OS.phase = \point -> when (point == OS.PhaseDaemon) $
                 atomicModifyIORef' failing (\armed -> (False, armed)) >>= \armed -> when armed (throwIO Boom)}
           before <- fdCount
-          (do outcome <- try @SomeException (OS.withKillCapability probe exe runtime adopted (\_ -> pure ()))
+          (do outcome <- try @SomeException (withKill probe exe runtime adopted (\_ -> pure ()))
               recovery <- OS.recoveryOwner <$> recoveryOf "the failed release" (\Boom -> True) outcome
               borrowedAlive fixture
               OS.settle recovery
@@ -657,7 +679,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
           (do inner <- newIORef (Right ())
-              outer <- try @SomeException $ OS.withKillCapability refusingProbe exe runtime adopted $ \capability ->
+              outer <- try @SomeException $ withKill refusingProbe exe runtime adopted $ \capability ->
                 try @SomeException (OS.killAdopted capability) >>= writeIORef inner . void
               readIORef inner >>= void . recoveryOf "the kill failure caught inside the callback" notRetired
               -- The scope release must not discard the kill descriptor either.
@@ -668,7 +690,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
-          (do outer <- try @SomeException $ OS.withKillCapability refusingProbe exe runtime adopted $ \capability ->
+          (do outer <- try @SomeException $ withKill refusingProbe exe runtime adopted $ \capability ->
                 void (OS.killAdopted capability)
               -- The failure leaves the callback untouched and the scope's own failed release adds the
               -- same owner: it is attached once.
@@ -677,6 +699,111 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
               OS.settle recovery {OS.probe = OS.defaultProbe}
               timeout 2000000 (waitExitCode fixture.daemon)
                 >>= assertBool "the resume retired the daemon through the retained pidfd" . isJust)
+            `finally` void (R.shutdown runtime)
+
+    , testCase "a late kill refuses once the callback has left, and the held release stays a release" $
+        withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
+          runtime <- R.newRuntime P.normalFork
+          adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          witness <- daemonWitness fixture
+          reached <- newEmptyMVar
+          proceed <- newEmptyMVar
+          queued <- newEmptyMVar
+          spawned <- newIORef (0 :: Int)
+          escaped <- newIORef Nothing
+          -- The scope's release is the first worker and holds the gate at the daemon phase; the late kill is the second.
+          let probe = (holdingDaemonPhase reached proceed OS.defaultProbe)
+                {OS.spawn = \work -> do
+                  count <- atomicModifyIORef' spawned (\n -> (n + 1, n + 1))
+                  when (count == 2) (void (tryPutMVar queued ()))
+                  OS.defaultSpawn work}
+              open = not <$> atomically (readTVar (R.serverPool adopted).closing)
+          before <- fdCount
+          (do withAsync (OS.withKillCapability probe exe runtime adopted $ \admitted ->
+                           either throwIO (writeIORef escaped . Just) admitted) $ \scope -> do
+                awaitEvent scope reached
+                capability <- readIORef escaped >>= maybe (assertFailure "no capability was admitted") pure
+                withAsync (try @SomeException (OS.killAdoptedIf open capability)) $ \late -> do
+                  awaitEvent late queued
+                  putMVar proceed ()
+                  waitCatch scope >>= either (assertFailure . ("the release failed: " <>) . show) pure
+                  wait late >>= \case
+                    Left problem | Just Scope.ServerClosed <- fromException problem -> pure ()
+                    other -> assertFailure ("a late kill was not refused: " <> either show show other)
+              OS.awaitExit witness 0 >>= assertBool "a kill after the callback left ended the borrowed daemon" . not
+              borrowedAlive fixture
+              fdCount >>= (@?= before))
+            `finally` (N.close witness >> void (R.shutdown runtime))
+
+    , testCase "a kill admitted before the callback left keeps its authority over the release" $
+        withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
+          runtime <- R.newRuntime P.normalFork
+          adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          witness <- daemonWitness fixture
+          reached <- newEmptyMVar
+          proceed <- newEmptyMVar
+          escaped <- newEmptyMVar
+          let probe = holdingDaemonPhase reached proceed OS.defaultProbe
+              open = not <$> atomically (readTVar (R.serverPool adopted).closing)
+          -- The kill passes its check and journals its request, then holds the gate; the callback leaves
+          -- and closes admission; only then does the kill finish.
+          (withAsync (OS.withKillCapability probe exe runtime adopted $ \admitted -> do
+              capability <- either throwIO pure admitted
+              killer <- async (OS.killAdoptedIf open capability)
+              putMVar escaped killer
+              awaitEvent killer reached) $ \scope -> do
+              killer <- takeMVar escaped
+              bounded (atomically (readTVar (R.serverPool adopted).closing >>= check))
+              putMVar proceed ()
+              wait killer >>= \how -> assertBool "the admitted kill ended through the pidfd" (how `elem` [OS.Terminated, OS.Killed])
+              waitCatch scope >>= either (assertFailure . ("the release failed: " <>) . show) pure
+              OS.awaitExit witness 0 >>= assertBool "the admitted kill did not end the daemon"
+              timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
+            `finally` (N.close witness >> void (R.shutdown runtime))
+
+    , testCase "an unsupported host leaves plain adoption to the callback, and the kill's failure is the stored one" $
+        withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
+          runtime <- R.newRuntime P.normalFork
+          adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          before <- fdCount
+          (do stored <- OS.withKillCapability OS.defaultProbe {OS.features = pure 0} exe runtime adopted $ \admitted -> do
+                void (C.captureSnapshot runtime adopted exe 2000000)
+                pure (either (fromException @OS.OwnedError) (const Nothing) admitted)
+              case stored of
+                Just (OS.HostUnsupported _) -> pure ()
+                other -> assertFailure ("the callback did not receive the admission failure: " <> show other)
+              fdCount >>= (@?= before)
+              borrowedAlive fixture)
+            `finally` void (R.shutdown runtime)
+
+    , testCase "an identity read that fails leaves plain adoption to the callback, with no logical debt kept for its unknown outcome" $
+        withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
+          runtime <- R.newRuntime P.normalFork
+          adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          let probe = OS.defaultProbe {OS.hooks = P.defaultHooks {P.afterStart = throwIO (userError "read checkpoint failed")}}
+          (do stored <- OS.withKillCapability probe exe runtime adopted $ \admitted -> do
+                report <- atomically (R.inspectServerHandle runtime adopted)
+                length report.unresolved @?= 0
+                pure (either (fromException @IOException) (const Nothing) admitted)
+              fmap ioeGetErrorString stored @?= Just "read checkpoint failed"
+              borrowedAlive fixture)
+            `finally` void (R.shutdown runtime)
+
+    , testCase "an admission failure whose release fails never reaches the callback and keeps its owner" $
+        withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
+          runtime <- R.newRuntime P.normalFork
+          adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
+          failing <- newIORef True
+          entered <- newIORef False
+          let probe = OS.defaultProbe {OS.features = pure 0, OS.phase = \point -> when (point == OS.PhaseDaemon) $
+                atomicModifyIORef' failing (\armed -> (False, armed)) >>= \armed -> when armed (throwIO Boom)}
+          (do outcome <- try @SomeException (OS.withKillCapability probe exe runtime adopted (\_ -> writeIORef entered True))
+              readIORef entered >>= assertBool "the callback ran although the partial capability could not be released" . not
+              recovery <- recoveryOf "the failed release" (\case OS.HostUnsupported _ -> True; _ -> False) outcome
+              case OS.recoveryFailure recovery >>= fromException of
+                Just Boom -> pure ()
+                Nothing -> assertFailure "the retained owner does not carry the release failure"
+              OS.settle (OS.recoveryOwner recovery))
             `finally` void (R.shutdown runtime)
     ]
   ]
@@ -932,9 +1059,9 @@ cancelledTwiceAt exe point = do
       void (createOne owned "owned-double")
       putMVar entered ()
       takeMVar never) $ \worker -> do
-    takeMVar entered
+    awaitEvent worker entered
     withAsync (cancel worker) $ \first -> do
-      takeMVar reached
+      awaitEvent worker reached
       daemon <- readIORef watch.daemonFd >>= maybe (assertFailure "no witness") pure
       alive <- not <$> OS.awaitExit daemon 0
       assertBool "the boundary is where the test thinks it is" (alive == (point == OS.PhaseDaemon))
@@ -974,7 +1101,7 @@ stageBoundary exe point = do
   let probe = watching cancelled (Just point) OS.defaultProbe
         {OS.stage = \current _ -> when (current == point) (putMVar reached () >> takeMVar never)}
   outcome <- withAsync (OS.withOwnedServerWith probe exe (\_ -> pure ())) $ \worker -> do
-    takeMVar reached
+    awaitEvent worker reached
     cancel worker
     waitCatch worker
   assertCancelled outcome
@@ -1189,6 +1316,13 @@ withTmux action = lookupEnv "LIBTMUX_TEST_TMUX" >>= \case
 withScratch :: (FilePath -> IO a) -> IO a
 withScratch = bracket (mkdtemp "/tmp/libtmux-haskell-scratch-") removePathForcibly
 
+-- | Wait for an event the worker should raise. If the worker ends first its own result is the
+-- failure, so a broken system under test fails the case at once instead of hanging it.
+awaitEvent :: Async a -> MVar () -> Assertion
+awaitEvent worker event = race (waitCatch worker) (takeMVar event) >>= \case
+  Left ended -> assertFailure ("the worker ended before the event: " <> either show (const "returned normally") ended)
+  Right () -> pure ()
+
 bounded :: IO a -> IO a
 bounded action = timeout 2000000 action >>= maybe (assertFailure "owned event did not arrive within two seconds") pure
 
@@ -1366,6 +1500,15 @@ configure :: OS.Owned -> [String] -> Assertion
 configure owned arguments = do
   (code, output, errors) <- tmux owned arguments
   (code, output, errors) @?= (ExitSuccess, "", "")
+
+-- | Hold the cleanup worker at its daemon phase, with the owner's gate taken, until released.
+holdingDaemonPhase :: MVar () -> MVar () -> OS.Probe -> OS.Probe
+holdingDaemonPhase reached proceed probe = probe
+  {OS.phase = \point -> when (point == OS.PhaseDaemon) (void (tryPutMVar reached ()) >> readMVar proceed)}
+
+-- | The kill capability, with any admission failure raised: the existing cases need the capability.
+withKill :: OS.Probe -> ByteString -> R.Runtime -> R.ServerHandle -> (OS.Kill -> IO a) -> IO a
+withKill probe exe runtime adopted action = OS.withKillCapability probe exe runtime adopted (either throwIO action)
 
 borrowedAlive :: Fixture.Fixture -> Assertion
 borrowedAlive fixture = do

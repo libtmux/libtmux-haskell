@@ -38,6 +38,7 @@ ACCEPTED = (
     "test/compile-pass/QueryApi.hs",
     "test/compile-pass/MutationApi.hs",
     "test/compile-pass/CreationApi.hs",
+    "test/compile-pass/OwnedServerApi.hs",
 )
 REJECTED = (
     Rejection("test/compile-fail/DimensionLiteral.hs", 39999, "Num Dimension"),
@@ -62,6 +63,11 @@ REJECTED = (
     Rejection("test/compile-fail/CreationEmptyArgv.hs", 83865, "NonEmpty"),
     Rejection("test/compile-fail/CreationConstructor.hs", 1928, "CreatedSession"),
     Rejection("test/compile-fail/CreationEmptyPane.hs", 76037, "EmptyPane"),
+    Rejection(
+        "test/compile-fail/OwnedServerPinDirectory.hs",
+        83865,
+        "In a record update at field \u2018Tmux.pinDirectory\u2019",
+    ),
 )
 
 

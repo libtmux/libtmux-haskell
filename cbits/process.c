@@ -236,6 +236,12 @@ int libtmux_process_anchor(const char *path) {
     return fd < 0 ? -errno : fd;
 }
 
+/* Atomically mark the duplicate close-on-exec. */
+int libtmux_process_dup(int fd) {
+    int copy = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+    return copy < 0 ? -errno : copy;
+}
+
 /* Arm before probing the startup lock so listen's lock-file unlink is not lost. */
 int libtmux_process_watch_removals(const char *directory) {
     int fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);

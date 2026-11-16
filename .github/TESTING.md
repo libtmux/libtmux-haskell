@@ -190,6 +190,25 @@ Before teardown, the runner discovers any additional live physical panes and
 tracks their PIDs. Creation's fixture requires both initial and created pane
 processes to exit on success, callback failure and cancellation.
 
+The [lifecycle program](../docs/lifecycle.md) starts its own daemon with
+`withOwnedServer`, so it needs no demonstration server. The checks job puts the
+selected tmux on `PATH` for it. The
+[public lifecycle cases](../test/integration/PublicLifecycleTest.hs) import only
+installed types. They open a test-owned pidfd on the daemon PID that the
+library reports while the daemon runs, and require it readable after return,
+callback failure and cancellation. Other cases cover adoption that leaves a
+borrowed daemon running without running a configured command hook,
+`killServer`, unfinished name removal after the daemon retired (recovered
+through `cleanupRecoveries`), `CleanupFailed` after a successful callback, a
+refused configuration before any launch, and a retained Server after closure.
+The archive consumer also runs them. The private
+[daemon owner cases](../test/integration/OwnedServerTest.hs) hold the cleanup
+worker at a phase to race a late `killServer` against the callback's exit,
+degrade adoption when no descriptor can be verified, and retire the daemon
+through a refused signal. They do not qualify startup races on every tmux
+release, a forwarded listener, or the public recovery of a failed adopted kill,
+which no public seam can provoke.
+
 A real-tmux capability program must include its own setup and cleanup,
 explicit target, feature floor and observable result. Run it end to end;
 a compile-only test or a private test helper does not qualify the shared

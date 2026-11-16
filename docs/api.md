@@ -5,7 +5,7 @@ The public modules are:
 | Module | Read it for |
 | --- | --- |
 | [LibTmux](../src/LibTmux.hs) | Common observation, Server and scalar entry point |
-| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, creation, rename/title commands, deadlines and recovery |
+| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, daemon startup and retirement, capture, creation, rename/title commands, deadlines and recovery |
 | [LibTmux.Creation](../src/LibTmux/Creation.hs) | Session options, process modes and historical created references |
 | [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
 | [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
@@ -90,7 +90,8 @@ URLs, prove that a raw directory is fresh, or publish anything.
 The complete [capture example](../examples/capture-graph/Main.hs),
 [shared Runtime example](../examples/shared-runtime/Main.hs),
 [typed query example](../examples/query-graph/Main.hs),
-[creation example](../examples/create-session/Main.hs) and
+[creation example](../examples/create-session/Main.hs),
+[owned-server example](../examples/owned-server/Main.hs) and
 [typed-value example](../examples/typed-values/Main.hs) use only public
 exports. Their source and output are checked against the source archive by
 the [consumer check](../scripts/check_sdist/check_sdist.py).

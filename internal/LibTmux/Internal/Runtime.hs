@@ -13,9 +13,9 @@ module LibTmux.Internal.Runtime
   , newServerOwner, adoptServerOwnerWith, inspectServerOwner, shutdownServerOwner
   , awaitServerOwnerCleanup, detachServerOwnerOperation
   , serverPool, serverOwnerPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
-  , inspectServerHandle, shutdownServerHandle
+  , inspectServerHandle, shutdownServerHandle, closeServerHandleAdmission
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
-  , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
+  , readServerPid, readServerPidWith, readServerIdentityWith, awaitRead, readStatus, readOperation
   , readServerVersion, readServerVersionWith
   , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, readSnapshotWith, withCaptureBudget
   , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, receiptOperation, inspectReceipt, resumeReceipt
@@ -35,13 +35,11 @@ import Control.Monad (forM, forM_, unless, void, when)
 import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
-import Data.ByteString.Char8 qualified as Ascii
 import Data.IntMap.Strict qualified as Map
 import Data.Maybe (catMaybes)
 import Data.Text.Encoding qualified as Utf8
 import Data.Unique (Unique, newUnique)
 import Data.Word (Word64)
-import Foreign.C.Types (CInt)
 import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Command qualified as Command
@@ -145,6 +143,7 @@ data ReadResult value = ReadValue !value | ReadUnavailable !S.Outcome !(Maybe So
 
 data ReadCommand value where
   ReadPid :: ReadCommand Integer
+  ReadIdentity :: ReadCommand Integer
   ReadVersion :: ReadCommand Version.TmuxVersion
   ReadTopology :: ReadCommand ByteString
   ReadEntityField :: !EntityField -> ReadCommand ByteString
@@ -174,7 +173,7 @@ data ReadError
   | ReadExpired | ReadCancelled | ReadClosing
   | InvalidReadFrame !F.FrameError | InvalidServerPid
   | InvalidRecordFrame !Record.RecordError
-  | InvalidVersionProbe !VersionProbe.ProbeError
+  | InvalidProbe !VersionProbe.ProbeError
   | InvalidEntityReceipt
   | InvalidCommandOperands !Command.ArgumentError
   | InvalidCommandReply !Command.ReplyError
@@ -379,6 +378,11 @@ detachServerOwnerOperation runtime entry operation = do
   unless (S.memberOf entry.group operation) (throwSTM ForeignServer)
   detachOperation runtime operation
 
+-- | Close admission for this handle only, as the first step of its shutdown. Other handles
+-- keep their admission; native cleanup stays with the owner.
+closeServerHandleAdmission :: Runtime -> ServerHandle -> STM ()
+closeServerHandleAdmission runtime (ServerHandle entry _) = closeServerAdmission runtime entry
+
 closeServerHandle :: ServerHandle -> IO P.CloseReport
 closeServerHandle (ServerHandle entry _) = closeEntry entry >>= either throwIO pure
 
@@ -577,6 +581,12 @@ readServerPid = readServerPidWith P.defaultHooks 1000000
 readServerPidWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO PidRead
 readServerPidWith = startRead ReadPid
 
+-- | The daemon's PID through the hook-free probe channel of 'readServerVersionWith':
+-- a command hook never runs and never changes the reply. Use this where a
+-- configured daemon must still be identified; the deadline is in microseconds.
+readServerIdentityWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO PidRead
+readServerIdentityWith = startRead ReadIdentity
+
 -- | Admit a literal mutation in the serialized ordinary lane. Known failures
 -- preserve their reply; uncertainty retains the correlated operation.
 mutateWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> Command.Mutation -> IO (Request Command.MutationReply)
@@ -639,6 +649,7 @@ withCaptureBudget runtime action = bracket
 commandArguments :: F.Nonce -> ReadCommand value -> [ByteString]
 commandArguments nonce command = case command of
   ReadPid -> framed "#{pid}"
+  ReadIdentity -> VersionProbe.pidArguments nonce
   ReadVersion -> VersionProbe.versionArguments nonce
   ReadTopology -> framed Topology.topologyFormat
   ReadEntityField field -> let (_, receipt, value) = entityField field in
@@ -898,6 +909,7 @@ forceResult MutationResult value = void (evaluate (force value))
 forceResult (CreationResult _) value = void (evaluate (force value))
 forceResult (ObservationResult command) value = case command of
   ReadPid -> void (evaluate value)
+  ReadIdentity -> void (evaluate value)
   ReadVersion -> void (evaluate value)
   ReadTopology -> void (evaluate (force value))
   ReadEntityField _ -> void (evaluate (force value))
@@ -932,22 +944,15 @@ decodeResult (CreationResult _) = \nonce completed -> case completed.launchFailu
       value -> Right value
 
 decodeRead :: ReadCommand value -> F.Nonce -> P.Completion -> Either SomeException value
-decodeRead ReadVersion nonce completed =
-  let status = case completed.exit of
-        Just (N.Exited value) -> Just (fromIntegral value)
-        _ -> Nothing
-  in either (Left . toException . InvalidVersionProbe) Right
-    (VersionProbe.decodeVersionProbe nonce status completed.output completed.errors)
+decodeRead ReadVersion nonce completed = decodeProbed (VersionProbe.decodeVersionProbe nonce) completed
+decodeRead ReadIdentity nonce completed = decodeProbed (VersionProbe.decodePidProbe nonce) completed
 decodeRead command nonce completed
   | completed.exit /= Just (N.Exited 0) = Left (toException (ReadExit completed.exit))
   | not (Bytes.null completed.errors) = Left (toException (ReadStderr (Bytes.length completed.errors)))
   | otherwise = case command of
       ReadPid -> do
         bytes <- scalar F.decodeScalar 32
-        case Ascii.readInteger bytes of
-          Just (pid, "") | Bytes.length bytes <= 10 && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
-              && pid > 0 && pid <= toInteger (maxBound @CInt) -> Right $! pid
-          _ -> Left (toException InvalidServerPid)
+        maybe (Left (toException InvalidServerPid)) (Right $!) (VersionProbe.parseServerPid bytes)
       ReadTopology -> scalar F.decodeScalar 1048576
       ReadEntityField field -> do
         bytes <- scalar F.decodeEscapedScalar 1048576
@@ -961,6 +966,15 @@ decodeRead command nonce completed
   where
     scalar decoder bound = either (Left . toException . InvalidReadFrame) Right
       (decoder nonce bound completed.output)
+
+-- | A probe answers through the daemon's parse error, so only its exit status and diagnostic count.
+decodeProbed :: (Maybe Int -> ByteString -> ByteString -> Either VersionProbe.ProbeError value)
+  -> P.Completion -> Either SomeException value
+decodeProbed decode completed =
+  let status = case completed.exit of
+        Just (N.Exited value) -> Just (fromIntegral value)
+        _ -> Nothing
+  in either (Left . toException . InvalidProbe) Right (decode status completed.output completed.errors)
 
 publishUnavailable :: NativeOwner -> SomeException -> STM ()
 publishUnavailable owner@NativeOwner {result} problem = do

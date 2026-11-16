@@ -75,7 +75,7 @@ int libtmux_fixture_socket_ready(int fd)
     return 0;
 }
 
-/* SPIKE: watch a directory for new names. */
+/* Watch a directory for new names. */
 int libtmux_fixture_watch_create(const char *directory)
 {
     int fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
@@ -129,7 +129,7 @@ static int unix_address(struct sockaddr_un *address, const char *path)
     return 0;
 }
 
-/* SPIKE: a listening stream socket that never accepts, or -1. */
+/* A listening stream socket that never accepts, or -1. */
 int libtmux_fixture_listen(const char *path, int backlog)
 {
     struct sockaddr_un address;
@@ -148,7 +148,7 @@ int libtmux_fixture_listen(const char *path, int backlog)
     return fd;
 }
 
-/* SPIKE: queue unaccepted nonblocking connections on a listener until its backlog
+/* Queue unaccepted nonblocking connections on a listener until its backlog
  * is full (the next connect is EAGAIN). Returns how many descriptors were stored,
  * or -1. The caller closes them; a listener that closes resets every one. */
 int libtmux_fixture_saturate(const char *path, int *fds, int capacity)

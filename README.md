@@ -51,6 +51,69 @@ Needs a current GHC and Cabal, Linux and tmux 3.3a or newer.
 More: [installation](https://libtmux.org/en/haskell/latest/guides/installation/) ·
 [host requirements](docs/installation.md#native-backend-host-requirements).
 
+## Start and stop a server
+
+### [`withOwnedServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withownedserver/): a private server for one scope
+
+The library starts a tmux daemon on a socket of its own and stops it when the
+scope closes. It needs tmux 3.3a or newer on `PATH`:
+
+```console
+$ cabal run --verbose=0 owned-server
+```
+
+The complete program:
+
+<!-- example: owned-server -->
+```haskell
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Start a private tmux server, create a session in it, and stop the server.
+module Main (main) where
+
+import Control.Exception (ExceptionWithContext (..))
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Text qualified as Text
+import LibTmux qualified as Tmux
+import LibTmux.Creation qualified as Creation
+import System.Exit (die)
+import System.OsString.Posix qualified as Os
+
+main :: IO ()
+main = do
+  let options = Creation.defaultSessionOptions
+        { Creation.name = Just "owned-workspace"
+        , Creation.process = Creation.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])
+        }
+  (server, created, snapshot) <- Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server -> do
+    created <- Tmux.createSession server options
+    snapshot <- Tmux.capture server
+    pure (server, created, snapshot)
+  session <- either (die . show) pure (Tmux.lookupSession snapshot created.session)
+  putStrLn $ "created session: " <> Text.unpack session.name
+  putStrLn $ "sessions in the owned server: " <> show (length (Tmux.sessions snapshot))
+  putStrLn $ "creation and capture name one daemon: " <> show (created.serverPid == (Tmux.serverInfo snapshot).pid)
+  closed <- Tmux.tryTmux (Tmux.capture server)
+  case closed of
+    Left (ExceptionWithContext _ Tmux.ServerClosed) -> putStrLn "server closed after the scope: True"
+    _ -> die "A retained Server still accepted a capture"
+```
+
+It prints:
+
+<!-- example-output: owned-server -->
+```text
+created session: owned-workspace
+sessions in the owned server: 1
+creation and capture name one daemon: True
+server closed after the scope: True
+```
+
+[`killServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-killserver/)
+retires a daemon you adopted instead; `withServer` alone never stops one.
+More: [lifecycle](https://libtmux.org/en/haskell/latest/guides/lifecycle/).
+
 ## Read a tmux graph
 
 ### [`capture`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capture/): the whole graph in one read
@@ -334,6 +397,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Task | Start here |
 | --- | --- |
 | Install in an application | [Cabal installation](https://libtmux.org/en/haskell/latest/guides/installation/) |
+| Start a private server, or retire an adopted daemon | [Lifecycle](https://libtmux.org/en/haskell/latest/guides/lifecycle/) |
 | Capture, filter and navigate linked windows | [Observations and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) |
 | Compose typed predicates, traverse relations and require one match | [Typed queries](https://libtmux.org/en/haskell/latest/guides/query/) |
 | Create a session and recover its actual targets | [Session creation](https://libtmux.org/en/haskell/latest/guides/creation/) |
@@ -349,7 +413,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 ## Support and status
 
 - **Experimental.** The API may change.
-- **Works today.** Captures, typed queries, session creation, renames and pane titles.
+- **Works today.** Private server start and stop, captures, typed queries, session creation, renames and pane titles.
 - **In development.** Window/pane creation, pane input and event streams.
 - **Platform.** Linux x86_64. [Host requirements](docs/installation.md).
 - **More.** [Status](https://libtmux.org/en/haskell/latest/guides/status/) · [source guides](docs/README.md).
