@@ -4,6 +4,24 @@
 
 ### Added
 
+- Start a private tmux daemon for one scope with `withOwnedServer`, using
+  `OwnedServerConfig` from `defaultOwnedServerConfig` to choose the tmux
+  executable (`tmuxExecutable`) and a per-read deadline (`operationTimeout`).
+  Cleanup retires that
+  daemon and removes its socket directory; unfinished cleanup stays reachable
+  through `cleanupRecoveries`, `inspectCleanup` and `resumeCleanup`. Callback
+  exceptions keep their class, and cleanup that fails after a successful
+  callback raises `CleanupFailed`. A retained `Server` raises `ServerClosed`.
+  Needs Linux 6.5 or newer.
+  ([#34], [#28])
+- Retire an owned or adopted daemon explicitly with `killServer`, independently
+  of command lanes or a responsive daemon. Later operations raise `ServerClosed`,
+  as does a call made after the adopting callback has left.
+  Closing `withServer` or `withServerIn` leaves the daemon running. Opening
+  reads the daemon's process ID without running a command hook; where no
+  kill descriptor can be verified, the callback still runs and `killServer`
+  raises the failure. Needs Linux 6.5 or newer.
+  ([#34], [#28])
 - Create detached sessions through `createSession` and `createSessionWith`.
   `LibTmux.Creation` supplies session options and historical created session,
   window and pane references. ([#19])
@@ -126,3 +144,5 @@
 [#8]: https://github.com/libtmux/libtmux-haskell/pull/8
 [#9]: https://github.com/libtmux/libtmux-haskell/pull/9
 [#15]: https://github.com/libtmux/libtmux-haskell/issues/15
+[#28]: https://github.com/libtmux/libtmux-haskell/issues/28
+[#34]: https://github.com/libtmux/libtmux-haskell/issues/34
