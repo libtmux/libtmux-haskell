@@ -57,8 +57,11 @@ $ cabal run --verbose=0 capture-graph -- \
   scope cleanup.
 
 The API is experimental. The package provides observation, rename/title
-and existing-server session creation operations. First-server bootstrap,
-window/pane creation, pane input and events remain under development.
+and existing-server session creation operations, plus scoped terminal programs
+with input, rendered output and exit observation. Program needs tmux 3.8,
+Linux 6.9 process-group pidfds and the Bash features described in the
+[program guide](programs.md). First-server bootstrap, general window/pane
+commands and byte streaming remain under development.
 Check [status](status.md) before choosing it for automation.
 
 Browse the [manual](https://libtmux.org/en/haskell/) and
@@ -78,7 +81,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 7907db1f8f34feedf9f3ec2ca572eab1e5ed3431
+  tag: 83f583189a874d3a0bd20f75c173ff2c94d5980a
 ```
 
 ## Native backend host requirements
