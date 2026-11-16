@@ -200,7 +200,12 @@ def check_example_consumer(
 def check_public_commands(
     source: tarfile.TarFile, prefix: str, directory: Path, version: str
 ) -> None:
-    """Run public command cases against the archive, without private imports."""
+    """Run public command cases against the archive, without private imports.
+
+    They must exit zero and emit no stderr. The consumer ends through the fixture's guard, which
+    exits 3 and names the owners when a fixture daemon survived retirement, so a leak that
+    retirement reports to nobody still fails here.
+    """
     consumer = directory / "public-mutations"
     consumer.mkdir()
     for origin, name in [
@@ -212,12 +217,13 @@ def check_public_commands(
         (consumer / name).write_bytes(archived(source, prefix + origin))
     (consumer / "Main.hs").write_text(
         "module Main (main) where\n"
+        "import Fixture (guardRetained)\n"
         "import PublicMutationTest qualified\n"
         "import PublicCreationTest qualified\n"
         "import Test.Tasty (defaultMain, testGroup)\n"
         "main :: IO ()\n"
-        'main = defaultMain (testGroup "installed public commands"'
-        " [PublicMutationTest.tests, PublicCreationTest.tests])\n"
+        'main = guardRetained (defaultMain (testGroup "installed public commands"'
+        " [PublicMutationTest.tests, PublicCreationTest.tests]))\n"
     )
     (consumer / "cabal.project").write_text(
         f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"
@@ -247,12 +253,18 @@ def check_public_commands(
     result = subprocess.run(
         [executable, "--hide-successes"],
         cwd=directory,
-        check=True,
+        check=False,
         capture_output=True,
         timeout=BUILD,
     )
+    stderr = result.stderr.decode(errors="replace")
+    if result.returncode:
+        stdout = result.stdout.decode(errors="replace")[-2000:]
+        raise ValueError(
+            f"Installed public consumer exited {result.returncode}: {stderr}\n{stdout}"
+        )
     if result.stderr:
-        raise ValueError("Installed public mutation consumer emitted stderr")
+        raise ValueError(f"Installed public mutation consumer emitted stderr: {stderr}")
     print("PASS: installed public command behavior and recovery")
 
 

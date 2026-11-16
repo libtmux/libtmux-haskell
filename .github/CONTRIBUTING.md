@@ -274,7 +274,17 @@ The fixture owns a foreground `tmux -D` process and waits for socket
 readiness through filesystem events. This test setup disables tmux's
 ordinary empty-server exit policy; it is not a public startup API contract.
 It starts `/bin/cat -` directly and observes that initial pane process's exit
-through a Linux pidfd after daemon teardown. The fixture exit watch needs
+through a Linux pidfd after daemon teardown. The fixture starts that daemon
+with `pidfd_spawnp` (glibc 2.39 or newer) and holds the pidfd the kernel
+creates with the child. It signals and collects the daemon only through that
+pidfd and waits on private duplicates of it, so no signal reaches a recycled
+PID, no wait uses a recycled descriptor number and no other child is reaped;
+nothing else in the test process may reap children it did not start.
+Retirement sends SIGTERM, then SIGKILL, waiting at most two seconds after
+each. A daemon that survives both stays owned, with its pidfd open and its
+directory in place. Retirement writes nothing, so the integration runner and
+the archive consumer each end through `guardRetained`, which exits 3 and names
+any owner left. The fixture exit watch needs
 `pidfd_open` support (Linux 5.3 or newer). The private process suite additionally requires the
 [atomic-launch host operations](../docs/contracts/process.md#launch-and-host-requirements).
 

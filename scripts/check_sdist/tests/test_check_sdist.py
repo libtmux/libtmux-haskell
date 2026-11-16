@@ -3,7 +3,9 @@
 import io
 import json
 import subprocess
+import sys
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -160,3 +162,53 @@ def test_haddock_examples_run_with_a_time_limit(
     with pytest.raises(ValueError, match="Haddock example output differs"):
         check_sdist.check_haddock_examples(tmp_path, ["LibTmux"], [("1 + 1", "2\n")])
     assert commands == [("cabal", 600)]
+
+
+@pytest.fixture
+def public_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[int, str], None]:
+    """Run a stand-in archive consumer without building its Haskell inputs."""
+    archive = tmp_path / "source.tar.gz"
+    prefix = "libtmux-haskell-0.0.1.0/"
+    sources = [
+        "test/integration/PublicMutationTest.hs",
+        "test/integration/PublicCreationTest.hs",
+        "test-support/Fixture.hs",
+        "test-support/fixture-watch.c",
+    ]
+    write_tar(archive, {prefix + name: b"" for name in sources})
+
+    def check(status: int, errors: str) -> None:
+        directory = tmp_path / f"run-{status}-{len(errors)}"
+        directory.mkdir()
+        program = directory / "consumer"
+        program.write_text(
+            f"#!{sys.executable} -S\nimport sys\nsys.stderr.write({errors!r})\nsys.exit({status})\n"
+        )
+        program.chmod(0o755)
+        monkeypatch.setattr(check_sdist, "run", lambda *_args: None)
+        monkeypatch.setattr(
+            check_sdist.subprocess, "check_output", lambda *_args, **_kwargs: str(program)
+        )
+        with tarfile.open(archive) as source:
+            check_sdist.check_public_commands(source, prefix, directory, "0.0.1.0")
+
+    return check
+
+
+@pytest.mark.parametrize(
+    ("status", "errors", "message"),
+    [
+        pytest.param(
+            3, "fixture daemons still owned: sleeper\n", "exited 3: .*sleeper", id="owned"
+        ),
+        pytest.param(1, "", "exited 1", id="failed"),
+        pytest.param(0, "noise\n", "emitted stderr: noise", id="stderr"),
+    ],
+)
+def test_public_consumer_failures_report_the_status_and_stderr(
+    public_consumer: Callable[[int, str], None], status: int, errors: str, message: str
+) -> None:
+    """A retained daemon, failed test or stderr makes the archive check fail with its cause."""
+    public_consumer(0, "")
+    with pytest.raises(ValueError, match=message):
+        public_consumer(status, errors)
