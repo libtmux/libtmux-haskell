@@ -16,6 +16,14 @@ It checks that:
   that `cabal.project.vcs` offers for installation, which must be an ancestor
   of `HEAD`.
 
+Each source gets one workspace outside the checkout, with its own build
+directory and one `cabal.project` that lists the source's archive and every
+package to build against it: the declared examples and, for the archive, the
+public command package. One `cabal build` builds all their executables, so
+Cabal solves and configures each source once. The script then runs each example
+and compares its exit status, stdout and stderr with the catalogue. A workspace
+never lists the checkout or the other source.
+
 It first runs the `check_docs` checks. It needs Cabal, a provisioned dependency
 store, the full Git history for the installation pin, and the tmux executable
 named by `LIBTMUX_TEST_TMUX` for the examples and public command tests.
@@ -24,8 +32,9 @@ named by `LIBTMUX_TEST_TMUX` for the examples and public command tests.
 $ uv run scripts/check_sdist/check_sdist.py
 ```
 
-The tests cover the archive-member and Haddock-example checks, which need no
-build:
+The tests cover the archive-member and Haddock-example checks and, with a
+recording stand-in for `cabal`, the workspace layout and example failures. They
+need no build:
 
 ```console
 $ uv run --locked --offline pytest scripts/check_sdist

@@ -103,19 +103,18 @@ def main() -> None:
                 if found:
                     doctest_modules.append(module)
                     doctests.extend(found)
-            for index, entry in enumerate(examples):
-                consumer = directory / entry["id"]
-                consumer.mkdir()
-                check_example_consumer(
-                    entry,
-                    consumer,
-                    f"../archives/libtmux-haskell-{version}.tar.gz",
-                    lambda path: archived(source, prefix + path),
-                )
-                if index == 0:
-                    check_haddock_examples(consumer, doctest_modules, doctests)
+            workspace = directory / "archive"
+            write_public_consumer(source, prefix, workspace / "public-mutations", version)
+            executables = check_example_consumers(
+                examples,
+                workspace,
+                f"../archives/libtmux-haskell-{version}.tar.gz",
+                lambda path: archived(source, prefix + path),
+                {"public-mutations": "exe:public-mutations-consumer"},
+            )
+            check_haddock_examples(workspace, doctest_modules, doctests)
+            check_public_commands(executables["exe:public-mutations-consumer"], directory)
             check_installation_pin(directory, examples)
-            check_public_commands(source, prefix, directory, version)
         print("PASS: archive members, documented public example and Haddock examples")
 
 
@@ -149,47 +148,77 @@ def check_installation_pin(directory: Path, examples: list[Entry]) -> None:
             ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin], cwd=ROOT
         )
     )
-    for entry in examples:
-        consumer = directory / ("installation-" + entry["id"])
-        consumer.mkdir()
-        check_example_consumer(
-            entry, consumer, "../" + archive.name, lambda path: (ROOT / path).read_bytes()
-        )
+    check_example_consumers(
+        examples,
+        directory / "installation",
+        "../" + archive.name,
+        lambda path: (ROOT / path).read_bytes(),
+    )
     print("PASS: documented installation pin supports the current public examples")
 
 
-def check_example_consumer(
-    entry: Entry, consumer: Path, library: str, read_source: Callable[[str], bytes]
-) -> None:
-    """Build one example against ``library`` and compare its output with the catalogue."""
-    for field in ["source", "package", *(["runner", "stdout"] if "runner" in entry else [])]:
-        (consumer / Path(entry[field]).name).write_bytes(read_source(entry[field]))
-    (consumer / "cabal.project").write_text(
-        f"packages: . {library}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n"
+def check_example_consumers(
+    examples: list[Entry],
+    workspace: Path,
+    library: str,
+    read_source: Callable[[str], bytes],
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build and check every example against ``library`` in one isolated workspace.
+
+    ``extra`` maps further package directories already written under ``workspace`` to their
+    executable targets. One Cabal invocation builds every target, so Cabal solves and configures
+    this source once, not once per example. Return the built executables by target.
+    """
+    extra = extra or {}
+    for entry in examples:
+        package = workspace / entry["id"]
+        package.mkdir(parents=True)
+        for field in ["source", "package", *(["runner", "stdout"] if "runner" in entry else [])]:
+            (package / Path(entry[field]).name).write_bytes(read_source(entry[field]))
+    packages = [library, *(entry["id"] for entry in examples), *extra]
+    (workspace / "cabal.project").write_text(
+        f"packages: {' '.join(packages)}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n"
     )
-    target = "exe:" + entry["executable"]
-    run(["cabal", "build", target, "--offline"], consumer)
-    executable = subprocess.check_output(
-        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True
-    ).strip()
+    targets = ["exe:" + entry["executable"] for entry in examples] + list(extra.values())
+    run(["cabal", "build", *targets, "--offline"], workspace)
+    executables = {
+        target: subprocess.check_output(
+            ["cabal", "list-bin", target, "--offline"], cwd=workspace, text=True
+        ).strip()
+        for target in targets
+    }
+    for entry in examples:
+        check_example(entry, workspace, executables["exe:" + entry["executable"]], read_source)
+    return executables
+
+
+def check_example(
+    entry: Entry, workspace: Path, executable: str, read_source: Callable[[str], bytes]
+) -> None:
+    """Run one built example and compare its exit status, stdout and stderr with the catalogue."""
     command = (
-        ["python3", str(consumer / Path(entry["runner"]).name), "--program", executable]
+        [
+            "python3",
+            str(workspace / entry["id"] / Path(entry["runner"]).name),
+            "--program",
+            executable,
+        ]
         if "runner" in entry
         else [executable]
     )
     if "fixture_panes" in entry:
         command += ["--expected-panes", str(entry["fixture_panes"])]
-    result = subprocess.run(command, cwd=consumer.parent, check=True, capture_output=True)
+    result = subprocess.run(command, cwd=workspace.parent, check=True, capture_output=True)
     if result.stdout != read_source(entry["stdout"]) or result.stderr:
-        raise ValueError("Installed example produced unexpected output")
+        raise ValueError(f"Installed example produced unexpected output: {entry['id']}")
 
 
-def check_public_commands(
-    source: tarfile.TarFile, prefix: str, directory: Path, version: str
+def write_public_consumer(
+    source: tarfile.TarFile, prefix: str, consumer: Path, version: str
 ) -> None:
-    """Run public command cases against the archive, without private imports."""
-    consumer = directory / "public-mutations"
-    consumer.mkdir()
+    """Write the archive's public command cases as a package that imports only its library."""
+    consumer.mkdir(parents=True)
     for origin, name in [
         ("test/integration/PublicMutationTest.hs", "PublicMutationTest.hs"),
         ("test/integration/PublicCreationTest.hs", "PublicCreationTest.hs"),
@@ -208,10 +237,6 @@ def check_public_commands(
         'main = defaultMain (testGroup "installed public commands"'
         " [PublicMutationTest.tests, PublicCreationTest.tests, PublicLifecycleTest.tests])\n"
     )
-    (consumer / "cabal.project").write_text(
-        f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"
-        "index-state: 2026-11-06T00:00:00Z\ntests: False\n"
-    )
     (consumer / "consumer.cabal").write_text(
         "cabal-version: 3.18\nname: public-mutations-consumer\nversion: 0.0.0\n"
         "build-type: Simple\n"
@@ -228,11 +253,10 @@ def check_public_commands(
         f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, text, typed-process,"
         " unix\n"
     )
-    target = "exe:public-mutations-consumer"
-    run(["cabal", "build", target, "--offline"], consumer)
-    executable = subprocess.check_output(
-        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True
-    ).strip()
+
+
+def check_public_commands(executable: str, directory: Path) -> None:
+    """Run the built public command, lifecycle and recovery cases; they must not emit stderr."""
     result = subprocess.run(
         [executable, "--hide-successes"], cwd=directory, check=True, capture_output=True
     )
