@@ -24,6 +24,7 @@ exclude-newer = "3 days"
 # Each script is a plain module in its own directory, so tests import it, and
 # the scripts that call a sibling import it, by directory.
 pythonpath = [
+  "scripts/bounded",
   "scripts/capture_benchmark",
   "scripts/check_docs",
   "scripts/check_sdist",
@@ -44,6 +45,7 @@ addopts = [
 target-version = "py312"
 line-length = 100
 src = [
+  "scripts/bounded",
   "scripts/capture_benchmark",
   "scripts/check_docs",
   "scripts/check_sdist",
@@ -58,6 +60,7 @@ extend-select = ["ANN", "B", "C4", "I", "PT", "PTH", "RUF", "SIM", "UP"]
 [tool.ty.environment]
 python-version = "3.12"
 extra-paths = [
+  "scripts/bounded",
   "scripts/capture_benchmark",
   "scripts/check_docs",
   "scripts/check_sdist",

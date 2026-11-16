@@ -177,7 +177,7 @@ def test_prepare_selects_the_whole_core_package(
             ]
 
     consumer = Mock()
-    monkeypatch.setattr(subprocess, "run", cabal)
+    monkeypatch.setattr(release, "run", cabal)
     monkeypatch.setattr(release, "consumer", consumer)
     release.prepare(release_directory, release_root)
     assert release.verify(release_directory, release_root) == (
@@ -312,7 +312,7 @@ def test_cabal_failure_uses_https_and_redacts_tokens(
         )
 
     monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "secret-token")
-    monkeypatch.setattr(subprocess, "run", fail)
+    monkeypatch.setattr(release, "run", fail)
     with pytest.raises(ValueError, match=guidance) as error:
         release.cabal_upload(release_directory / DOCS, True, True)
     assert "secret-token" not in str(error.value)
@@ -328,7 +328,7 @@ def test_a_timed_out_upload_names_no_token(
         raise subprocess.TimeoutExpired(command, 120)
 
     monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "secret-token")
-    monkeypatch.setattr(subprocess, "run", hang)
+    monkeypatch.setattr(release, "run", hang)
     with pytest.raises(ValueError, match="cabal upload timed out") as error:
         release.cabal_upload(release_directory / DOCS, True, True)
     assert "secret-token" not in str(error.value)
@@ -490,7 +490,7 @@ def test_every_external_command_is_bounded(
         timeouts.append(kwargs.get("timeout"))
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(release, "run", run)
     monkeypatch.setattr(release, "consumer", Mock())
     release.prepare(release_directory, release_root)
     monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "test-token")
@@ -514,8 +514,8 @@ def test_the_public_consumer_bounds_cabal_and_the_program(
         timeouts.append(kwargs.get("timeout"))
         return "program"
 
-    monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(subprocess, "check_output", output)
+    monkeypatch.setattr(release, "run", run)
+    monkeypatch.setattr(release, "output", output)
     release.consumer(b"public source archive", release_root)
     assert len(timeouts) == 4
     assert all(isinstance(timeout, int | float) and timeout > 0 for timeout in timeouts)
@@ -529,7 +529,7 @@ def test_a_timed_out_command_is_reported_by_the_script(
     def hang(command: list[str], **kwargs: object) -> None:
         raise subprocess.TimeoutExpired(command, 1)
 
-    monkeypatch.setattr(subprocess, "run", hang)
+    monkeypatch.setattr(release, "run", hang)
     with pytest.raises(SystemExit) as status:
         release.main(["prepare", "--directory", str(tmp_path / "release")])
     assert status.value.code == 1
