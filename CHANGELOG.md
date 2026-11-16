@@ -4,6 +4,16 @@
 
 ### Added
 
+- Run terminal applications through `withProgram` and `runProgram`, with
+  literal argv, input, rendered output and typed leader outcomes. Program
+  operations require tmux 3.8, Linux 6.9 process-group pidfds and the checked
+  Bash features. ([#41])
+- Retain incomplete application cleanup through `ProgramRecovery`, preserving
+  callback failures and asynchronous exception classes. Cancelled observations
+  leave their owning scope running. ([#41])
+- Discover application operation support through `serverCapabilities` and
+  `LibTmux.Capabilities`, bound to the pinned daemon release. Unsupported
+  operations refuse before application creation. ([#15])
 - Create detached sessions through `createSession` and `createSessionWith`.
   `LibTmux.Creation` supplies session options and historical created session,
   window and pane references. ([#19])
@@ -126,3 +136,5 @@
 [#8]: https://github.com/libtmux/libtmux-haskell/pull/8
 [#9]: https://github.com/libtmux/libtmux-haskell/pull/9
 [#15]: https://github.com/libtmux/libtmux-haskell/issues/15
+
+[#41]: https://github.com/libtmux/libtmux-haskell/issues/41
