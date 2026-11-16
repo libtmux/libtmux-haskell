@@ -67,7 +67,7 @@ import System.Timeout (timeout)
 data ProgramOptions = ProgramOptions
   { executable :: !PosixString -- ^ Nonempty executable, resolved on the application's PATH when relative.
   , arguments :: ![PosixString] -- ^ Literal non-NUL bytes; an empty list is valid.
-  , bootstrapShell :: !PosixPath -- ^ Bash with dynamic descriptors and timed reads; default /bin/bash. Checked before application creation.
+  , bootstrapShell :: !PosixPath -- ^ Bash with dynamic descriptors and timed reads; default @\/bin\/bash@. Checked before application creation.
   , workingDirectory :: !(Maybe PosixPath) -- ^ Strict cwd; Nothing selects the caller's current directory.
   , environment :: ![(PosixString, PosixString)] -- ^ Application overrides. Shell identifiers and reserved names are validated before launch.
   , columns :: !Int -- ^ 1 to 500 cells; default 80.
