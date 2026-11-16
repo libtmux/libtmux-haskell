@@ -26,7 +26,9 @@ requested work.
 - Prose, examples, comments, and commits:
   [WRITING.md](.github/WRITING.md).
 - Support scripts: what may stay, their language, layout and checks:
-  [SCRIPTS.md](.github/SCRIPTS.md).
+  [SCRIPTS.md](.github/SCRIPTS.md). They are typed Python in
+  `scripts/<name>/`, run with `uv run`; the format, lint, type and test
+  commands are in [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
 Each guide owns its subject. `CLAUDE.md` is a relative symlink to this file.
 
