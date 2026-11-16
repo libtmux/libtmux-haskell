@@ -31,6 +31,7 @@ extra-doc-files:
   docs/shared-runtime.md
   docs/query.md
   docs/creation.md
+  docs/programs.md
   docs/mutations.md
   docs/fixtures.md
   docs/performance.md
@@ -71,6 +72,12 @@ extra-doc-files:
   docs/contracts/pane-commands.md
 extra-source-files:
   capabilities.json
+  examples/managed-program/Main.hs
+  examples/managed-program/README.md
+  examples/managed-program/expected.stdout
+  examples/managed-program/libtmux-managed-program.cabal
+  examples/managed-program/cabal.project
+  examples/managed-program/cabal.project.vcs
   .tool-versions
   cbits/process.h
   test-support/process-child.c
