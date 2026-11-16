@@ -371,12 +371,8 @@ setup program = do
       retainCreation
     writeIORef program.created (Just created)
   (session, pane) <- identities program
-  mutation program (C.ProgramHistory session program.settings.historyLines)
-  mutation program (C.ProgramRemain pane)
-  mutation program (C.ProgramRemainFormat pane)
   created <- readIORef program.created >>= maybe (throwIO ProgramCleanupIncomplete) pure
   let G.WindowRef _ window = created.window
-  mutation program (C.ProgramGeometry window program.settings.columns program.settings.rows)
   ensureGeneration program
   state <- readState program
   pid <- maybe (throwIO (ProgramObservationLost "bootstrap exited before ownership acquisition")) pure state.pid
@@ -388,6 +384,10 @@ setup program = do
     live <- N.cSignal fd 0
     unless (live == 0) (throwIO (ProgramObservationLost "bootstrap identity expired during acquisition"))
     writeIORef program.candidate (Just (fd, pid))
+  forM_ [C.ProgramHistory session program.settings.historyLines,
+    C.ProgramRemain pane, C.ProgramRemainFormat pane,
+    C.ProgramGeometry window program.settings.columns program.settings.rows] (transfer program True)
+  current <- currentGeneration program
   next <- observe program "pane-created" (panePredicate pane)
   writeIORef program.successor (Just next)
   exited <- observe program "pane-died" (panePredicate pane)
@@ -395,14 +395,14 @@ setup program = do
   mask_ $ do
     writer <- readIORef program.writer >>= maybe (throwIO ProgramCleanupIncomplete) pure
     writeIORef program.released True
-    let bytes = Bytes.intercalate " " [initial.clientName, Utf8.encodeUtf8 (Id.renderSessionId session),
+    let bytes = Bytes.intercalate " " [current.clientName, Utf8.encodeUtf8 (Id.renderSessionId session),
           Utf8.encodeUtf8 (Id.renderWindowId window), Utf8.encodeUtf8 (Id.renderPaneId pane), Ascii.pack (show pid)] <> "\n"
     count <- Posix.fdWrite writer bytes
     unless (toInteger count == toInteger (Bytes.length bytes))
       (throwIO (ProgramObservationLost "partial bootstrap claim submission"))
   claimed <- bounded program (acceptCandidate program)
   unless claimed (throwIO (ProgramObservationLost "bootstrap ownership claim was refused"))
-  closeObserver program initial
+  closeObserver program current
   ensureGeneration program
 
 -- All caller bytes are positional parameters. Successful exec discards the
