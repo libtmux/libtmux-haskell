@@ -16,10 +16,7 @@ import System.Posix.Files (createNamedPipe, readSymbolicLink)
 import System.Posix.IO (OpenFileFlags (..), OpenMode (ReadOnly), closeFd, defaultFileFlags, openFd)
 import System.Posix.Types (Fd (..))
 import System.Timeout (timeout)
-import System.Directory
-  ( doesDirectoryExist, emptyPermissions, removeFile, setOwnerExecutable, setOwnerReadable
-  , setPermissions
-  )
+import System.Directory (doesDirectoryExist, removeFile)
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString, ioeGetLocation, isDoesNotExistError, isPermissionError)
 import Test.Tasty (TestTree, testGroup)
@@ -242,8 +239,12 @@ withScript :: Fixture -> String -> (Fixture -> Script -> IO a) -> IO a
 withScript fixture body use = do
   let path = fixture.directory </> "client"
       marker = fixture.directory </> "marker"
-  writeFile path ("#!/bin/sh\nexec 3>\"${0%/*}/marker\"\n" <> body)
-  setPermissions path (setOwnerExecutable True (setOwnerReadable True emptyPermissions))
+  -- A child writes the script. If this multi-threaded process held the file open for writing, a thread
+  -- that forks meanwhile would carry a copy of the descriptor, and executing the script would fail
+  -- with ETXTBSY.
+  let source = "#!/bin/sh\nexec 3>\"${0%/*}/marker\"\n" <> body
+      write = ["-c", "printf '%s' \"$1\" > \"$2\" && chmod 700 \"$2\"", "sh", source, path]
+  withDaemon retirement "script writer" "/bin/sh" write [("PATH", "/usr/bin:/bin")] awaitDaemon >>= (@?= ExitSuccess)
   createNamedPipe marker 0o600
   let open = openFd marker ReadOnly defaultFileFlags {nonBlock = True, cloexec = True}
       script end = Script
@@ -316,13 +317,18 @@ clientScopes :: IO ()
 clientScopes = withFixture $ \fixture -> for_ [False, True] $ \cancelled ->
   withScript fixture running $ \stub script -> do
     saved <- newIORef Nothing
+    entered <- newEmptyMVar @()
     never <- newEmptyMVar @()
     let scope body = withClient stub (Null, Pipe, Pipe) [] $ \client -> do
           pipeEnds client >>= writeIORef saved . Just . (client,)
+          putMVar entered ()
           body
     outcome <-
       if cancelled
-        then withAsync (scope (takeMVar never)) $ \worker -> script.announced >> cancel worker >> waitCatch worker
+        then withAsync (scope (takeMVar never)) $ \worker -> do
+          -- The script's announcement shows the client runs, not that the scope has recorded it.
+          race (wait worker) (takeMVar entered) >>= either (const (assertFailure "the scope returned early")) pure
+          script.announced >> cancel worker >> waitCatch worker
         else try @SomeException (scope (script.announced >> throwIO Boom))
     cancelledBy outcome @?= if cancelled then "cancelled" else "Boom"
     readIORef saved >>= maybe (assertFailure "client never started") (\(client, ends) -> do
