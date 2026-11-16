@@ -229,13 +229,14 @@ def write_public_consumer(
         (consumer / name).write_bytes(archived(source, prefix + origin))
     (consumer / "Main.hs").write_text(
         "module Main (main) where\n"
+        "import Fixture (guardRetained)\n"
         "import PublicMutationTest qualified\n"
         "import PublicCreationTest qualified\n"
         "import PublicLifecycleTest qualified\n"
         "import Test.Tasty (defaultMain, testGroup)\n"
         "main :: IO ()\n"
-        'main = defaultMain (testGroup "installed public commands"'
-        " [PublicMutationTest.tests, PublicCreationTest.tests, PublicLifecycleTest.tests])\n"
+        'main = guardRetained (defaultMain (testGroup "installed public commands"'
+        " [PublicMutationTest.tests, PublicCreationTest.tests, PublicLifecycleTest.tests]))\n"
     )
     (consumer / "consumer.cabal").write_text(
         "cabal-version: 3.18\nname: public-mutations-consumer\nversion: 0.0.0\n"
@@ -256,12 +257,23 @@ def write_public_consumer(
 
 
 def check_public_commands(executable: str, directory: Path) -> None:
-    """Run the built public command, lifecycle and recovery cases; they must not emit stderr."""
+    """Run the built public command, lifecycle and recovery cases.
+
+    They must exit zero and emit no stderr. The consumer ends through the fixture's guard, which
+    exits 3 and names the owners when a fixture daemon survived retirement, so a leak that
+    retirement reports to nobody still fails here.
+    """
     result = subprocess.run(
-        [executable, "--hide-successes"], cwd=directory, check=True, capture_output=True
+        [executable, "--hide-successes"], cwd=directory, check=False, capture_output=True
     )
+    stderr = result.stderr.decode(errors="replace")
+    if result.returncode:
+        stdout = result.stdout.decode(errors="replace")[-2000:]
+        raise ValueError(
+            f"Installed public consumer exited {result.returncode}: {stderr}\n{stdout}"
+        )
     if result.stderr:
-        raise ValueError("Installed public mutation consumer emitted stderr")
+        raise ValueError(f"Installed public mutation consumer emitted stderr: {stderr}")
     print("PASS: installed public command, lifecycle and recovery behavior")
 
 

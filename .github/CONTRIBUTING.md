@@ -283,7 +283,9 @@ PID, no wait uses a recycled descriptor number and no other child is reaped;
 nothing else in the test process may reap children it did not start.
 Retirement sends SIGTERM, then SIGKILL, waiting at most two seconds after
 each. A daemon that survives both stays owned, with its pidfd open and its
-directory in place, and fails the run. The fixture exit watch needs
+directory in place. Retirement writes nothing, so the integration runner and
+the archive consumer each end through `guardRetained`, which exits 3 and names
+any owner left. The fixture exit watch needs
 `pidfd_open` support (Linux 5.3 or newer). The private process suite additionally requires the
 [atomic-launch host operations](../docs/contracts/process.md#launch-and-host-requirements).
 

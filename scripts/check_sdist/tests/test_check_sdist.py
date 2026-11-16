@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,15 @@ PLAN = {
         {"id": "libtmux-haskell-0.0.1.0-inplace", "pkg-name": "libtmux-haskell"},
     ]
 }
+
+# The archived files the generated public consumer is written from.
+PUBLIC_SOURCES = [
+    "test/integration/PublicMutationTest.hs",
+    "test/integration/PublicCreationTest.hs",
+    "test/integration/PublicLifecycleTest.hs",
+    "test-support/Fixture.hs",
+    "test-support/fixture-watch.c",
+]
 
 
 def write_tar(path: Path, files: dict[str, bytes], *, unsafe: str | None = None) -> None:
@@ -274,13 +284,7 @@ def consumers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Consumers:
     (root / "src/LibTmux.hs").write_text(
         "-- head\nmodule LibTmux where\n-- | Sum.\n--\n-- >>> 1 + 2 + 3\n-- 6\n"
     )
-    for name in [
-        "test/integration/PublicMutationTest.hs",
-        "test/integration/PublicCreationTest.hs",
-        "test/integration/PublicLifecycleTest.hs",
-        "test-support/Fixture.hs",
-        "test-support/fixture-watch.c",
-    ]:
+    for name in PUBLIC_SOURCES:
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(f"-- {name}\n")
     entries = []
@@ -403,3 +407,58 @@ def test_the_last_example_failing_fails_the_check_before_the_pin(
     ran = [Path(run["program"]).name for run in consumers.events("run")]
     assert ran == ["typed-values", "capture-graph", "shared-runtime", "owned-server"]
     assert {solve["marker"] for solve in consumers.events("solve")} == {"-- head"}
+
+
+def test_generated_consumer_ends_through_the_retained_daemon_guard(tmp_path: Path) -> None:
+    """The archive runner wraps its whole test tree in the fixture's guard.
+
+    Retirement writes no diagnostic, so a daemon that outlives both signals is reported only by
+    this guard's exit status.
+    """
+    archive = tmp_path / "source.tar.gz"
+    prefix = "libtmux-haskell-0.0.1.0/"
+    write_tar(archive, {prefix + name: b"" for name in PUBLIC_SOURCES})
+    with tarfile.open(archive) as source:
+        check_sdist.write_public_consumer(source, prefix, tmp_path / "consumer", "0.0.1.0")
+    runner = (tmp_path / "consumer/Main.hs").read_text()
+    assert "import Fixture (guardRetained)\n" in runner
+    assert "main = guardRetained (defaultMain (testGroup" in runner
+    assert runner.endswith("PublicLifecycleTest.tests]))\n")
+
+
+@pytest.fixture
+def consumer_binary(tmp_path: Path) -> Callable[[int, str], str]:
+    """Write a stand-in consumer that prints to stderr and exits with a chosen status."""
+
+    def write(status: int, stderr: str) -> str:
+        script = tmp_path / "consumer"
+        script.write_text(
+            f"#!{sys.executable} -S\nimport sys\nsys.stderr.write({stderr!r})\nsys.exit({status})\n"
+        )
+        script.chmod(0o755)
+        return str(script)
+
+    return write
+
+
+@pytest.mark.parametrize(
+    ("status", "stderr", "message"),
+    [
+        pytest.param(
+            3, "fixture daemons still owned: sleeper\n", "exited 3: .*sleeper", id="owned"
+        ),
+        pytest.param(1, "", "exited 1", id="failed"),
+        pytest.param(0, "noise\n", "emitted stderr: noise", id="stderr"),
+    ],
+)
+def test_installed_consumer_must_exit_zero_without_stderr(
+    consumer_binary: Callable[[int, str], str],
+    tmp_path: Path,
+    status: int,
+    stderr: str,
+    message: str,
+) -> None:
+    """A clean run passes; a retained owner, a failure or any stderr fails with its cause."""
+    check_sdist.check_public_commands(consumer_binary(0, ""), tmp_path)
+    with pytest.raises(ValueError, match=message):
+        check_sdist.check_public_commands(consumer_binary(status, stderr), tmp_path)

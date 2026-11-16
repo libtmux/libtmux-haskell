@@ -1,6 +1,6 @@
 module Fixture
   ( Fixture (..), StartupStage (..), Daemon (..), Retirement (..), retirement
-  , withFixture, withFixtureAt, withDaemon, retireDaemon, awaitDaemon, pollDaemon, retainedDaemons
+  , withFixture, withFixtureAt, withDaemon, retireDaemon, awaitDaemon, pollDaemon, retainedDaemons, guardRetained
   , withAttachedClient, command, registerPane, withTrackedPane, inIsolatedProcess
   ) where
 
@@ -28,7 +28,7 @@ import GHC.Foreign qualified as Foreign
 import GHC.IO.Encoding (getFileSystemEncoding)
 import System.Directory (removePathForcibly)
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
-import System.Exit (ExitCode (..))
+import System.Exit (ExitCode (..), exitWith)
 import System.FilePath ((</>))
 import System.IO (hFlush, hPutStrLn, stderr)
 import System.IO.Unsafe (unsafePerformIO)
@@ -160,7 +160,8 @@ startDaemon how label executable arguments environment = do
 
 -- | End the child through its pidfd and collect its status. Each wait is bounded; the
 -- escalation is SIGTERM, then SIGKILL. A child that cannot be retired stays owned: its pidfd is
--- kept open and listed by 'retainedDaemons', and the failure is raised.
+-- kept open and listed by 'retainedDaemons', and the failure is raised. Nothing here writes a
+-- diagnostic, because a blocked stream inside this uninterruptible region would void the bounds.
 retireDaemon :: Daemon -> IO ()
 retireDaemon daemon = uninterruptibleMask_ $ do
   (end >> closeDaemon daemon) `onException` keep
@@ -181,9 +182,7 @@ retireDaemon daemon = uninterruptibleMask_ $ do
         rc <- waitPidfd copy (fromIntegral (daemon.how.step `div` 1000))
         when (rc < 0) (ioError (errnoToIOError "fixture daemon wait" (Errno (negate rc)) Nothing (Just daemon.label)))
       (/= Nothing) <$> pollDaemon daemon
-    keep = do
-      atomicModifyIORef' retained (\kept -> (daemon : filter ((/= daemon.phase) . (.phase)) kept, ()))
-      hPutStrLn stderr ("fixture daemon " <> daemon.label <> " could not be retired; its pidfd stays open")
+    keep = atomicModifyIORef' retained (\kept -> (daemon : filter ((/= daemon.phase) . (.phase)) kept, ()))
 
 -- | The status if the child has exited, collecting it on first sight. Never blocks.
 pollDaemon :: Daemon -> IO (Maybe ExitCode)
@@ -250,6 +249,16 @@ retained = unsafePerformIO (newIORef [])
 
 retainedDaemons :: IO [Daemon]
 retainedDaemons = readIORef retained
+
+-- | Run a test runner and fail it, with exit status 3, if a daemon is still owned when it ends.
+-- Retirement is silent, so every runner that uses these fixtures must end through this guard.
+guardRetained :: IO a -> IO a
+guardRetained run = run `finally` (retainedDaemons >>= report)
+  where
+    report [] = pure ()
+    report owners = do
+      hPutStrLn stderr ("fixture daemons still owned: " <> unwords (map (.label) owners))
+      exitWith (ExitFailure 3)
 
 -- | A retained daemon still needs its directory.
 removeUnlessRetained :: FilePath -> IO ()
