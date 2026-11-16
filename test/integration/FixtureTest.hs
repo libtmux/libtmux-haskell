@@ -17,8 +17,8 @@ import Fixture
 import GHC.Clock (getMonotonicTime)
 import GHC.Conc (closeFdWith, threadWaitRead)
 import System.FilePath ((</>))
-import System.Posix.Files (createNamedPipe, readSymbolicLink)
-import System.Posix.IO (OpenFileFlags (..), OpenMode (ReadOnly), closeFd, defaultFileFlags, openFd)
+import System.Posix.Files (createNamedPipe, readSymbolicLink, setFileMode)
+import System.Posix.IO (OpenFileFlags (..), OpenMode (ReadOnly, WriteOnly), closeFd, defaultFileFlags, openFd)
 import System.Posix.Types (Fd (..))
 import System.Timeout (timeout)
 import System.Directory
@@ -144,6 +144,22 @@ tests = testGroup "owned tmux fixture"
           timeout 2000000 (wait waiter) >>= (@?= Just (ExitFailure (-15)))
   , testCase "retirement signals only a live child, escalates to SIGKILL, and keeps one that survives" retireBounds
   , testCase "a client's streams, status, arguments and environment pass through exactly" clientFidelity
+  , testCase "a client does not retain another script's writable descriptor" $
+      withFixture $ \fixture -> do
+        let path = fixture.directory </> "independent-client"
+        writeFile path "#!/bin/sh\nexit 0\n"
+        setFileMode path 0o700
+        opened <- newEmptyMVar @()
+        closeWriter <- newEmptyMVar @()
+        let writer = bracket (openFd path WriteOnly defaultFileFlags {cloexec = False}) closeFd $ \_ ->
+              putMVar opened () >> takeMVar closeWriter
+        withAsync writer $ \writing -> do
+          takeMVar opened
+          withClient fixture {executable = "/bin/sleep"} (Null, Null, Null) ["30"] $ \_ -> do
+            putMVar closeWriter ()
+            wait writing
+            withClient fixture {executable = path} (Null, Null, Null) [] $ \client ->
+              awaitDaemon client.process >>= (@?= ExitSuccess)
   , testCase "a failed or cancelled client scope retires its client once and keeps its cause" clientScopes
   , testCase "cancelling command ends the running client within the bound" commandCancellation
   , testCase "a client that ignores SIGTERM is killed, and one that survives is retained with the body's cause" clientEscalation

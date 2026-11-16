@@ -20,6 +20,7 @@ int libtmux_fixture_pidfd(int pid)
 
 typedef int (*pidfd_spawn_call)(int *, const char *, const posix_spawn_file_actions_t *,
                                 const posix_spawnattr_t *, char *const[], char *const[]);
+typedef int (*close_from_call)(posix_spawn_file_actions_t *, int);
 
 /* How a child's standard stream is connected: /dev/null opened read-write, as typed-process's
  * null stream was; the parent's own descriptor; or a pipe whose other end the parent keeps. */
@@ -60,7 +61,8 @@ static void close_all(const int *fds, int count)
             close(fds[i]);
 }
 
-static int launch(pidfd_spawn_call spawn, const char *file, char *const argv[], char *const envp[],
+static int launch(pidfd_spawn_call spawn, close_from_call close_from,
+                  const char *file, char *const argv[], char *const envp[],
                   const int modes[3], const int child[3], int *fd)
 {
     posix_spawn_file_actions_t actions;
@@ -84,6 +86,8 @@ static int launch(pidfd_spawn_call spawn, const char *file, char *const argv[], 
         else if (modes[i] == FIXTURE_PIPE)
             rc = posix_spawn_file_actions_adddup2(&actions, child[i], i);
     }
+    if (!rc)
+        rc = close_from(&actions, 3);
     if (!rc && !(rc = posix_spawnattr_setsigmask(&attributes, &mask)) &&
         !(rc = posix_spawnattr_setsigdefault(&attributes, &defaults)) &&
         !(rc = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)))
@@ -98,7 +102,7 @@ static int launch(pidfd_spawn_call spawn, const char *file, char *const argv[], 
  * pipes (stdin's writable, the others readable; non-blocking and close-on-exec), otherwise -1. The
  * kernel creates the pidfd together with the child, so it can never name another process, whatever
  * the child does next. Zero on success, otherwise an errno value, with no child and no descriptor
- * left.
+ * left. The child keeps only its three configured standard descriptors.
  *
  * Resolves glibc 2.39's pidfd_spawnp at run time, as the library's own launcher does,
  * and refuses a SIGCHLD policy that reaps children without a status. */
@@ -113,7 +117,10 @@ int libtmux_fixture_spawn(const char *file, char *const argv[], char *const envp
     void *symbol = dlsym(RTLD_DEFAULT, "pidfd_spawnp");
     pidfd_spawn_call spawn;
     memcpy(&spawn, &symbol, sizeof spawn);
-    if (!spawn)
+    symbol = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addclosefrom_np");
+    close_from_call close_from;
+    memcpy(&close_from, &symbol, sizeof close_from);
+    if (!spawn || !close_from)
         return ENOSYS;
     struct sigaction policy;
     if (sigaction(SIGCHLD, NULL, &policy) == -1)
@@ -131,7 +138,7 @@ int libtmux_fixture_spawn(const char *file, char *const argv[], char *const envp
     }
     int fd = -1;
     if (!rc)
-        rc = launch(spawn, file, argv, envp, modes, child, &fd);
+        rc = launch(spawn, close_from, file, argv, envp, modes, child, &fd);
     close_all(child, 3);
     if (rc) {
         close_all(parent, 3);
