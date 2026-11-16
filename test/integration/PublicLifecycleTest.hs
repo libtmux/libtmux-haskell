@@ -232,6 +232,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "public lifecycle"
         Fixture.command fixture ["show-option", "-g", "-v", "@libtmux-probe-hit"] >>= (@?= (ExitSuccess, "0\n", ""))
 
   , testCase "invalid configuration is refused before any executable runs" $
+      Fixture.inIsolatedProcess "invalid configuration is refused before any executable runs" $
       withRecorder $ \script marker -> do
         let config = Tmux.defaultOwnedServerConfig {Tmux.tmuxExecutable = Os.fromBytestring (Bytes.pack script)}
             refused configuration = do
@@ -244,10 +245,11 @@ tests = localOption (mkTimeout 60000000) $ testGroup "public lifecycle"
         refused config {Tmux.tmuxExecutable = Os.fromBytestring "/nonexistent/libtmux-haskell-tmux"}
         doesFileExist marker >>= assertBool "an invalid configuration launched the executable" . not
         -- Control: the recorder sees a valid launch, which fails as an operational error.
-        Tmux.tryTmux (Tmux.withOwnedServer config (\_ -> pure ())) >>= \case
+        failed <- Tmux.tryTmux (Tmux.withOwnedServer config (\_ -> pure ()))
+        case failed of
           Left (ExceptionWithContext _ (Tmux.OperationFailed _)) -> pure ()
           other -> assertFailure ("a failed start was not operational: " <> either show (const "success") other)
-        doesFileExist marker >>= assertBool "the recorder did not observe a valid launch"
+        doesFileExist marker >>= assertBool ("the recorder did not observe a valid launch: " <> show failed)
   ]
 
 options :: Tmux.SessionOptions

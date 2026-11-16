@@ -221,7 +221,7 @@ def check_public_commands(
         "  default-language: GHC2024\n"
         "  default-extensions: OverloadedRecordDot OverloadedStrings DuplicateRecordFields"
         " NoFieldSelectors\n"
-        "  ghc-options: -Wall -Werror -threaded\n"
+        "  ghc-options: -Wall -Werror -threaded -rtsopts\n"
         "  c-sources: fixture-watch.c\n"
         "  cc-options: -std=c11 -Wall -Wextra\n"
         "  build-depends: base >=4.22 && <4.23, async, bytestring, directory, filepath,\n"

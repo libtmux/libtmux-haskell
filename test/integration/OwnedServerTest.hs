@@ -48,7 +48,7 @@ import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
 import System.Directory (createDirectory, doesPathExist, listDirectory, removeDirectory, removePathForcibly)
-import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString)
 import System.FilePath ((</>))
@@ -110,7 +110,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
     ]
   , testGroup "lifecycle"
     [ testCase "normal return: session and capture, daemon retired, names removed, no descriptor kept" $
-        isolatedFdAudit "normal return: session and capture, daemon retired, names removed, no descriptor kept" $
+        Fixture.inIsolatedProcess "normal return: session and capture, daemon retired, names removed, no descriptor kept" $
         withTmux $ \exe -> do
           normalLifecycle exe
           before <- fdCount
@@ -589,7 +589,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
             `finally` void (R.shutdown runtime)
 
     , testCase "an adopted kill after the daemon left reports AlreadyGone; admission keeps no descriptor" $
-        isolatedFdAudit "an adopted kill after the daemon left reports AlreadyGone; admission keeps no descriptor" $
+        Fixture.inIsolatedProcess "an adopted kill after the daemon left reports AlreadyGone; admission keeps no descriptor" $
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           -- Leaving the scope closes a handle's admission, so each admission gets its own handle.
@@ -657,7 +657,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
                          >> void (R.shutdown runtime))
 
     , testCase "a failed adoption-only release resumes as a release: the borrowed daemon stays alive and the descriptors close" $
-        isolatedFdAudit "a failed adoption-only release resumes as a release" $
+        Fixture.inIsolatedProcess "a failed adoption-only release resumes as a release" $
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
@@ -702,7 +702,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
             `finally` void (R.shutdown runtime)
 
     , testCase "a late kill refuses once the callback has left, and the held release stays a release" $
-        isolatedFdAudit "a late kill refuses once the callback has left, and the held release stays a release" $
+        Fixture.inIsolatedProcess "a late kill refuses once the callback has left, and the held release stays a release" $
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
@@ -763,7 +763,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
             `finally` (N.close witness >> void (R.shutdown runtime))
 
     , testCase "an unsupported host leaves plain adoption to the callback, and the kill's failure is the stored one" $
-        isolatedFdAudit "an unsupported host leaves plain adoption to the callback, and the kill's failure is the stored one" $
+        Fixture.inIsolatedProcess "an unsupported host leaves plain adoption to the callback, and the kill's failure is the stored one" $
         withTmux $ \exe -> Fixture.withFixture $ \fixture -> do
           runtime <- R.newRuntime P.normalFork
           adopted <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
@@ -956,21 +956,28 @@ invalidDescriptor = do
 saturatedListener :: Assertion
 saturatedListener = withScratch $ \scratch -> do
   let path = scratch </> "s"
-  listener <- withCString path (\name -> listenAt name 1)
-  assertBool "listener" (listener >= 0)
-  queued <- saturating path
-  assertBool "backlog filled" (not (null queued))
-  -- A blocking connect would hang here; the bounded form answers at once.
-  timeout 1000000 (OS.peerPidfd (Ascii.pack path)) >>= \case
-    Just (Left problem) -> problem @?= N.errno eAGAIN
-    Just (Right pidfd) -> N.close pidfd >> assertFailure "a full backlog produced a pidfd"
-    Nothing -> assertFailure "peer acquisition did not return within one second"
-  -- Closing the listener resets the queued connections and leaves nothing to connect to.
-  Posix.closeFd (Fd listener)
-  OS.peerPidfd (Ascii.pack path) >>= \case
-    Left problem -> problem @?= N.errno eCONNREFUSED
-    Right pidfd -> N.close pidfd >> assertFailure "a closed listener produced a pidfd"
-  mapM_ N.close queued
+  listenerClosed <- newIORef False
+  let acquire = do
+        listener <- withCString path (\name -> listenAt name 1)
+        assertBool "listener" (listener >= 0)
+        pure listener
+      closeListener listener = do
+        wasClosed <- atomicModifyIORef' listenerClosed (\closed -> (True, closed))
+        unless wasClosed (N.close listener)
+  bracket acquire closeListener $ \listener ->
+    bracket (saturating path) (mapM_ N.close) $ \queued -> do
+      assertBool "backlog filled" (not (null queued))
+      -- A blocking connect would hang here; the bounded form answers at once.
+      timeout 1000000 (OS.peerPidfd (Ascii.pack path)) >>= \case
+        Just (Left problem) -> problem @?= N.errno eAGAIN
+        Just (Right pidfd) -> N.close pidfd >> assertFailure "a full backlog produced a pidfd"
+        Nothing -> assertFailure "peer acquisition did not return within one second"
+      closeListener listener
+      -- A concurrent fork may still hold the listener until exec; its queued peer proves closure.
+      bounded (awaitReset (last queued))
+      OS.peerPidfd (Ascii.pack path) >>= \case
+        Left problem -> problem @?= N.errno eCONNREFUSED
+        Right pidfd -> N.close pidfd >> assertFailure "a closed listener produced a pidfd"
 
 normalLifecycle :: ByteString -> IO ()
 normalLifecycle exe = do
@@ -1351,23 +1358,6 @@ assertSettledOrRetained watch matches outcome = do
 
 fdCount :: IO Int
 fdCount = length <$> listDirectory "/proc/self/fd"
-
--- The descriptor table is process-wide; concurrent cases would corrupt its baseline.
-isolatedFdAudit :: String -> Assertion -> Assertion
-isolatedFdAudit selected action = lookupEnv "LIBTMUX_FD_AUDIT_CASE" >>= \case
-  Just current | current == selected -> putStrLn ("libtmux-fd-audit: " <> selected) >> action
-  _ -> do
-    executable <- getExecutablePath
-    environment <- filter ((/= "LIBTMUX_FD_AUDIT_CASE") . fst) <$> getEnvironment
-    (code, output, errors) <- readProcess $ setEnv (("LIBTMUX_FD_AUDIT_CASE", selected) : environment) $
-      setStdin nullStream $ proc executable
-        ["--pattern", "/" <> selected <> "/", "--num-threads", "1", "+RTS", "-N1", "-RTS"]
-    unless (code == ExitSuccess && Lazy.null errors) $
-      assertFailure ("isolated descriptor audit failed: " <> show (code, output, errors))
-    assertBool "isolated descriptor audit did not select one case"
-      ("All 1 tests passed" `Bytes.isInfixOf` Lazy.toStrict output)
-    assertBool "isolated descriptor audit did not enter its selected case"
-      (Ascii.pack ("libtmux-fd-audit: " <> selected) `Bytes.isInfixOf` Lazy.toStrict output)
 
 -- | Test seams that record the private directory and open independent witnesses.
 watching :: Watch -> Maybe OS.Stage -> OS.Probe -> OS.Probe
