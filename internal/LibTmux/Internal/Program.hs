@@ -479,18 +479,24 @@ acceptCandidate program = readIORef program.candidate >>= \case
   Nothing -> maybe False (const True) <$> readIORef program.group
   Just (fd, pid) -> do
     file <- readIORef program.acceptedFile >>= maybe (throwIO ProgramCleanupIncomplete) pure
+    let expected = program.token <> ":" <> Ascii.pack (show pid) <> "\n"
+        admit = mask_ $ do
+          next <- readIORef program.successor >>= maybe (throwIO ProgramCleanupIncomplete) pure
+          writeIORef program.group (Just fd)
+          writeIORef program.candidate Nothing
+          atomically (writeTVar program.generation (Just next))
+          pure True
     value <- readBoundedFile file 128
-    if value == program.token <> ":" <> Ascii.pack (show pid) <> "\n" then mask_ $ do
-      next <- readIORef program.successor >>= maybe (throwIO ProgramCleanupIncomplete) pure
-      writeIORef program.group (Just fd)
-      writeIORef program.candidate Nothing
-      atomically (writeTVar program.generation (Just next))
-      pure True
-    else do
+    if value == expected then admit else do
       errorFile <- readIORef program.errorFile >>= maybe (throwIO ProgramCleanupIncomplete) pure
       failure <- readBoundedFile errorFile 64
       exited <- N.pidReady fd
-      if not (Bytes.null failure) || exited then pure False else do
+      if not (Bytes.null failure) || exited then do
+        -- Exec and its exit can follow the first empty read. The receipt is
+        -- written before either terminal observation, so sample it again.
+        final <- readBoundedFile file 128
+        if final == expected then admit else pure False
+      else do
         watch <- readIORef program.watch >>= maybe (throwIO ProgramCleanupIncomplete) pure
         race (threadWaitRead (Fd watch)) (threadWaitRead (Fd fd)) >>= \case
           Left () -> N.watchRead watch >>= \ready -> when (ready < 0) (N.raise (-ready))
