@@ -6,7 +6,7 @@ module Fixture
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Concurrent.MVar (MVar, modifyMVarMasked, modifyMVarMasked_, newMVar, withMVarMasked)
-import Control.Exception (SomeException, bracket, finally, mask, mask_, onException, throwIO, try, uninterruptibleMask_)
+import Control.Exception (SomeException, finally, mask, mask_, onException, throwIO, try, uninterruptibleMask_)
 import Control.Monad (unless, when)
 import Data.ByteString qualified as Strict
 import Data.ByteString.Char8 qualified as Ascii
@@ -86,9 +86,9 @@ withFixtureAt checkpoint action = do
   paneExitObserved <- newIORef False
   executable <- fromMaybe "tmux" <$> lookupEnv "LIBTMUX_TEST_TMUX"
   environment <- filter (\(key, _) -> key /= "TMUX" && key /= "TMUX_PANE") <$> getEnvironment
-  bracket (mkdtemp "/tmp/libtmux-haskell-") removeUnlessRetained $ \directory ->
-    bracket (openWatch directory) closeFd $ \watch ->
-      bracket (newIORef Nothing) (finishPane paneExitObserved) $ \pane -> do
+  scoped (mkdtemp "/tmp/libtmux-haskell-") removeUnlessRetained $ \directory ->
+    scoped (openWatch directory) closeFd $ \watch ->
+      scoped (newIORef Nothing) (finishPane paneExitObserved) $ \pane -> do
         let socket = directory </> "socket"
         withDaemon retirement directory executable ["-D", "-S", socket, "-f", "/dev/null"] environment $ \daemon -> do
           readiness <- race (awaitDaemon daemon) (waitReady watch)
@@ -129,18 +129,25 @@ data Retirement = Retirement
 retirement :: Retirement
 retirement = Retirement {step = 2000000, deliver = \(Fd fd) signal -> signalPidfd fd signal}
 
+-- | Acquire a resource, run the body, then release it. Unlike 'bracket', a release that fails never
+-- replaces a failing body's exception, so the caller sees the primary failure and its class. A
+-- release that fails after a clean body is raised. Every fixture scope concludes this way.
+scoped :: IO r -> (r -> IO ()) -> (r -> IO a) -> IO a
+scoped acquire release body = mask $ \restore -> do
+  resource <- acquire
+  outcome <- try @SomeException (restore (body resource))
+  released <- try @SomeException (release resource)
+  case (outcome, released) of
+    (Left problem, _) -> throwIO problem
+    (Right _, Left problem) -> throwIO problem
+    (Right result, Right ()) -> pure result
+
 -- | Run a child for the body and retire it afterwards. A failure of the body is rethrown as
 -- it is, whether or not the retirement then succeeds; a retirement that fails after a clean
 -- body is raised.
 withDaemon :: Retirement -> String -> FilePath -> [String] -> [(String, String)] -> (Daemon -> IO a) -> IO a
-withDaemon how label executable arguments environment body = mask $ \restore -> do
-  daemon <- startDaemon how label executable arguments environment
-  outcome <- try @SomeException (restore (body daemon))
-  retired <- try @SomeException (retireDaemon daemon)
-  case (outcome, retired) of
-    (Left problem, _) -> throwIO problem
-    (Right _, Left problem) -> throwIO problem
-    (Right result, Right ()) -> pure result
+withDaemon how label executable arguments environment =
+  scoped (startDaemon how label executable arguments environment) retireDaemon
 
 startDaemon :: Retirement -> String -> FilePath -> [String] -> [(String, String)] -> IO Daemon
 startDaemon how label executable arguments environment = do
@@ -228,7 +235,7 @@ signalDaemon daemon number = withMVarMasked daemon.phase $ \case
 -- lock, while the state proves the original open, so a concurrent retirement that closes the
 -- original cannot hand the wait a recycled descriptor number. A cached status needs no wait.
 withCopy :: Daemon -> (Fd -> IO ()) -> IO ()
-withCopy daemon wait = bracket copy discard (maybe (pure ()) wait)
+withCopy daemon wait = scoped copy discard (maybe (pure ()) wait)
   where
     copy = withMVarMasked daemon.phase $ \case
       Live -> do
@@ -298,7 +305,7 @@ withAttachedClient fixture session action = withProcessTerm config $ \client -> 
   unless (ready == Just ()) (throwIO (userError "owned control client did not acknowledge attachment"))
   withAsync drain $ \out ->
     withAsync (Strict.hGetContents (getStderr client)) $ \err -> do
-      result <- action `finally` detach
+      result <- scoped (pure ()) (\() -> detach) (\() -> action)
       (_, errors) <- waitBoth out err
       unless (Strict.null errors) (throwIO (userError ("owned control client stderr: " <> show errors)))
       pure result
@@ -322,7 +329,9 @@ registerPane tracked output = case reads (Bytes.unpack output) :: [(Integer, Str
 withTrackedPane :: ByteString -> IO () -> IO a -> IO a
 withTrackedPane receipt teardown action = do
   observed <- newIORef False
-  bracket (newIORef Nothing) (\tracked -> teardown `finally` finishPane observed tracked) $ \tracked -> do
+  -- The pane wait always runs, but a failed teardown is the cause and the wait would only echo it.
+  let release tracked = scoped (pure ()) (\() -> finishPane observed tracked) (\() -> teardown)
+  scoped (newIORef Nothing) release $ \tracked -> do
     registerPane tracked receipt
     action
 

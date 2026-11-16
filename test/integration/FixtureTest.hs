@@ -2,7 +2,7 @@ module FixtureTest (tests) where
 
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, waitEither, withAsync)
-import Control.Exception (bracket, IOException, fromException, throwIO, try)
+import Control.Exception (Exception, SomeException, bracket, IOException, fromException, throwIO, try)
 import Control.Monad (void, when)
 import Data.Foldable (for_)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
@@ -81,6 +81,19 @@ tests = testGroup "owned tmux fixture"
         let teardown = command fixture ["kill-window", "-t", "fixture:1"] >>= (@?= (ExitSuccess, "", ""))
         result <- try @AsyncCancelled (withTrackedPane pid teardown (throwIO AsyncCancelled))
         result @?= Left @AsyncCancelled @() AsyncCancelled
+  , testCase "a failing pane teardown never replaces the body's exception and is raised after a clean body" $
+      withFixture $ \fixture -> for_ [True, False] $ \failing -> do
+        (code, pid, errors) <- command fixture
+          ["new-window", "-d", "-t", "fixture:1", "-P", "-F", "#{pane_pid}", "/bin/cat", "-"]
+        (code, errors) @?= (ExitSuccess, "")
+        let teardown = do
+              command fixture ["kill-window", "-t", "fixture:1"] >>= (@?= (ExitSuccess, "", ""))
+              throwIO (userError "teardown failed")
+        result <- try @SomeException (withTrackedPane pid teardown (when failing (throwIO Boom)))
+        case (failing, result) of
+          (True, Left problem) -> fromException problem @?= Just Boom
+          (False, Left problem) -> fmap ioeGetErrorString (fromException problem) @?= Just "teardown failed"
+          _ -> assertFailure ("unexpected outcome: " <> show result)
   , testCase "a daemon ended outside the fixture is collected once, after success and after failure" $
       for_ [False, True] $ \failing -> do
         saved <- newIORef Nothing
@@ -110,6 +123,11 @@ tests = testGroup "owned tmux fixture"
           timeout 2000000 (wait waiter) >>= (@?= Just (ExitFailure (-15)))
   , testCase "retirement signals only a live child, escalates to SIGKILL, and keeps one that survives" retireBounds
   ]
+
+-- | A body failure of a class no cleanup raises, so only its preservation can pass the test.
+data Boom = Boom deriving (Eq, Show)
+
+instance Exception Boom
 
 -- | Signals are logged in delivery order. A swallowed signal reaches the pidfd's owner as
 -- success, as it would for a child that ignores it.
