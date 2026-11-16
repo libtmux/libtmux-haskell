@@ -18,7 +18,8 @@ import sys
 import time
 from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
-from typing import Any, Protocol, cast
+from types import ModuleType
+from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(Path(__file__).resolve().parents[1] / "bounded"))
@@ -55,6 +56,23 @@ HARNESS = [
 ]
 
 
+class RunnerFixture:
+    """The two functions the benchmark takes from a loaded runner module.
+
+    Reading both at load time fails at once if the runner renames either.
+    """
+
+    def __init__(self, module: ModuleType) -> None:
+        self._fixture = module.fixture
+        self._exited = module.exited
+
+    def fixture(self, binary: str) -> AbstractContextManager[tuple[str, dict[str, str]]]:
+        return self._fixture(binary)
+
+    def exited(self, descriptors: list[int]) -> None:
+        self._exited(descriptors)
+
+
 def load_fixture(source: Path = SOURCE) -> Fixture:
     """Import the capture-graph example's daemon fixture by path."""
     spec = importlib.util.spec_from_file_location("capture_fixture", source)
@@ -62,7 +80,7 @@ def load_fixture(source: Path = SOURCE) -> Fixture:
         raise RuntimeError(f"cannot load the benchmark fixture from {source}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return cast(Fixture, module)
+    return RunnerFixture(module)
 
 
 def spread(total: int, parts: int) -> list[int]:
