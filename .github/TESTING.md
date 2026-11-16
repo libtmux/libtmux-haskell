@@ -109,8 +109,10 @@ cancellation and failed worker allocation.
 
 Cabal caches contain the dependency store and package index. The shared
 [`build-tmux`](https://github.com/libtmux/.github/tree/30f81842b1e639ea4e25f93f1f2543504178e228/actions/build-tmux)
-action builds each tmux release from its pinned archive and caches it. Its
-cache key includes the archive, runner image/version, architecture, compiler,
+action builds each tmux release from its pinned archive, whose SHA-256 is in the
+action's
+[`tmux-releases.json`](https://github.com/libtmux/.github/blob/30f81842b1e639ea4e25f93f1f2543504178e228/actions/build-tmux/tmux-releases.json),
+and caches it. Its cache key includes the archive, runner image/version, architecture, compiler,
 library packages and build recipe. A restored executable must match its
 recorded hash and version and answer from a private daemon; invalid cache
 content is rebuilt. A cache hit does not replace the integration checks
