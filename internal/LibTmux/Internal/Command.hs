@@ -323,6 +323,10 @@ compileProgramMutation nonce command = do
     ProgramGuarded identity client live action -> do
       unless (validClient client) (Left (InvalidOperand "program" "invalid witness client"))
       actionArgs <- case action of
+        ProgramHistory {} -> compileProgramCommand action
+        ProgramRemain {} -> compileProgramCommand action
+        ProgramRemainFormat {} -> compileProgramCommand action
+        ProgramGeometry {} -> compileProgramCommand action
         ProgramCapture {} -> compileProgramCommand action
         ProgramInputBytes {} -> compileProgramCommand action
         ProgramKillSession {} -> compileProgramCommand action

@@ -282,7 +282,13 @@ applications = testGroup "enabled application operations"
                 [value] -> pure (Bytes.unpack value)
                 _ -> fail "created application session was not unique"
               configured fixture ["rename-session", "-t", session, "renamed-program"]
-              if replace then configured fixture ["respawn-pane", "-k", "-t", session <> ":", "/bin/cat", "-"] else pure ()
+              if replace then do
+                configured fixture ["respawn-pane", "-k", "-t", session <> ":", "/bin/cat", "-"]
+                configured fixture ["set-option", "-p", "-t", session <> ":", "remain-on-exit", "off"]
+                configured fixture ["set-option", "-p", "-t", session <> ":", "remain-on-exit-format", "replacement-format"]
+                configured fixture ["set-option", "-t", session, "history-limit", "17"]
+                configured fixture ["resize-window", "-t", session <> ":", "-x", "47", "-y", "13"]
+              else pure ()
               configured fixture ["wait-for", "-S", "program-created-release"]
               result <- bounded (wait owner)
               if replace then case result of
@@ -291,8 +297,15 @@ applications = testGroup "enabled application operations"
                   recoveries <- case Program.programRecoveries context of
                     [] -> assertFailure "replacement refusal lost cleanup ownership" >> fail "unreachable"
                     values -> pure values
-                  configured fixture ["kill-session", "-t", session]
-                  mapM_ Program.resumeProgramCleanup recoveries
+                  flip finally (configured fixture ["kill-session", "-t", session]
+                    >> mapM_ Program.resumeProgramCleanup recoveries) $ do
+                      forM_ [("remain-on-exit", "off\n"), ("remain-on-exit-format", "replacement-format\n")] $ \(key, expected) -> do
+                        (optionCode, value, optionErrors) <- Fixture.command fixture ["show-options", "-p", "-v", "-t", session <> ":", key]
+                        (optionCode, value, optionErrors) @?= (ExitSuccess, expected, "")
+                      (historyCode, history, historyErrors) <- Fixture.command fixture ["show-options", "-v", "-t", session, "history-limit"]
+                      (historyCode, history, historyErrors) @?= (ExitSuccess, "17\n", "")
+                      (geometryCode, geometry, geometryErrors) <- Fixture.command fixture ["display-message", "-p", "-t", session <> ":", "#{pane_width}|#{pane_height}"]
+                      (geometryCode, geometry, geometryErrors) @?= (ExitSuccess, "47|13\n", "")
                 Right _ -> assertFailure "factory executed through external respawn"
               else case result of
                 Right output -> do
