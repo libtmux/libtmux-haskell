@@ -74,8 +74,8 @@ data ProgramOptions = ProgramOptions
   , rows :: !Int -- ^ 1 to 200 cells; default 24.
   , historyLines :: !Int -- ^ 0 to 10000 lines, with at most one million cells; default 1000.
   , outputLimit :: !Int -- ^ Returned rendered bytes, 1 to 1 MiB; default 65536.
-  , commandTimeout :: !NominalDiffTime -- ^ Each native command, positive and at most ten seconds; default one.
-  , executionTimeout :: !(Maybe NominalDiffTime) -- ^ Owning setup/callback deadline, with a separate cleanup budget. Nothing imposes no overall deadline.
+  , commandTimeout :: !NominalDiffTime -- ^ Each native command, positive and at most ten seconds; default one. The separate one-second bootstrap lease does not bound whole startup.
+  , executionTimeout :: !(Maybe NominalDiffTime) -- ^ Whole owning setup/callback deadline, with a separate cleanup budget. Nothing imposes no overall deadline.
   }
 
 -- | Default terminal, bounded history and output, with a literal argv tail.
@@ -345,7 +345,7 @@ setup program = do
       socket = Pin.pinPath (R.serverPin handle)
       assignments = map (\(key, value) -> osBytes key <> "=" <> osBytes value) program.settings.environment
       argv = [bootstrap, "libtmux-program", Ascii.pack startupPath, Ascii.pack acceptedPath,
-        Ascii.pack fifo, program.clientExecutable, socket, cwd, gateDuration program, Ascii.pack (show (length assignments))]
+        Ascii.pack fifo, program.clientExecutable, socket, cwd, gateDuration, Ascii.pack (show (length assignments))]
         <> assignments <> [osBytes program.settings.executable] <> map osBytes program.settings.arguments
   width <- either (fail . show) pure (Value.mkDimension (toInteger program.settings.columns))
   height <- either (fail . show) pure (Value.mkDimension (toInteger program.settings.rows))
@@ -438,11 +438,10 @@ checkBootstrap program path = do
     Right completed | completed.exit == Just (N.Exited 95) ->
       throwIO (InvalidProgramOptions ("bootstrap cannot preserve environment name: " <> Utf8.decodeUtf8 completed.output))
     _ -> throwIO ProgramBootstrapUnavailable
-gateDuration :: Program -> ByteString
-gateDuration program = Ascii.pack (show seconds <> "." <> replicate (6 - length fraction) '0' <> fraction)
-  where
-    (seconds, micros) = min 1000000 program.duration `divMod` 1000000
-    fraction = show micros
+-- Setup spans several separately bounded native commands. Its startup lease
+-- must not reuse the budget of just one command.
+gateDuration :: ByteString
+gateDuration = "1"
 
 observe :: Program -> ByteString -> ByteString -> IO Observer
 observe program event predicate = mask $ \restore -> do
@@ -880,6 +879,9 @@ removePrivateFile program path = do
 
 closeGate :: Program -> IO ()
 closeGate program = mask_ $ do
+  -- A blank claim wakes a blocked bootstrap without granting execution. Its
+  -- private descriptor is separate from the application's terminal input.
+  readIORef program.writer >>= mapM_ (\fd -> void (Posix.fdWrite fd "\n"))
   readIORef program.fifo >>= mapM_ (removePrivateFile program)
   readIORef program.writer >>= mapM_ Posix.closeFd
   writeIORef program.writer Nothing
