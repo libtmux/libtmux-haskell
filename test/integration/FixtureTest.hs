@@ -131,7 +131,7 @@ tests = testGroup "owned tmux fixture"
   , testCase "retirement signals only a live child, escalates to SIGKILL, and keeps one that survives" retireBounds
   , testCase "a client's streams, status, arguments and environment pass through exactly" clientFidelity
   , testCase "a failed or cancelled client scope retires its client once and keeps its cause" clientScopes
-  , testCase "cancelling command ends the running client" commandCancellation
+  , testCase "cancelling command ends the running client within the bound" commandCancellation
   , testCase "a client that ignores SIGTERM is killed, and one that survives is retained with the body's cause" clientEscalation
   , testCase "a control client reports a missing acknowledgement, stderr and a failed exit" controlClientFailures
   ]
@@ -331,13 +331,14 @@ clientScopes = withFixture $ \fixture -> for_ [False, True] $ \cancelled ->
     script.ended
     retainedBy stub >>= (@?= []) . map (.label)
 
+-- | Cancelling command ends the running client, within the bound even when the client ignores
+-- SIGTERM. A wait that SIGKILL never ends would run until the client exits on its own.
 commandCancellation :: IO ()
-commandCancellation = withFixture $ \fixture ->
-  withScript fixture running $ \stub script ->
-    withAsync (command stub []) $ \worker -> do
+commandCancellation = withFixture $ \fixture -> for_ [running, ignoringTerm] $ \body ->
+  withScript fixture body $ \stub script ->
+    withAsync (command (retiringBy killing stub) []) $ \worker -> do
       script.announced
-      cancel worker
-      waitCatch worker >>= (@?= "cancelled") . cancelledBy
+      timeout 1000000 (cancel worker >> waitCatch worker) >>= (@?= Just "cancelled") . fmap cancelledBy
       script.ended
       retainedBy stub >>= (@?= []) . map (.label)
 
