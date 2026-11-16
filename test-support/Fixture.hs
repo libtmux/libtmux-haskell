@@ -6,7 +6,10 @@ module Fixture
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
 import Control.Concurrent.MVar (MVar, modifyMVarMasked, modifyMVarMasked_, newMVar, withMVarMasked)
-import Control.Exception (SomeException, finally, mask, mask_, onException, throwIO, try, uninterruptibleMask_)
+import Control.Exception
+  ( SomeException, finally, mask, mask_, onException, rethrowIO, throwIO
+  , tryWithContext, uninterruptibleMask_
+  )
 import Control.Monad (unless, when)
 import Data.ByteString qualified as Strict
 import Data.ByteString.Char8 qualified as Ascii
@@ -129,17 +132,16 @@ data Retirement = Retirement
 retirement :: Retirement
 retirement = Retirement {step = 2000000, deliver = \(Fd fd) signal -> signalPidfd fd signal}
 
--- | Acquire a resource, run the body, then release it. Unlike 'bracket', a release that fails never
--- replaces a failing body's exception, so the caller sees the primary failure and its class. A
--- release that fails after a clean body is raised. Every fixture scope concludes this way.
+-- | Acquire a resource, run the body, then release it. Keep a failing body's exception
+-- and annotations; raise a release failure only after a clean body.
 scoped :: IO r -> (r -> IO ()) -> (r -> IO a) -> IO a
 scoped acquire release body = mask $ \restore -> do
   resource <- acquire
-  outcome <- try @SomeException (restore (body resource))
-  released <- try @SomeException (release resource)
+  outcome <- tryWithContext @SomeException (restore (body resource))
+  released <- tryWithContext @SomeException (release resource)
   case (outcome, released) of
-    (Left problem, _) -> throwIO problem
-    (Right _, Left problem) -> throwIO problem
+    (Left problem, _) -> rethrowIO problem
+    (Right _, Left problem) -> rethrowIO problem
     (Right result, Right ()) -> pure result
 
 -- | Run a child for the body and retire it afterwards. A failure of the body is rethrown as

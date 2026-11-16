@@ -2,7 +2,12 @@ module FixtureTest (tests) where
 
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, waitEither, withAsync)
-import Control.Exception (Exception, SomeException, bracket, IOException, fromException, throwIO, try)
+import Control.Exception
+  ( Exception, ExceptionWithContext (..), IOException, SomeException, annotateIO
+  , bracket, fromException, throwIO, try, tryWithContext
+  )
+import Control.Exception.Annotation (ExceptionAnnotation)
+import Control.Exception.Context qualified as Context
 import Control.Monad (void, when)
 import Data.Foldable (for_)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
@@ -37,6 +42,15 @@ tests = testGroup "owned tmux fixture"
         Left problem -> ioeGetErrorString problem @?= "fixture callback failed"
         Right () -> assertFailure "callback should have failed"
       readIORef saved >>= maybe (assertFailure "callback never started") assertReleased
+  , testCase "keeps callback exception annotations through cleanup" $ do
+      result <- tryWithContext @IOException $
+        withDaemon retirement "annotation probe" "/bin/true" [] [] $ \_ ->
+          annotateIO Marker (throwIO (userError "annotated callback failed"))
+      case result of
+        Left (ExceptionWithContext context problem) -> do
+          ioeGetErrorString problem @?= "annotated callback failed"
+          Context.getExceptionAnnotations @Marker context @?= [Marker]
+        Right () -> assertFailure "callback should have failed"
   , testCase "cleans up after asynchronous cancellation" $ do
       ready <- newEmptyMVar
       never <- newEmptyMVar @()
@@ -128,6 +142,10 @@ tests = testGroup "owned tmux fixture"
 data Boom = Boom deriving (Eq, Show)
 
 instance Exception Boom
+
+data Marker = Marker deriving (Eq, Show)
+
+instance ExceptionAnnotation Marker
 
 -- | Run an action that may block uninterruptibly, as a retirement does and 'timeout' cannot
 -- interrupt, and fail the test at the bound. A worker that never returns is abandoned.
