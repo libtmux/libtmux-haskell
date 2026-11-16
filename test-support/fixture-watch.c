@@ -21,26 +21,48 @@ int libtmux_fixture_pidfd(int pid)
 typedef int (*pidfd_spawn_call)(int *, const char *, const posix_spawn_file_actions_t *,
                                 const posix_spawnattr_t *, char *const[], char *const[]);
 
-/* Start `file` (searched on PATH) with stdin and stdout on /dev/null, each opened read-write
- * as typed-process's null stream was, and store its pidfd. The kernel creates the pidfd
- * together with the child, so it can never name another process, whatever the child does
- * next. Zero on success, otherwise an errno value, with no child and no descriptor left.
- *
- * Resolves glibc 2.39's pidfd_spawnp at run time, as the library's own launcher does,
- * and refuses a SIGCHLD policy that reaps children without a status. */
-int libtmux_fixture_spawn(const char *file, char *const argv[], char *const envp[], int *pidfd)
+/* How a child's standard stream is connected: /dev/null opened read-write, as typed-process's
+ * null stream was; the parent's own descriptor; or a pipe whose other end the parent keeps. */
+enum { FIXTURE_NULL = 0, FIXTURE_INHERIT = 1, FIXTURE_PIPE = 2 };
+
+/* A close-on-exec pipe whose ends are both above stderr, so a child's dup2 onto a standard
+ * descriptor never names the descriptor it copies. Zero, or errno with nothing left open. */
+static int pipe_pair(int pair[2])
 {
-    *pidfd = -1;
-    void *symbol = dlsym(RTLD_DEFAULT, "pidfd_spawnp");
-    pidfd_spawn_call spawn;
-    memcpy(&spawn, &symbol, sizeof spawn);
-    if (!spawn)
-        return ENOSYS;
-    struct sigaction policy;
-    if (sigaction(SIGCHLD, NULL, &policy) == -1)
+    if (pipe2(pair, O_CLOEXEC) == -1)
         return errno;
-    if (policy.sa_handler == SIG_IGN || (policy.sa_flags & SA_NOCLDWAIT))
-        return ENOTSUP;
+    for (int i = 0; i < 2; ++i) {
+        if (pair[i] > 2)
+            continue;
+        int moved = fcntl(pair[i], F_DUPFD_CLOEXEC, 3);
+        if (moved == -1) {
+            int saved = errno;
+            close(pair[0]);
+            close(pair[1]);
+            return saved;
+        }
+        close(pair[i]);
+        pair[i] = moved;
+    }
+    return 0;
+}
+
+static int nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL);
+    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1 ? errno : 0;
+}
+
+static void close_all(const int *fds, int count)
+{
+    for (int i = 0; i < count; ++i)
+        if (fds[i] >= 0)
+            close(fds[i]);
+}
+
+static int launch(pidfd_spawn_call spawn, const char *file, char *const argv[], char *const envp[],
+                  const int modes[3], const int child[3], int *fd)
+{
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attributes;
     int rc = posix_spawn_file_actions_init(&actions);
@@ -56,18 +78,68 @@ int libtmux_fixture_spawn(const char *file, char *const argv[], char *const envp
     const int reset[] = {SIGPIPE, SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGCHLD};
     for (size_t i = 0; i < sizeof reset / sizeof reset[0]; ++i)
         sigaddset(&defaults, reset[i]);
-    int fd = -1;
-    if (!(rc = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDWR, 0)) &&
-        !(rc = posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_RDWR, 0)) &&
-        !(rc = posix_spawnattr_setsigmask(&attributes, &mask)) &&
+    for (int i = 0; i < 3 && !rc; ++i) {
+        if (modes[i] == FIXTURE_NULL)
+            rc = posix_spawn_file_actions_addopen(&actions, i, "/dev/null", O_RDWR, 0);
+        else if (modes[i] == FIXTURE_PIPE)
+            rc = posix_spawn_file_actions_adddup2(&actions, child[i], i);
+    }
+    if (!rc && !(rc = posix_spawnattr_setsigmask(&attributes, &mask)) &&
         !(rc = posix_spawnattr_setsigdefault(&attributes, &defaults)) &&
         !(rc = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)))
-        rc = spawn(&fd, file, &actions, &attributes, argv, envp);
+        rc = spawn(fd, file, &actions, &attributes, argv, envp);
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
-    if (rc)
+    return rc;
+}
+
+/* Start `file` (searched on PATH) with the standard streams connected as `modes` (stdin, stdout,
+ * stderr) says. result[0] is the pidfd; result[1..3] are the parent's ends of the streams that are
+ * pipes (stdin's writable, the others readable; non-blocking and close-on-exec), otherwise -1. The
+ * kernel creates the pidfd together with the child, so it can never name another process, whatever
+ * the child does next. Zero on success, otherwise an errno value, with no child and no descriptor
+ * left.
+ *
+ * Resolves glibc 2.39's pidfd_spawnp at run time, as the library's own launcher does,
+ * and refuses a SIGCHLD policy that reaps children without a status. */
+int libtmux_fixture_spawn(const char *file, char *const argv[], char *const envp[],
+                          const int modes[3], int result[4])
+{
+    for (int i = 0; i < 4; ++i)
+        result[i] = -1;
+    for (int i = 0; i < 3; ++i)
+        if (modes[i] != FIXTURE_NULL && modes[i] != FIXTURE_INHERIT && modes[i] != FIXTURE_PIPE)
+            return EINVAL;
+    void *symbol = dlsym(RTLD_DEFAULT, "pidfd_spawnp");
+    pidfd_spawn_call spawn;
+    memcpy(&spawn, &symbol, sizeof spawn);
+    if (!spawn)
+        return ENOSYS;
+    struct sigaction policy;
+    if (sigaction(SIGCHLD, NULL, &policy) == -1)
+        return errno;
+    if (policy.sa_handler == SIG_IGN || (policy.sa_flags & SA_NOCLDWAIT))
+        return ENOTSUP;
+    int child[3] = {-1, -1, -1}, parent[3] = {-1, -1, -1}, rc = 0;
+    for (int i = 0; i < 3 && !rc; ++i) {
+        int pair[2];
+        if (modes[i] != FIXTURE_PIPE || (rc = pipe_pair(pair)))
+            continue;
+        child[i] = pair[i == 0 ? 0 : 1];
+        parent[i] = pair[i == 0 ? 1 : 0];
+        rc = nonblocking(parent[i]);
+    }
+    int fd = -1;
+    if (!rc)
+        rc = launch(spawn, file, argv, envp, modes, child, &fd);
+    close_all(child, 3);
+    if (rc) {
+        close_all(parent, 3);
         return rc;
-    *pidfd = fd;
+    }
+    result[0] = fd;
+    for (int i = 0; i < 3; ++i)
+        result[i + 1] = parent[i];
     return 0;
 }
 
@@ -129,6 +201,27 @@ int libtmux_fixture_pidfd_wait(int pidfd, int milliseconds)
         if (errno != EINTR)
             return -errno;
     }
+}
+
+/* Bytes read from a non-blocking descriptor, zero at end of stream, otherwise -errno; EAGAIN means
+ * nothing is ready. */
+int libtmux_fixture_read(int fd, void *buffer, size_t size)
+{
+    ssize_t count;
+    do
+        count = read(fd, buffer, size);
+    while (count == -1 && errno == EINTR);
+    return count == -1 ? -errno : (int)count;
+}
+
+/* Bytes written to a non-blocking descriptor, otherwise -errno; EAGAIN means the pipe is full. */
+int libtmux_fixture_write(int fd, const void *buffer, size_t size)
+{
+    ssize_t count;
+    do
+        count = write(fd, buffer, size);
+    while (count == -1 && errno == EINTR);
+    return count == -1 ? -errno : (int)count;
 }
 
 int libtmux_fixture_watch(const char *directory)

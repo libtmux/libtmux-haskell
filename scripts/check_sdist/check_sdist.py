@@ -199,7 +199,7 @@ def check_public_commands(
     """Run public command cases against the archive, without private imports.
 
     They must exit zero and emit no stderr. The consumer ends through the fixture's guard, which
-    exits 3 and names the owners when a fixture daemon survived retirement, so a leak that
+    exits 3 and names the owners when a fixture daemon or client survived retirement, so a leak that
     retirement reports to nobody still fails here.
     """
     consumer = directory / "public-mutations"
@@ -238,8 +238,7 @@ def check_public_commands(
         "  c-sources: fixture-watch.c\n"
         "  cc-options: -std=c11 -Wall -Wextra\n"
         "  build-depends: base >=4.22 && <4.23, async, bytestring, directory, filepath,\n"
-        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, text, typed-process,"
-        " unix\n"
+        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, text, unix\n"
     )
     target = "exe:public-mutations-consumer"
     run(["cabal", "build", target, "--offline"], consumer, BUILD)
