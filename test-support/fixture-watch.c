@@ -24,10 +24,10 @@ int libtmux_fixture_pidfd(int pid)
 typedef int (*pidfd_spawn_call)(int *, const char *, const posix_spawn_file_actions_t *,
                                 const posix_spawnattr_t *, char *const[], char *const[]);
 
-/* Start `file` (searched on PATH) with stdin and stdout on /dev/null and store its
- * pidfd. The kernel creates the pidfd together with the child, so it can never name
- * another process, whatever the child does next. Zero on success, otherwise an errno
- * value, with no child and no descriptor left.
+/* Start `file` (searched on PATH) with stdin and stdout on /dev/null, each opened read-write
+ * as typed-process's null stream was, and store its pidfd. The kernel creates the pidfd
+ * together with the child, so it can never name another process, whatever the child does
+ * next. Zero on success, otherwise an errno value, with no child and no descriptor left.
  *
  * Resolves glibc 2.39's pidfd_spawnp at run time, as the library's own launcher does,
  * and refuses a SIGCHLD policy that reaps children without a status. */
@@ -60,8 +60,8 @@ int libtmux_fixture_spawn(const char *file, char *const argv[], char *const envp
     for (size_t i = 0; i < sizeof reset / sizeof reset[0]; ++i)
         sigaddset(&defaults, reset[i]);
     int fd = -1;
-    if (!(rc = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)) &&
-        !(rc = posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)) &&
+    if (!(rc = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDWR, 0)) &&
+        !(rc = posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_RDWR, 0)) &&
         !(rc = posix_spawnattr_setsigmask(&attributes, &mask)) &&
         !(rc = posix_spawnattr_setsigdefault(&attributes, &defaults)) &&
         !(rc = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)))
