@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import uuid
@@ -36,6 +37,46 @@ def metadata(root: Path, tag: str | None = None) -> str:
     if f"## {version}" not in (root / "CHANGELOG.md").read_text().splitlines():
         raise ValueError(f"Release changelog needs a ## {version} entry")
     return version
+
+
+def check(
+    root: Path, publish: bool = False, tag: str | None = None, require_token: bool = False
+) -> str:
+    """Return the Cabal version after the checks a candidate or a publication needs.
+
+    A publication needs a tag that matches the version and is part of ``origin/master``.
+    A candidate may run from any ref. ``require_token`` adds the upload credential.
+    """
+    version = metadata(root, tag)
+    if publish:
+        if tag is None:
+            raise ValueError(
+                "Publication requires a version tag; use publish=false for a candidate"
+            )
+        merged = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "HEAD", "origin/master"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if merged.returncode == 1:
+            raise ValueError("Publication requires a tagged commit that is part of master")
+        if merged.returncode:
+            raise ValueError(f"git merge-base failed (exit {merged.returncode}): {merged.stderr}")
+    if require_token:
+        token()
+    return version
+
+
+def token() -> str:
+    """Return the Hackage token, or explain where to set it."""
+    value = os.environ.get("HACKAGE_AUTH_TOKEN")
+    if not value:
+        raise ValueError(
+            "Set HACKAGE_AUTH_TOKEN in the hackage environment; see .github/RELEASE.md"
+        )
+    return value
 
 
 def verify(directory: Path, root: Path) -> tuple[Path, Path]:
@@ -112,20 +153,20 @@ def remote(url: str) -> bytes | None:
 
 
 def cabal_upload(path: Path, publish: bool, documentation: bool) -> None:
-    token = os.environ["HACKAGE_AUTH_TOKEN"]
+    secret = token()
     with tempfile.TemporaryDirectory(prefix="libtmux-haskell-upload-") as temporary:
         config = Path(temporary) / "config"
         config.write_text(
             "repository hackage.haskell.org\n  url: https://hackage.haskell.org/\n  secure: True\n"
         )
-        command = ["cabal", f"--config-file={config}", "upload", f"--token={token}"]
+        command = ["cabal", f"--config-file={config}", "upload", f"--token={secret}"]
         if publish:
             command.append("--publish")
         if documentation:
             command.append("--documentation")
         command.append(str(path))
         result = subprocess.run(command, check=False, capture_output=True, text=True)
-    output = (result.stdout + result.stderr).replace(token, "[redacted]")
+    output = (result.stdout + result.stderr).replace(secret, "[redacted]")
     if result.returncode:
         status = re.search(r"\bhttp code (401|403)\b", output, re.IGNORECASE)
         if status and status[1] == "401":
@@ -147,10 +188,7 @@ def upload(directory: Path, root: Path, publish: bool = False, tag: str | None =
         raise ValueError("Publishing requires a matching version tag")
     version = metadata(root, tag)
     source, docs = verify(directory, root)
-    if not os.environ.get("HACKAGE_AUTH_TOKEN"):
-        raise ValueError(
-            "Set HACKAGE_AUTH_TOKEN in the hackage environment; see .github/RELEASE.md"
-        )
+    token()
     base = f"https://hackage.haskell.org/package/{PACKAGE}-{version}"
     if not publish:
         base += "/candidate"
@@ -203,18 +241,41 @@ def consumer(source: bytes, root: Path, offline: bool = False) -> None:
     print("PASS: release archive installed and executed outside the checkout")
 
 
-def main() -> None:
+def publish_mode(value: str) -> bool:
+    """Read ``true`` or ``false``, so a workflow can pass its input without an ``if``."""
+    if value not in {"true", "false"}:
+        raise argparse.ArgumentTypeError("expected true or false")
+    return value == "true"
+
+
+def parse(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line; an empty ``--tag`` means no tag."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["check", "prepare", "verify", "upload"])
     parser.add_argument("--directory", type=Path, default=ROOT / "dist-newstyle/release")
-    parser.add_argument("--tag")
+    parser.add_argument("--tag", help="the Git tag; it must be v followed by the Cabal version")
     parser.add_argument(
-        "--publish", action="store_true", help="publish a matching tag instead of a candidate"
+        "--publish",
+        nargs="?",
+        const=True,
+        default=False,
+        type=publish_mode,
+        metavar="true|false",
+        help="publish a matching tag instead of a candidate; a bare flag means true",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--require-token", action="store_true", help="check also needs HACKAGE_AUTH_TOKEN"
+    )
+    args = parser.parse_args(argv)
+    args.tag = args.tag or None
+    return args
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse(argv)
     try:
         if args.command == "check":
-            print(metadata(ROOT, args.tag))
+            print(check(ROOT, args.publish, args.tag, args.require_token))
         elif args.command == "prepare":
             prepare(args.directory.resolve(), ROOT)
         elif args.command == "verify":
@@ -222,8 +283,14 @@ def main() -> None:
             print("PASS: release archive identity and checksums")
         else:
             consumer(upload(args.directory, ROOT, args.publish, args.tag), ROOT)
-    except (ValueError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
-        parser.exit(1, f"Release failed: {error}\n")
+    except (
+        ValueError,
+        OSError,
+        tarfile.TarError,
+        subprocess.CalledProcessError,
+    ) as error:
+        print(f"Release failed: {error}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

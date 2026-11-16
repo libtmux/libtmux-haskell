@@ -364,3 +364,70 @@ def test_public_consumer_executes_external_archive(release_root: Path, offline: 
     """The consumer builds and runs outside the checkout; only the online path updates the index."""
     release.consumer(b"public source archive", release_root, offline=offline)
     assert (release_root / "updated").exists() is not offline
+
+
+def git(root: Path, *arguments: str) -> None:
+    """Run git in ``root`` with a fixed identity."""
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *arguments],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def merged_checkout(release_root: Path) -> Path:
+    """A checkout whose ``origin/master`` is its first commit; ``HEAD`` is the second."""
+    git(release_root, "init", "--quiet")
+    git(release_root, "add", ".")
+    git(release_root, "commit", "--quiet", "-m", "first")
+    git(release_root, "update-ref", "refs/remotes/origin/master", "HEAD")
+    return release_root
+
+
+def test_publication_needs_a_matching_tag_on_master(merged_checkout: Path) -> None:
+    """Publication refuses a missing or mismatched tag, and a commit master does not contain."""
+    assert release.check(merged_checkout, publish=True, tag=TAG) == "0.0.1.0"
+    for tag in [None, "v0.0.2.0"]:
+        with pytest.raises(ValueError, match="tag"):
+            release.check(merged_checkout, publish=True, tag=tag)
+    git(merged_checkout, "commit", "--quiet", "--allow-empty", "-m", "second")
+    with pytest.raises(ValueError, match="master"):
+        release.check(merged_checkout, publish=True, tag=TAG)
+
+
+def test_a_candidate_check_needs_neither_a_tag_nor_master_history(release_root: Path) -> None:
+    """A candidate may run from any ref, including a checkout that is not a git repository."""
+    assert release.check(release_root) == "0.0.1.0"
+
+
+@pytest.mark.parametrize(("token", "accepted"), [("", False), ("test-token", True)])
+def test_the_upload_job_can_require_its_token_before_building(
+    release_root: Path, monkeypatch: pytest.MonkeyPatch, token: str, accepted: bool
+) -> None:
+    """The Hackage token is checked up front, with the pointer to the setup guide."""
+    monkeypatch.setenv("HACKAGE_AUTH_TOKEN", token)
+    if accepted:
+        assert release.check(release_root, require_token=True) == "0.0.1.0"
+    else:
+        with pytest.raises(ValueError, match=r"HACKAGE_AUTH_TOKEN.*RELEASE\.md"):
+            release.check(release_root, require_token=True)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "publish", "tag"),
+    [
+        (["upload"], False, None),
+        (["upload", "--publish"], True, None),
+        (["upload", "--publish", "true", "--tag", TAG], True, TAG),
+        (["upload", "--publish", "false", "--tag", ""], False, None),
+        (["check", "--tag", "master", "--publish", "false"], False, "master"),
+    ],
+)
+def test_workflow_passes_the_publish_mode_as_a_value(
+    arguments: list[str], publish: bool, tag: str | None
+) -> None:
+    """``--publish`` takes ``true`` or ``false`` so the workflow needs no ``if``; an empty tag is none."""
+    parsed = release.parse(arguments)
+    assert (parsed.publish, parsed.tag) == (publish, tag)
