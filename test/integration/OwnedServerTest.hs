@@ -9,7 +9,7 @@ module OwnedServerTest (tests) where
 import Control.Concurrent (ThreadId, yield)
 import Control.Concurrent.Async (AsyncCancelled (..), asyncThreadId, cancel, wait, waitCatch, withAsync)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar, tryPutMVar)
-import Control.Concurrent.STM (atomically, check)
+import Control.Concurrent.STM (atomically, check, readTMVar, readTVar)
 import Control.Exception
 import Control.Monad (filterM, forM, forM_, replicateM_, unless, void, when)
 import Data.ByteString (ByteString)
@@ -36,6 +36,7 @@ import GHC.Conc.Sync (threadLabel)
 import LibTmux qualified as Tmux
 import LibTmux.Creation qualified as Creation
 import LibTmux.Id qualified as Id
+import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Capture qualified as C
 import LibTmux.Internal.Creation qualified as Create
 import LibTmux.Internal.Graph qualified as G
@@ -393,7 +394,9 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
     , testCase "a lone start-server daemon leaves with its client; the chained option keeps it" loneStartServer
     ]
   , testGroup "uncertainty and recovery"
-    [ testCase "refused signals retain ownership and the operation; a recovery retires the daemon, then detaches" $
+    [ testCase "a failed start-client cleanup resumes before the daemon phase" retryStartClient
+
+    , testCase "refused signals retain ownership and the operation; a recovery retires the daemon, then detaches" $
         withTmux $ \exe -> do
           watch <- newWatch
           inFlight <- newIORef []
@@ -1009,6 +1012,42 @@ heldStart exe extra = withScratch $ \scratch -> do
     pure (pidfd, shown)
 
 -- Helpers ------------------------------------------------------------------
+
+retryStartClient :: Assertion
+retryStartClient = withTmux $ \executable -> do
+  armed <- newIORef True
+  let hooks = P.defaultHooks {P.signalChild = \child -> readIORef armed >>= \case
+        True -> throwIO Boom
+        False -> N.signalChild child 9}
+      probe = OS.defaultProbe {OS.hooks = hooks, OS.clientMs = 20}
+  owner <- OS.newOwner probe executable
+  (runtime, serverOwner) <- maybe (assertFailure "missing server owner") pure owner.scope
+  let cleanup = writeIORef armed False >> void (R.shutdown runtime) >> R.awaitCleanup runtime
+  (`finally` cleanup) $ do
+    let pool = R.serverOwnerPool serverOwner
+    ticket <- P.submitInputRegistered (const (pure ())) B.Ordinary hooks pool
+      (N.spec "/bin/cat" ["/bin/cat"]) P.KeepInputOpen
+    OS.journal owner (\held -> held {OS.client = Just ticket})
+    atomically (readTMVar ticket.launchEvidence) >>= (@?= P.NativeStarted)
+    child <- readIORef ticket.child >>= maybe (assertFailure "missing client child") pure
+    pid <- OS.pidfdPid child.pidfd >>= maybe (assertFailure "client exited before the witness") pure
+    witness <- openPidfd (fromIntegral pid)
+    assertBool "client witness" (witness >= 0)
+    (`finally` N.close witness) $ do
+      P.abort ticket
+      bounded $ atomically $ do
+        failed <- readTVar ticket.cleanupFailure
+        busy <- readTVar ticket.busy
+        check (isJust failed && not busy)
+      try @OS.OwnedError (OS.settle owner) >>= \case
+        Left (OS.NotRetired _ _) -> pure ()
+        other -> assertFailure ("expected a retained start client: " <> either show (const "success") other)
+      OS.awaitExit witness 0 >>= assertBool "the failed cleanup lost its live client" . not
+      writeIORef armed False
+      try @OS.OwnedError (OS.settle owner) >>= \case
+        Right () -> pure ()
+        Left problem -> assertFailure ("retry never resumed the registered start client cleanup: " <> show problem)
+      OS.awaitExit witness 0 >>= assertBool "the resumed cleanup did not retire the client"
 
 withTmux :: (ByteString -> IO a) -> IO a
 withTmux action = lookupEnv "LIBTMUX_TEST_TMUX" >>= \case

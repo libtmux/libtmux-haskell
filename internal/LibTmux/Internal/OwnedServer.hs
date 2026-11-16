@@ -453,6 +453,7 @@ endClient :: Owner -> R.ServerOwner -> IO ()
 endClient owner serverOwner = readIORef owner.held >>= \held -> forM_ held.client $ \ticket -> do
   let pool = R.serverOwnerPool serverOwner
   P.abort ticket
+  P.resumeCleanup pool ticket
   gone <- timeout (owner.probe.clientMs * 1000) $ atomically $
     readTVar pool.jobs >>= \jobs -> check (not (IntMap.member ticket.key jobs))
   when (isNothing gone) (uncertain owner "the start client did not exit")
