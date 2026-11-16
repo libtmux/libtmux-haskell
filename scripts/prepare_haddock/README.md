@@ -16,6 +16,15 @@ $ uv run scripts/prepare_haddock/prepare_haddock.py \
     --build-plan dist-newstyle/cache/plan.json
 ```
 
+The copy also appends `assets/responsive.css` to `linuwial.css`,
+`assets/source-responsive.css` to `src/style.css` and `assets/source-popover.js`
+to `src/highlight.js`, so wide tables scroll and source annotations stay on
+screen. CI syntax-checks the script with `node --check`:
+
+```console
+$ node --check scripts/prepare_haddock/assets/source-popover.js
+```
+
 `--raw` selects a Haddock directory instead of a build plan. The [API
 guide](../../docs/api.md) explains the corrections and their limits.
 
