@@ -191,7 +191,10 @@ def check_example_consumers(
         if "fixture_panes" in entry:
             command += ["--expected-panes", str(entry["fixture_panes"])]
         result = subprocess.run(
-            command, cwd=workspace, check=True, capture_output=True,
+            command,
+            cwd=workspace,
+            check=True,
+            capture_output=True,
             timeout=entry.get("timeout", DEFAULT_TIMEOUT),
         )
         if result.stdout != read_source(entry["stdout"]) or result.stderr:
