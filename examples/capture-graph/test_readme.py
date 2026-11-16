@@ -37,7 +37,4 @@ def test_readme_examples_share_one_server(
             )
             assert result.returncode == 0, result.stderr
             assert result.stderr == ""
-            assert (
-                result.stdout
-                == (ROOT / "examples" / name / "expected.stdout").read_text()
-            )
+            assert result.stdout == (ROOT / "examples" / name / "expected.stdout").read_text()
