@@ -1,7 +1,12 @@
 """Benchmark driver checks that need neither tmux nor a Haskell build."""
 
+import json
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+from types import ModuleType
+from typing import cast
 
 import pytest
 
@@ -94,3 +99,89 @@ def test_an_existing_output_directory_is_refused(
     )
     with pytest.raises(FileExistsError):
         bench.main()
+
+
+FAKE_TMUX = """#!{python}
+import os, sys
+arguments = sys.argv[1:]
+if arguments == ["-V"]:
+    print("tmux 9.9")
+    sys.exit(0)
+verb = arguments[4]
+with open(os.environ["FAKE_TMUX_LOG"], "a") as log:
+    log.write(verb + "\\n")
+if verb == "display-message":
+    print("@0 %0")
+elif verb != "link-window":
+    print("@1 %1", os.getppid())
+"""
+FAKE_PROGRAM = """#!{python}
+import sys
+print("iteration,elapsed_ns,capture_ns,sessions,windows,panes,window_links,pane_occurrences")
+for index in range(1, int(sys.argv[3]) + 1):
+    print(index, 2000, 1000, 2, 3, 4, 7, 10, sep=",")
+"""
+
+
+class FakeFixture:
+    """Stands in for the capture-graph fixture: one socket path and no daemon."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.exits: list[list[int]] = []
+
+    @contextmanager
+    def fixture(self, binary: str) -> Generator[tuple[str, dict[str, str]]]:
+        """Yield a socket path and an environment that names the call log."""
+        yield str(self.tmp_path / "socket"), {"FAKE_TMUX_LOG": str(self.tmp_path / "calls.log")}
+
+    def exited(self, descriptors: list[int]) -> None:
+        """Record the descriptors the driver asked to observe."""
+        self.exits.append(descriptors)
+
+
+def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_path: Path) -> None:
+    """Two sessions, three windows and four panes are built, linked, measured and reported."""
+    binary = tmp_path / "tmux"
+    binary.write_text(FAKE_TMUX.format(python=sys.executable))
+    binary.chmod(0o700)
+    program = tmp_path / "program"
+    program.write_text(FAKE_PROGRAM.format(python=sys.executable))
+    program.chmod(0o700)
+    output = tmp_path / "out"
+    output.mkdir()
+    fixture = FakeFixture(tmp_path)
+
+    report = bench.measure(
+        cast(ModuleType, fixture),
+        str(binary),
+        1,
+        "ab" * 32,
+        str(program),
+        ("tiny", 2, 3, 4),
+        2,
+        output,
+    )
+
+    verbs = (tmp_path / "calls.log").read_text().split()
+    assert verbs == [
+        *["display-message", "new-window", "new-session", "split-window"],
+        *["link-window"] * 3,
+    ]
+    assert len(fixture.exits) == 3
+    key = "tmux-9.9-1-" + "ab" * 6 + "-tiny"
+    assert report["artifactKey"] == key
+    assert (report["status"], report["sessions"], report["windows"], report["panes"]) == (
+        "PASS",
+        2,
+        3,
+        4,
+    )
+    assert report["captureMilliseconds"] == {"min": 0.002, "median": 0.002, "max": 0.002}
+    assert report["ownedDaemonAndAllTrackedPanesExitObserved"] is True
+    assert sorted(path.name for path in output.iterdir()) == [
+        f"{key}.json",
+        f"{key}.stderr",
+        f"{key}.stdout",
+    ]
+    assert json.loads((output / f"{key}.json").read_text())["artifactKey"] == key
