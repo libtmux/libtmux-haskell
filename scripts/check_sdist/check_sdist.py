@@ -20,16 +20,21 @@ MANIFEST = ROOT / "libtmux-haskell.cabal"
 for sibling in ("check_docs", "prepare_haddock"):
     sys.path.append(str(SCRIPTS / sibling))
 
-from check_docs import Entry
+from check_docs import DEFAULT_TIMEOUT, Entry
 from check_docs import check as check_docs
 from prepare_haddock import cabal_modules
 
 type Example = tuple[str, str]
 
+# Seconds. Every external command is bounded so a hang fails with the command's
+# name before the job's time limit stops it without one.
+QUICK = 120
+BUILD = 600
 
-def run(args: list[str], cwd: Path) -> None:
-    """Run a command that must succeed."""
-    subprocess.run(args, cwd=cwd, check=True)
+
+def run(args: list[str], cwd: Path, timeout: int = QUICK) -> None:
+    """Run a command that must succeed within ``timeout`` seconds."""
+    subprocess.run(args, cwd=cwd, check=True, timeout=timeout)
 
 
 def archived(source: tarfile.TarFile, name: str) -> bytes:
@@ -137,7 +142,7 @@ def check_installation_pin(directory: Path, examples: list[Entry]) -> None:
     pin = installation_pin((ROOT / capture["vcs_project"]).read_text())
     run(["git", "merge-base", "--is-ancestor", pin, "HEAD"], ROOT)
     manifest = subprocess.check_output(
-        ["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, text=True
+        ["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, text=True, timeout=QUICK
     )
     match = re.search(r"^version:\s*(\S+)", manifest, re.MULTILINE)
     if match is None:
@@ -146,7 +151,9 @@ def check_installation_pin(directory: Path, examples: list[Entry]) -> None:
     archive = directory / (name + ".tar.gz")
     archive.write_bytes(
         subprocess.check_output(
-            ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin], cwd=ROOT
+            ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin],
+            cwd=ROOT,
+            timeout=QUICK,
         )
     )
     for entry in examples:
@@ -168,9 +175,9 @@ def check_example_consumer(
         f"packages: . {library}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n"
     )
     target = "exe:" + entry["executable"]
-    run(["cabal", "build", target, "--offline"], consumer)
+    run(["cabal", "build", target, "--offline"], consumer, BUILD)
     executable = subprocess.check_output(
-        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True
+        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True, timeout=QUICK
     ).strip()
     command = (
         ["python3", str(consumer / Path(entry["runner"]).name), "--program", executable]
@@ -179,7 +186,13 @@ def check_example_consumer(
     )
     if "fixture_panes" in entry:
         command += ["--expected-panes", str(entry["fixture_panes"])]
-    result = subprocess.run(command, cwd=consumer.parent, check=True, capture_output=True)
+    result = subprocess.run(
+        command,
+        cwd=consumer.parent,
+        check=True,
+        capture_output=True,
+        timeout=entry.get("timeout", DEFAULT_TIMEOUT),
+    )
     if result.stdout != read_source(entry["stdout"]) or result.stderr:
         raise ValueError("Installed example produced unexpected output")
 
@@ -227,12 +240,16 @@ def check_public_commands(
         " unix\n"
     )
     target = "exe:public-mutations-consumer"
-    run(["cabal", "build", target, "--offline"], consumer)
+    run(["cabal", "build", target, "--offline"], consumer, BUILD)
     executable = subprocess.check_output(
-        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True
+        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True, timeout=QUICK
     ).strip()
     result = subprocess.run(
-        [executable, "--hide-successes"], cwd=directory, check=True, capture_output=True
+        [executable, "--hide-successes"],
+        cwd=directory,
+        check=True,
+        capture_output=True,
+        timeout=BUILD,
     )
     if result.stderr:
         raise ValueError("Installed public mutation consumer emitted stderr")
@@ -278,7 +295,9 @@ def check_haddock_examples(consumer: Path, modules: list[str], examples: list[Ex
         raise ValueError("No executable Haddock examples")
     plan = json.loads((consumer / "dist-newstyle/cache/plan.json").read_text())
     command = haddock_command(plan, modules, examples)
-    result = subprocess.run(command, cwd=consumer, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        command, cwd=consumer, capture_output=True, text=True, check=False, timeout=BUILD
+    )
     if result.returncode:
         raise ValueError(f"Haddock example execution failed: {result.stderr}")
     expected = "".join(output for _, output in examples)

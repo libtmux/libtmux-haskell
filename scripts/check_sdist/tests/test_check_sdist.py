@@ -2,6 +2,7 @@
 
 import io
 import json
+import subprocess
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -110,3 +111,52 @@ def test_installation_must_name_exactly_one_full_source_revision(project: str) -
     """No pin, two pins, an uppercase or a short revision are all refused."""
     with pytest.raises(ValueError, match="one reviewed source revision"):
         check_sdist.installation_pin(project)
+
+
+@pytest.fixture
+def commands(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
+    """Record each external command and its time limit; none of them runs."""
+    seen: list[tuple[str, object]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        seen.append((command[0], kwargs.get("timeout")))
+        return subprocess.CompletedProcess(command, 0, b"ok\n", b"")
+
+    def output(command: list[str], **kwargs: object) -> str:
+        seen.append((command[0], kwargs.get("timeout")))
+        return "program"
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "check_output", output)
+    return seen
+
+
+@pytest.mark.parametrize(("declared", "limit"), [({}, 120), ({"timeout": 7}, 7)])
+def test_an_example_consumer_bounds_its_build_and_run(
+    tmp_path: Path,
+    commands: list[tuple[str, object]],
+    declared: dict[str, int],
+    limit: int,
+) -> None:
+    """Build, binary lookup and the example's own run each carry a time limit."""
+    entry = {
+        "id": "demo",
+        "source": "Main.hs",
+        "package": "demo.cabal",
+        "stdout": "expected.stdout",
+        "executable": "demo",
+        **declared,
+    }
+    check_sdist.check_example_consumer(entry, tmp_path, "../lib.tar.gz", lambda path: b"ok\n")
+    assert commands == [("cabal", 600), ("cabal", 120), ("program", limit)]
+
+
+def test_haddock_examples_run_with_a_time_limit(
+    tmp_path: Path, commands: list[tuple[str, object]]
+) -> None:
+    """The ``ghc -e`` run that executes the documentation examples is bounded."""
+    (tmp_path / "dist-newstyle/cache").mkdir(parents=True)
+    (tmp_path / "dist-newstyle/cache/plan.json").write_text(json.dumps(PLAN))
+    with pytest.raises(ValueError, match="Haddock example output differs"):
+        check_sdist.check_haddock_examples(tmp_path, ["LibTmux"], [("1 + 1", "2\n")])
+    assert commands == [("cabal", 600)]
