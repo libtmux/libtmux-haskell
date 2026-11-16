@@ -1,9 +1,11 @@
 """A time limit stops the command and every process it started."""
 
+import ast
 import os
 import select
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -50,3 +52,42 @@ def test_check_raises_for_a_failing_command() -> None:
         bounded.run(
             [sys.executable, "-c", "raise SystemExit(3)"], timeout=bounded.QUICK, check=True
         )
+
+
+STARTERS = {"run", "Popen", "check_output", "check_call", "call", "getoutput", "getstatusoutput"}
+
+
+def direct_starts(source: str) -> list[int]:
+    """Return the lines where ``source`` starts a process without the helper."""
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            lines.extend(node.lineno for alias in node.names if alias.name in STARTERS)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.func.attr in STARTERS
+        ):
+            lines.append(node.lineno)
+    return lines
+
+
+def test_the_scan_finds_a_direct_start() -> None:
+    """The negative control: both spellings of a direct start are reported."""
+    assert direct_starts("import subprocess\nsubprocess.run(['x'])\n") == [2]
+    assert direct_starts("from subprocess import Popen, PIPE\n") == [1]
+    assert direct_starts("import subprocess\nsubprocess.CompletedProcess\n") == []
+
+
+def test_no_script_starts_a_process_without_the_helper() -> None:
+    """A direct ``subprocess.run`` would leave a timed-out command's children running."""
+    scripts = Path(__file__).resolve().parents[2]
+    found = {
+        f"{path.relative_to(scripts)}:{line}": None
+        for path in sorted(scripts.glob("*/*.py"))
+        if path.name != "bounded.py"
+        for line in direct_starts(path.read_text())
+    }
+    assert not found, sorted(found)
