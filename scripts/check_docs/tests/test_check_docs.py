@@ -263,7 +263,7 @@ def test_documented_commands_run_with_a_time_limit(
         return subprocess.CompletedProcess(command, 0, b"ok\n", b"")
 
     (root / "out").write_bytes(b"ok\n")
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(check_docs, "run", run)
     check_docs.run_entry({"id": "x", "command": ["x"], "stdout": "out", **declared}, root)
     assert seen == [expected]
 
@@ -276,6 +276,6 @@ def test_a_hung_documented_command_names_its_example(
     def hang(command: list[str], **kwargs: object) -> None:
         raise subprocess.TimeoutExpired(command, 1)
 
-    monkeypatch.setattr(subprocess, "run", hang)
+    monkeypatch.setattr(check_docs, "run", hang)
     with pytest.raises(ValueError, match="timed out after 120 s: typed-values"):
         check_docs.run_entry({"id": "typed-values", "command": ["x"], "stdout": "out"}, root)
