@@ -173,7 +173,13 @@ def cabal_upload(path: Path, publish: bool, documentation: bool) -> None:
         if documentation:
             command.append("--documentation")
         command.append(str(path))
-        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=QUICK)
+        try:
+            result = subprocess.run(
+                command, check=False, capture_output=True, text=True, timeout=QUICK
+            )
+        except subprocess.TimeoutExpired:
+            # The exception would print the argv, which carries the token.
+            raise ValueError(f"cabal upload timed out after {QUICK} s") from None
     output = (result.stdout + result.stderr).replace(secret, "[redacted]")
     if result.returncode:
         status = re.search(r"\bhttp code (401|403)\b", output, re.IGNORECASE)
@@ -189,6 +195,12 @@ def cabal_upload(path: Path, publish: bool, documentation: bool) -> None:
             )
         raise ValueError(f"Hackage upload failed (exit {result.returncode}): {output}")
     print(output, end="")
+
+
+def redacted(message: str) -> str:
+    """Return ``message`` with the Hackage token, if one is set, replaced."""
+    secret = os.environ.get("HACKAGE_AUTH_TOKEN")
+    return message.replace(secret, "[redacted]") if secret else message
 
 
 def upload(directory: Path, root: Path, publish: bool = False, tag: str | None = None) -> bytes:
@@ -308,7 +320,7 @@ def main(argv: list[str] | None = None) -> None:
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
     ) as error:
-        print(f"Release failed: {error}", file=sys.stderr)
+        print(f"Release failed: {redacted(str(error))}", file=sys.stderr)
         sys.exit(1)
 
 
