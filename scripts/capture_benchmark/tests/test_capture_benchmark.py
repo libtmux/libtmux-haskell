@@ -183,3 +183,19 @@ def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_pat
         f"{key}.stdout",
     ]
     assert json.loads((output / f"{key}.json").read_text())["artifactKey"] == key
+
+
+def test_a_missing_benchmark_build_says_how_to_make_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without ``bench:capture`` built, the driver names the build command and leaves no output."""
+    output = tmp_path / "results"
+    monkeypatch.setattr(bench.subprocess, "check_output", lambda *_, **__: str(tmp_path / "none"))
+    monkeypatch.setattr(
+        sys, "argv", ["capture_benchmark", "--tmux", "tmux", "--output", str(output)]
+    )
+    with pytest.raises(SystemExit) as exit_status:
+        bench.main()
+    assert exit_status.value.code == 1
+    assert "cabal build bench:capture --offline" in capsys.readouterr().err
+    assert not output.exists()

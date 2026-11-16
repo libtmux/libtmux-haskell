@@ -414,6 +414,9 @@ def main() -> None:
         text=True,
         timeout=QUICK,
     ).strip()
+    if not Path(program).is_file():
+        args.output.rmdir()
+        parser.exit(1, "Build the benchmark first: cabal build bench:capture --offline\n")
     fixture = load_fixture()
     reports = []
     for binary_index, candidate in enumerate(args.tmux, 1):
