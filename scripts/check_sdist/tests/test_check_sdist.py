@@ -147,7 +147,9 @@ def test_an_example_consumer_bounds_its_build_and_run(
         "executable": "demo",
         **declared,
     }
-    check_sdist.check_example_consumers([entry], tmp_path / "consumers", "../lib.tar.gz", lambda path: b"ok\n")
+    check_sdist.check_example_consumers(
+        [entry], tmp_path / "consumers", "../lib.tar.gz", lambda path: b"ok\n"
+    )
     assert commands == [("cabal", 600), ("cabal", 120), ("program", limit)]
 
 
@@ -192,13 +194,20 @@ def test_batched_consumers_still_check_each_distinct_output(
         return "/consumer/" + args[2].removeprefix("exe:")
 
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        assert kwargs == {"cwd": workspace, "check": True, "capture_output": True, "timeout": check_sdist.DEFAULT_TIMEOUT}
+        assert kwargs == {
+            "cwd": workspace,
+            "check": True,
+            "capture_output": True,
+            "timeout": check_sdist.DEFAULT_TIMEOUT,
+        }
         name = Path(args[0]).name
         executed.append(name)
         output = b"wrong" if corrupt and name == "second" else (name + "\n").encode()
         return subprocess.CompletedProcess(args, 0, output, b"")
 
-    monkeypatch.setattr(check_sdist, "run", lambda args, cwd, timeout: builds.append((args, cwd, timeout)))
+    monkeypatch.setattr(
+        check_sdist, "run", lambda args, cwd, timeout: builds.append((args, cwd, timeout))
+    )
     monkeypatch.setattr(check_sdist.subprocess, "check_output", executable)
     monkeypatch.setattr(check_sdist.subprocess, "run", run)
     if corrupt:
@@ -206,7 +215,9 @@ def test_batched_consumers_still_check_each_distinct_output(
             check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
     else:
         check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
-    assert builds == [(["cabal", "build", "all", "--offline", "--jobs=2"], workspace, check_sdist.BUILD)]
+    assert builds == [
+        (["cabal", "build", "all", "--offline", "--jobs=2"], workspace, check_sdist.BUILD)
+    ]
     assert targets == ["exe:first", "exe:second"]
     assert executed == ["first", "second"]
     project = (workspace / "cabal.project").read_text()
