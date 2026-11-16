@@ -6,8 +6,9 @@ untouched.
 
 The copy repairs record-field, instance-method and source anchors that Haddock
 leaves ambiguous, unlinks hidden-module names in instance attributions, and
-fails on any remaining missing page, missing anchor or duplicate id. It writes `navigation.json` with
-the raw and prepared digest of every file. The output directory must be new.
+fails on any remaining missing page, missing anchor or duplicate id. It writes
+`navigation.json` with the raw and prepared digest of every file. The output
+directory must be new.
 
 ```console
 $ uv run scripts/prepare_haddock/prepare_haddock.py \
