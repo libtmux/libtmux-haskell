@@ -624,7 +624,7 @@ waitProgramFor seconds program = do
     (throwIO (InvalidProgramOptions "wait duration is outside the positive timer range"))
   timeout (fromInteger micros) (waitProgram program)
 
--- | Request TERM, allow 100ms for the exit event, then send KILL to the retained
+-- | Request TERM, wait up to 100ms for leader exit, then send KILL to the retained
 -- process-group identity. Descendants that move to another group/session are
 -- outside this ownership contract. The returned outcome belongs to the leader.
 terminateProgram :: Program -> IO ProgramExit
