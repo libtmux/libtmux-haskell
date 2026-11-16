@@ -5,8 +5,6 @@ import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from types import ModuleType
-from typing import cast
 
 import pytest
 
@@ -153,7 +151,7 @@ def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_pat
     fixture = FakeFixture(tmp_path)
 
     report = bench.measure(
-        cast(ModuleType, fixture),
+        fixture,
         str(binary),
         1,
         "ab" * 32,

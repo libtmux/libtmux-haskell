@@ -16,16 +16,32 @@ import shutil
 import statistics
 import subprocess
 import time
-from contextlib import ExitStack
+from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
-from types import ModuleType
-from typing import Any
+from typing import Any, Protocol, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "examples/capture-graph/run.py"
 
 type Size = tuple[str, int, int, int]
 type Sample = dict[str, int]
+
+# Seconds. Every external command is bounded: these cover the short ones, a
+# case's fixture commands share one budget, and the workload has its own limit.
+QUICK = 120
+CASE_BUDGET = 120
+CREATED = "#{window_id} #{pane_id} #{pane_pid}"
+
+
+class Fixture(Protocol):
+    """The two names the benchmark uses from the capture-graph example's ``run.py``."""
+
+    def fixture(self, binary: str) -> AbstractContextManager[tuple[str, dict[str, str]]]:
+        """Own a daemon; yield its socket path and the environment to run clients in."""
+
+    def exited(self, descriptors: list[int]) -> None:
+        """Wait until every process behind the pidfds has exited."""
+
 
 SIZES: list[Size] = [("small", 1, 3, 6), ("medium", 5, 25, 75), ("large", 15, 80, 250)]
 HARNESS = [
@@ -35,14 +51,14 @@ HARNESS = [
 ]
 
 
-def load_fixture(source: Path = SOURCE) -> ModuleType:
+def load_fixture(source: Path = SOURCE) -> Fixture:
     """Import the capture-graph example's daemon fixture by path."""
     spec = importlib.util.spec_from_file_location("capture_fixture", source)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load the benchmark fixture from {source}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module
+    return cast(Fixture, module)
 
 
 def spread(total: int, parts: int) -> list[int]:
@@ -118,8 +134,139 @@ def check_samples(rows: list[Sample], size: Size, pane_counts: list[int], extra_
             raise RuntimeError("capture benchmark returned inconsistent timing")
 
 
+class Graph:
+    """The sessions, windows and panes one case builds through the fixture's tmux.
+
+    Every pane it creates is tracked by pidfd, so leaving the owning ``ExitStack``
+    confirms that each one exited.
+    """
+
+    def __init__(
+        self,
+        fixture: Fixture,
+        binary: str,
+        socket: str,
+        environment: dict[str, str],
+        panes: ExitStack,
+        started: float,
+    ) -> None:
+        self.fixture = fixture
+        self.binary = binary
+        self.socket = socket
+        self.environment = environment
+        self.panes = panes
+        self.started = started
+
+    def tmux(self, *arguments: str) -> list[str]:
+        """Run one tmux command against the fixture's socket and split its output."""
+        if time.monotonic() - self.started > CASE_BUDGET:
+            raise RuntimeError("benchmark fixture exceeded its two-minute case budget")
+        result = subprocess.run(
+            [self.binary, "-u", "-N", "-S", self.socket, *arguments],
+            env=self.environment,
+            capture_output=True,
+            check=True,
+            timeout=1,
+        )
+        if result.stderr:
+            raise RuntimeError(f"fixture command wrote stderr: {result.stderr!r}")
+        return result.stdout.decode("ascii").strip().split()
+
+    def created(self, *arguments: str) -> tuple[str, str]:
+        """Run a command that creates a pane; return its window and pane ids."""
+        fields = self.tmux(*arguments)
+        if len(fields) != 3 or not fields[0].startswith("@") or not fields[1].startswith("%"):
+            raise RuntimeError("invalid benchmark window/pane receipt")
+        descriptor = os.pidfd_open(int(fields[2]))
+        self.panes.callback(os.close, descriptor)
+        self.panes.callback(self.fixture.exited, [descriptor])
+        return fields[0], fields[1]
+
+    def sessions_and_windows(self, size: Size) -> tuple[list[str], list[tuple[str, str]]]:
+        """Create the sessions and windows; return the session names and each window's first pane."""
+        _, session_count, window_count, _ = size
+        first = self.tmux("display-message", "-p", "-t", "demo:0", "-F", "#{window_id} #{pane_id}")
+        if len(first) != 2:
+            raise RuntimeError("missing initial benchmark window")
+        windows = [(first[0], first[1])]
+        sessions = ["demo"]
+        for index, count in enumerate(spread(window_count, session_count)):
+            if index:
+                session = "bench-" + str(index)
+                sessions.append(session)
+                windows.append(
+                    self.created(
+                        *["new-session", "-d", "-P", "-F", CREATED, "-s", session],
+                        *["-x", "200", "-y", "60", "/bin/cat", "-"],
+                    )
+                )
+            else:
+                session = "demo"
+            for _ in range(count - 1):
+                windows.append(
+                    self.created(
+                        *["new-window", "-d", "-P", "-F", CREATED, "-t", session + ":"],
+                        *["/bin/cat", "-"],
+                    )
+                )
+        return sessions, windows
+
+    def split_panes(self, size: Size, windows: list[tuple[str, str]]) -> list[int]:
+        """Split each window to its pane count; return the counts."""
+        _, _, window_count, pane_count = size
+        pane_counts = spread(pane_count, window_count)
+        for (_, pane), count in zip(windows, pane_counts, strict=True):
+            for _ in range(count - 1):
+                self.created(
+                    *["split-window", "-h", "-d", "-P", "-F", CREATED, "-t", pane],
+                    *["/bin/cat", "-"],
+                )
+        return pane_counts
+
+    def link_windows(self, size: Size, sessions: list[str], windows: list[tuple[str, str]]) -> int:
+        """Link the first three windows into the next session; return how many links exist."""
+        _, session_count, _, _ = size
+        if session_count < 2:
+            return 0
+        for index, (window, _) in enumerate(windows[:3]):
+            target = sessions[(index + 1) % session_count] + ":" + str(100 + index)
+            self.tmux("link-window", "-d", "-s", window, "-t", target)
+        return len(windows[:3])
+
+    def build(self, size: Size) -> tuple[list[int], int]:
+        """Build the graph; return the pane count of each window and the number of extra links."""
+        sessions, windows = self.sessions_and_windows(size)
+        pane_counts = self.split_panes(size, windows)
+        return pane_counts, self.link_windows(size, sessions, windows)
+
+
+def run_workload(
+    program: str,
+    binary: str,
+    socket: str,
+    environment: dict[str, str],
+    samples: int,
+    key: str,
+    output: Path,
+) -> list[Sample]:
+    """Run the Haskell benchmark against the built graph and keep its raw output."""
+    result = subprocess.run(
+        [program, socket, binary, str(samples), "+RTS", "-N1", "-RTS"],
+        env=environment,
+        capture_output=True,
+        check=False,
+        timeout=min(120, 3 * samples + 5),
+    )
+    (output / f"{key}.stdout").write_bytes(result.stdout)
+    (output / f"{key}.stderr").write_bytes(result.stderr)
+    result.check_returncode()
+    if result.stderr:
+        raise RuntimeError("capture benchmark wrote stderr")
+    return parse_samples(result.stdout, samples)
+
+
 def measure(
-    fixture: ModuleType,
+    fixture: Fixture,
     binary: str,
     binary_index: int,
     binary_hash: str,
@@ -130,111 +277,15 @@ def measure(
 ) -> dict[str, Any]:
     """Build one owned graph, run the Haskell benchmark against it and record the result."""
     name, session_count, window_count, pane_count = size
-    version = subprocess.check_output([binary, "-V"], text=True).strip()
+    version = subprocess.check_output([binary, "-V"], text=True, timeout=QUICK).strip()
     key = f"{version.replace(' ', '-')}-{binary_index}-{binary_hash[:12]}-{name}"
     started = time.monotonic()
     before = host_state()
     with ExitStack() as panes, fixture.fixture(binary) as (socket, environment):
-
-        def tmux(*arguments: str) -> list[str]:
-            if time.monotonic() - started > 120:
-                raise RuntimeError("benchmark fixture exceeded its two-minute case budget")
-            result = subprocess.run(
-                [binary, "-u", "-N", "-S", socket, *arguments],
-                env=environment,
-                capture_output=True,
-                check=True,
-                timeout=1,
-            )
-            if result.stderr:
-                raise RuntimeError(f"fixture command wrote stderr: {result.stderr!r}")
-            return result.stdout.decode("ascii").strip().split()
-
-        def created(*arguments: str) -> tuple[str, str]:
-            fields = tmux(*arguments)
-            if len(fields) != 3 or not fields[0].startswith("@") or not fields[1].startswith("%"):
-                raise RuntimeError("invalid benchmark window/pane receipt")
-            descriptor = os.pidfd_open(int(fields[2]))
-            panes.callback(os.close, descriptor)
-            panes.callback(fixture.exited, [descriptor])
-            return fields[0], fields[1]
-
-        first = tmux("display-message", "-p", "-t", "demo:0", "-F", "#{window_id} #{pane_id}")
-        if len(first) != 2:
-            raise RuntimeError("missing initial benchmark window")
-        windows = [(first[0], first[1])]
-        sessions = ["demo"]
-        counts = spread(window_count, session_count)
-        format_ = "#{window_id} #{pane_id} #{pane_pid}"
-        for index, count in enumerate(counts):
-            if index:
-                session = "bench-" + str(index)
-                sessions.append(session)
-                windows.append(
-                    created(
-                        "new-session",
-                        "-d",
-                        "-P",
-                        "-F",
-                        format_,
-                        "-s",
-                        session,
-                        "-x",
-                        "200",
-                        "-y",
-                        "60",
-                        "/bin/cat",
-                        "-",
-                    )
-                )
-            else:
-                session = "demo"
-            for _ in range(count - 1):
-                windows.append(
-                    created(
-                        "new-window",
-                        "-d",
-                        "-P",
-                        "-F",
-                        format_,
-                        "-t",
-                        session + ":",
-                        "/bin/cat",
-                        "-",
-                    )
-                )
-        pane_counts = spread(pane_count, window_count)
-        for (_, pane), count in zip(windows, pane_counts, strict=True):
-            for _ in range(count - 1):
-                created(
-                    "split-window", "-h", "-d", "-P", "-F", format_, "-t", pane, "/bin/cat", "-"
-                )
-        extra_links = 0
-        if session_count > 1:
-            for index, (window, _) in enumerate(windows[:3]):
-                tmux(
-                    "link-window",
-                    "-d",
-                    "-s",
-                    window,
-                    "-t",
-                    sessions[(index + 1) % session_count] + ":" + str(100 + index),
-                )
-                extra_links += 1
+        graph = Graph(fixture, binary, socket, environment, panes, started)
+        pane_counts, extra_links = graph.build(size)
         setup_seconds = time.monotonic() - started
-        result = subprocess.run(
-            [program, socket, binary, str(samples), "+RTS", "-N1", "-RTS"],
-            env=environment,
-            capture_output=True,
-            check=False,
-            timeout=min(120, 3 * samples + 5),
-        )
-        (output / f"{key}.stdout").write_bytes(result.stdout)
-        (output / f"{key}.stderr").write_bytes(result.stderr)
-        result.check_returncode()
-        if result.stderr:
-            raise RuntimeError("capture benchmark wrote stderr")
-        rows = parse_samples(result.stdout, samples)
+        rows = run_workload(program, binary, socket, environment, samples, key, output)
         check_samples(rows, size, pane_counts, extra_links)
     # The fixture daemon and initial pane have exited before the remaining
     # pane pidfds are observed by the outer ownership scope.
@@ -276,6 +327,7 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
             capture_output=True,
             text=True,
             check=False,
+            timeout=QUICK,
         )
         if git
         else None
@@ -284,14 +336,23 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
         git = None
     revision = (
         subprocess.run(
-            [git, "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=False
+            [git, "rev-parse", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=QUICK,
         )
         if git
         else None
     )
     patch = (
         subprocess.run(
-            [git, "diff", "--binary", "HEAD"], cwd=ROOT, capture_output=True, check=False
+            [git, "diff", "--binary", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+            timeout=QUICK,
         )
         if git
         else None
@@ -312,8 +373,12 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
         "harnessSha256": {
             path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in HARNESS
         },
-        "ghc": subprocess.check_output(["ghc", "--numeric-version"], text=True).strip(),
-        "cabal": subprocess.check_output(["cabal", "--numeric-version"], text=True).strip(),
+        "ghc": subprocess.check_output(
+            ["ghc", "--numeric-version"], text=True, timeout=QUICK
+        ).strip(),
+        "cabal": subprocess.check_output(
+            ["cabal", "--numeric-version"], text=True, timeout=QUICK
+        ).strip(),
         "platform": platform.platform(),
         "cases": reports,
         "limits": (
@@ -344,7 +409,10 @@ def main() -> None:
         parser.error("samples must be between 1 and 50")
     args.output.mkdir(parents=True, exist_ok=False)
     program = subprocess.check_output(
-        ["cabal", "list-bin", "bench:capture", "--offline", "-v0"], cwd=ROOT, text=True
+        ["cabal", "list-bin", "bench:capture", "--offline", "-v0"],
+        cwd=ROOT,
+        text=True,
+        timeout=QUICK,
     ).strip()
     fixture = load_fixture()
     reports = []
