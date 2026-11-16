@@ -314,6 +314,36 @@ applications = testGroup "enabled application operations"
                   Directory.removeFile marker
                 Left problem -> rethrowIO problem
             borrowedOnly server
+  , testCase "startup cancellation releases a blocked bootstrap without executing the application" $
+      Fixture.withFixture $ \fixture -> do
+        let marker = fixture.directory </> "cancelled-startup-effect"
+            hook = "wait-for -S program-cancel-created ; wait-for program-cancel-release"
+        bracket_ (configured fixture ["set-hook", "-g", "after-new-session", hook])
+          (configured fixture ["set-hook", "-gu", "after-new-session"]) $
+          Tmux.withServer (config fixture) $ \server -> do
+            withAsync (tryWithContext @SomeException (Tmux.runProgram server
+              (options "/bin/sh" ["-c", "printf forbidden > \"$1\"", "app", marker]))) $ \owner -> do
+              configured fixture ["wait-for", "program-cancel-created"]
+              (code, pid, errors) <- Fixture.command fixture ["list-panes", "-a", "-F", "#{session_name}:#{pane_pid}"]
+              (code, errors) @?= (ExitSuccess, "")
+              selected <- case [Bytes.drop 1 rest | row <- Bytes.lines (Lazy.toStrict pid),
+                  "libtmux-haskell-program-" `Bytes.isPrefixOf` row, let rest = Bytes.dropWhile (/= ':') row] of
+                [value] -> pure value
+                _ -> fail "blocked bootstrap process was not unique"
+              Fixture.withTrackedPane (Lazy.fromStrict (selected <> "\n"))
+                (configured fixture ["wait-for", "-S", "program-cancel-release"]) $
+                bracket (Native.openPid (read (Bytes.unpack selected))) Native.close $ \application -> do
+                  throwTo (asyncThreadId owner) ThreadKilled
+                  configured fixture ["wait-for", "-S", "program-cancel-release"]
+                  outcome <- wait owner
+                  case outcome of
+                    Left (ExceptionWithContext context problem)
+                      | Just ThreadKilled <- fromException problem -> do
+                          bounded (threadWaitRead (Fd application))
+                          mapM_ Program.resumeProgramCleanup (Program.programRecoveries context)
+                    other -> assertFailure ("startup cancellation became " <> show other)
+              Directory.doesFileExist marker >>= (@?= False)
+            borrowedOnly server
   , testCase "daemon replacement preserves the new daemon and settles the original group" $
       Fixture.withFixture $ \fixture -> Fixture.withFixture $ \replacement -> do
         let inputFile = fixture.directory </> "daemon-loss-input"
