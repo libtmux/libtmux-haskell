@@ -44,6 +44,8 @@
 
 ### Fixed
 
+- Mask watch retirement during `ProgramRecovery` cleanup so asynchronous
+  exceptions cannot leave a closed descriptor recorded for retry. ([#41])
 - Report a refused native creation context as `InvalidConfiguration` before
   admission. Oversized options raise `InvalidMutationArgument`. ([#19])
 - Refuse encoded mutation commands over tmux's native message limit before
