@@ -141,9 +141,7 @@ def test_creation_cancellation_reports_the_untracked_pane(tmux_binary: str) -> N
             owners.callback(os.close, daemon)
             observed.append(daemon)
             environment = {
-                key: value
-                for key, value in os.environ.items()
-                if key not in {"TMUX", "TMUX_PANE"}
+                key: value for key, value in os.environ.items() if key not in {"TMUX", "TMUX_PANE"}
             }
 
             def command(*arguments):
@@ -201,9 +199,7 @@ def test_creation_cancellation_reports_the_untracked_pane(tmux_binary: str) -> N
         assert {descriptor for descriptor, _ in ready.poll(0)} == set(observed)
         gc.collect()
         assert [
-            str(warning.message)
-            for warning in emitted
-            if warning.category is ResourceWarning
+            str(warning.message) for warning in emitted if warning.category is ResourceWarning
         ] == []
 
 
