@@ -22,6 +22,11 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "libtmux-haskell"
 
+# Seconds. Every external command is bounded so a hang fails with the command's
+# name before the job's time limit stops it without one.
+QUICK = 120
+BUILD = 600
+
 
 def metadata(root: Path, tag: str | None = None) -> str:
     manifest = (root / f"{PACKAGE}.cabal").read_text()
@@ -59,6 +64,7 @@ def check(
             check=False,
             capture_output=True,
             text=True,
+            timeout=QUICK,
         )
         if merged.returncode == 1:
             raise ValueError("Publication requires a tagged commit that is part of master")
@@ -118,11 +124,13 @@ def prepare(directory: Path, root: Path) -> None:
         ["cabal", "sdist", f"pkg:{PACKAGE}", f"--output-directory={directory}"],
         cwd=root,
         check=True,
+        timeout=QUICK,
     )
     subprocess.run(
         ["cabal", "haddock", f"lib:{PACKAGE}", "--haddock-for-hackage", "--offline"],
         cwd=root,
         check=True,
+        timeout=BUILD,
     )
     docs = root / "dist-newstyle" / f"{PACKAGE}-{version}-docs.tar.gz"
     shutil.copy2(docs, directory / docs.name)
@@ -165,7 +173,7 @@ def cabal_upload(path: Path, publish: bool, documentation: bool) -> None:
         if documentation:
             command.append("--documentation")
         command.append(str(path))
-        result = subprocess.run(command, check=False, capture_output=True, text=True)
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=QUICK)
     output = (result.stdout + result.stderr).replace(secret, "[redacted]")
     if result.returncode:
         status = re.search(r"\bhttp code (401|403)\b", output, re.IGNORECASE)
@@ -229,13 +237,23 @@ def consumer(source: bytes, root: Path, offline: bool = False) -> None:
             project += index[0] + "\n"
         (directory / "cabal.project").write_text(project)
         if not offline:
-            subprocess.run(["cabal", "update"], cwd=directory, check=True)
+            subprocess.run(["cabal", "update"], cwd=directory, check=True, timeout=QUICK)
         flags = ["--offline"] if offline else []
-        subprocess.run(["cabal", "build", "exe:typed-values", *flags], cwd=directory, check=True)
+        subprocess.run(
+            ["cabal", "build", "exe:typed-values", *flags],
+            cwd=directory,
+            check=True,
+            timeout=BUILD,
+        )
         executable = subprocess.check_output(
-            ["cabal", "list-bin", "exe:typed-values", *flags], cwd=directory, text=True
+            ["cabal", "list-bin", "exe:typed-values", *flags],
+            cwd=directory,
+            text=True,
+            timeout=QUICK,
         ).strip()
-        result = subprocess.run([executable], cwd=directory, capture_output=True, check=True)
+        result = subprocess.run(
+            [executable], cwd=directory, capture_output=True, check=True, timeout=QUICK
+        )
         if result.stdout != (example / "expected.stdout").read_bytes() or result.stderr:
             raise ValueError("Public Hackage archive consumer produced unexpected output")
     print("PASS: release archive installed and executed outside the checkout")
@@ -288,6 +306,7 @@ def main(argv: list[str] | None = None) -> None:
         OSError,
         tarfile.TarError,
         subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
     ) as error:
         print(f"Release failed: {error}", file=sys.stderr)
         sys.exit(1)

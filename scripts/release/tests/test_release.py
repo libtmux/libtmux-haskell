@@ -431,3 +431,62 @@ def test_workflow_passes_the_publish_mode_as_a_value(
     """``--publish`` takes ``true`` or ``false`` so the workflow needs no ``if``; an empty tag is none."""
     parsed = release.parse(arguments)
     assert (parsed.publish, parsed.tag) == (publish, tag)
+
+
+def test_every_external_command_is_bounded(
+    release_root: Path, release_directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung ``cabal`` fails with its name instead of running to the job's time limit."""
+    generated = release_root / "dist-newstyle" / DOCS
+    generated.parent.mkdir()
+    generated.write_bytes((release_directory / DOCS).read_bytes())
+    timeouts: list[object] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        timeouts.append(kwargs.get("timeout"))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(release, "consumer", Mock())
+    release.prepare(release_directory, release_root)
+    monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "test-token")
+    release.cabal_upload(release_directory / DOCS, False, True)
+    assert len(timeouts) == 3
+    assert all(isinstance(timeout, int | float) and timeout > 0 for timeout in timeouts)
+
+
+@pytest.mark.usefixtures("external_consumer")
+def test_the_public_consumer_bounds_cabal_and_the_program(
+    release_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Index update, build, binary lookup and the built program each carry a time limit."""
+    timeouts: list[object] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        timeouts.append(kwargs.get("timeout"))
+        return subprocess.CompletedProcess(command, 0, b"validated\n", b"")
+
+    def output(command: list[str], **kwargs: object) -> str:
+        timeouts.append(kwargs.get("timeout"))
+        return "program"
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "check_output", output)
+    release.consumer(b"public source archive", release_root)
+    assert len(timeouts) == 4
+    assert all(isinstance(timeout, int | float) and timeout > 0 for timeout in timeouts)
+
+
+def test_a_timed_out_command_is_reported_by_the_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``main`` turns a command timeout into a release failure, not a traceback."""
+
+    def hang(command: list[str], **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(command, 1)
+
+    monkeypatch.setattr(subprocess, "run", hang)
+    with pytest.raises(SystemExit) as status:
+        release.main(["prepare", "--directory", str(tmp_path / "release")])
+    assert status.value.code == 1
+    assert "timed out" in capsys.readouterr().err

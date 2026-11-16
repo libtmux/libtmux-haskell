@@ -18,6 +18,8 @@ $ uv run scripts/release/release.py check --publish --tag v0.0.1.0
 `--publish` takes `true` or `false`, and a bare flag means `true`, so the
 release workflow passes its input as a value instead of branching. An empty
 `--tag` means no tag, which is how a candidate run from a branch passes it.
+Every `cabal`, `git` and built-program call has a time limit, so a hang fails
+with the command's name.
 
 `upload` needs `HACKAGE_AUTH_TOKEN` and refuses to overwrite a published
 version with different bytes. HTTP 401 means Hackage rejected the token; HTTP
