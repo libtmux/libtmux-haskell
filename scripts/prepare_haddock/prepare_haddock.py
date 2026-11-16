@@ -468,6 +468,183 @@ def _validate(
     return checked
 
 
+def _public_page_edits(document: Document, counts: Counter[str]) -> tuple[list[Edit], FieldTargets]:
+    """Check a public module page's Haddock version, then repair its fields and methods."""
+    footer = _one(
+        [node for node in document.nodes if node.attrs.get("id") == "footer"], "Haddock footer"
+    )
+    version = re.search(r"\bHaddock version ([\w.]+)", footer.text())
+    if version is None or version[1] != "2.33.0":
+        raise ValueError("Unqualified Haddock version")
+    edits, targets = _field_edits(document)
+    counts["fieldEdits"] += len(edits)
+    methods = _method_edits(document)
+    edits.extend(methods)
+    counts["methodEdits"] += len(methods)
+    return edits, targets
+
+
+def _module_list_edits(document: Document, counts: Counter[str]) -> list[Edit]:
+    """Drop the inner duplicate ``module-list`` ID from the index page."""
+    lists = [node for node in document.nodes if node.attrs.get("id") == "module-list"]
+    if len(lists) != 2:
+        return []
+    outer, inner = lists
+    captions = [node.text() for node in outer.children if node.has("caption")]
+    if (
+        outer.tag != "div"
+        or inner.tag != "div"
+        or inner.parent is not outer
+        or captions != ["Modules"]
+    ):
+        raise ValueError("Unqualified duplicate module-list context")
+    counts["moduleListEdits"] += 1
+    return [_attribute(document, inner, "id", None)]
+
+
+def _hidden_attribution_edits(
+    name: str,
+    document: Document,
+    pages: Mapping[str, str],
+    hidden: Mapping[str, str],
+    counts: Counter[str],
+) -> list[Edit]:
+    """Unlink each hidden module named in a "Defined in" attribution."""
+    edits: list[Edit] = []
+    for node in document.nodes:
+        if node.tag != "a" or "href" not in node.attrs:
+            continue
+        target = _destination(name, node.attrs["href"])
+        if target is None or target[0] in pages or target[0] not in hidden:
+            continue
+        parent = node.parent
+        grandparent = parent.parent if parent is not None else None
+        module = hidden[target[0]]
+        if (
+            target[1]
+            or node.attrs["href"] != target[0]
+            or node.text() != module
+            or parent is None
+            or grandparent is None
+            or parent.tag != "p"
+            or parent.text() != "Defined in " + module
+            or parent.children != [node]
+            or grandparent.tag != "details"
+            or not grandparent.attrs.get("id", "").startswith("i:id:")
+        ):
+            raise ValueError("Missing hidden-module link outside its Defined-in attribution")
+        edits.extend([(node.start, node.start_end, ""), (node.end_start, node.end, "")])
+        counts["hiddenAttributions"] += 1
+    return edits
+
+
+def _reexport_link(
+    entry: dict[str, Any],
+    page: str,
+    document: Document,
+    documents: Mapping[str, Document],
+    public_modules: Collection[str],
+) -> Link:
+    """Check a search entry that re-exports a module and return the link to validate."""
+    export = _one(
+        [node for node in document.root.children if node.tag == "a"],
+        "native search module reexport",
+    )
+    exported = _destination(page, export.attrs.get("href", ""))
+    targets = [
+        module for module in public_modules if exported == (module.replace(".", "-") + ".html", "")
+    ]
+    module = _one(targets, "public reexport owner")
+    expected = "module " + module
+    headers = [
+        node
+        for node in documents[page].nodes
+        if node.tag == "p"
+        and node.has("src")
+        and node.text() == expected
+        and [item.attrs.get("href") for item in node.walk() if item.tag == "a"]
+        == [export.attrs.get("href")]
+    ]
+    if entry["name"] != "" or document.root.text() != expected or len(headers) != 1:
+        raise ValueError("Native search reexport and public module owner disagree")
+    return page, export.attrs["href"]
+
+
+def _declaration_links(
+    entry: dict[str, Any],
+    page: str,
+    target: Link | None,
+    document: Document,
+    fields: Mapping[str, FieldTargets],
+    counts: Counter[str],
+) -> list[Link]:
+    """Retarget a declaration entry's field links in place and return its links to validate."""
+    if target is None or target[0] != page:
+        raise ValueError("Native search module and declaration owner disagree")
+    owner = target[1][2:] if target[1].startswith("t:") else None
+    binder = _one(
+        [node for node in document.root.children if node.tag == "a"][:1],
+        "native search declaration anchor",
+    )
+    if binder.attrs.get("href") != "#" + target[1]:
+        raise ValueError("Native search display anchor and declaration owner disagree")
+    edits: list[Edit] = []
+    for node in document.nodes:
+        href = node.attrs.get("href", "")
+        if node.tag == "a" and href.startswith("#"):
+            anchor = fields.get(target[0], {}).get((owner, href[1:]))
+            if anchor:
+                edits.append(_attribute(document, node, "href", "#" + anchor))
+    entry["display_html"] = _apply(document, edits)
+    counts["searchEdits"] += len(edits)
+    return [
+        (page, node.attrs["href"])
+        for node in Document(entry["display_html"]).nodes
+        if node.tag == "a" and "href" in node.attrs
+    ]
+
+
+def _search_index(
+    text: str,
+    documents: Mapping[str, Document],
+    public_modules: Collection[str],
+    fields: Mapping[str, FieldTargets],
+    counts: Counter[str],
+) -> tuple[str, list[Link]]:
+    """Retarget the native search index and return its text and the links to validate."""
+    entries = json.loads(text)
+    search_links: list[Link] = []
+    for entry in entries:
+        if entry["module"] not in public_modules:
+            raise ValueError("Unknown native search module")
+        page = entry["module"].replace(".", "-") + ".html"
+        search_links.append(("doc-index.json", entry["link"]))
+        target = _destination("doc-index.json", entry["link"])
+        document = Document(entry["display_html"])
+        if entry["link"] == "":
+            search_links.append(_reexport_link(entry, page, document, documents, public_modules))
+        else:
+            search_links.extend(_declaration_links(entry, page, target, document, fields, counts))
+    return json.dumps(entries, ensure_ascii=False, separators=(",", ":")) + "\n", search_links
+
+
+def _require_unchanged_listings(
+    documents: Mapping[str, Document], prepared: Mapping[str, Document]
+) -> None:
+    """Require each source page's text and line anchors to survive preparation."""
+    for name, document in documents.items():
+        if not name.startswith("src/"):
+            continue
+        before = _one(
+            [node for node in document.nodes if node.tag == "pre"], "native source listing"
+        )
+        after = _one(
+            [node for node in prepared[name].nodes if node.tag == "pre"], "prepared source listing"
+        )
+        if before.text() != after.text() or _line_anchors(before) != _line_anchors(after):
+            raise ValueError("Preparation changed source text or line anchors")
+
+
 def prepare_pages(
     pages: Mapping[str, str], public_modules: Collection[str], hidden_modules: Collection[str]
 ) -> tuple[dict[str, str], dict[str, int]]:
@@ -483,136 +660,23 @@ def prepare_pages(
     for name, document in documents.items():
         edits: list[Edit] = []
         if name in public:
-            footer = _one(
-                [node for node in document.nodes if node.attrs.get("id") == "footer"],
-                "Haddock footer",
-            )
-            version = re.search(r"\bHaddock version ([\w.]+)", footer.text())
-            if version is None or version[1] != "2.33.0":
-                raise ValueError("Unqualified Haddock version")
-            changes, fields[name] = _field_edits(document)
+            changes, fields[name] = _public_page_edits(document, counts)
             edits.extend(changes)
-            counts["fieldEdits"] += len(changes)
-            changes = _method_edits(document)
-            edits.extend(changes)
-            counts["methodEdits"] += len(changes)
         if name.startswith("src/"):
             changes = _source_edits(document)
             edits.extend(changes)
             counts["sourceEdits"] += len(changes)
         if name == "index.html":
-            lists = [node for node in document.nodes if node.attrs.get("id") == "module-list"]
-            if len(lists) == 2:
-                outer, inner = lists
-                captions = [node.text() for node in outer.children if node.has("caption")]
-                if (
-                    outer.tag != "div"
-                    or inner.tag != "div"
-                    or inner.parent is not outer
-                    or captions != ["Modules"]
-                ):
-                    raise ValueError("Unqualified duplicate module-list context")
-                edits.append(_attribute(document, inner, "id", None))
-                counts["moduleListEdits"] += 1
-        for node in document.nodes:
-            if node.tag != "a" or "href" not in node.attrs:
-                continue
-            target = _destination(name, node.attrs["href"])
-            if target is None or target[0] in pages or target[0] not in hidden:
-                continue
-            parent = node.parent
-            grandparent = parent.parent if parent is not None else None
-            module = hidden[target[0]]
-            if (
-                target[1]
-                or node.attrs["href"] != target[0]
-                or node.text() != module
-                or parent is None
-                or grandparent is None
-                or parent.tag != "p"
-                or parent.text() != "Defined in " + module
-                or parent.children != [node]
-                or grandparent.tag != "details"
-                or not grandparent.attrs.get("id", "").startswith("i:id:")
-            ):
-                raise ValueError("Missing hidden-module link outside its Defined-in attribution")
-            edits.extend([(node.start, node.start_end, ""), (node.end_start, node.end, "")])
-            counts["hiddenAttributions"] += 1
+            edits.extend(_module_list_edits(document, counts))
+        edits.extend(_hidden_attribution_edits(name, document, pages, hidden, counts))
         result[name] = _apply(document, edits)
     search_links: list[Link] = []
     if "doc-index.json" in result:
-        entries = json.loads(result["doc-index.json"])
-        for entry in entries:
-            if entry["module"] not in public_modules:
-                raise ValueError("Unknown native search module")
-            page = entry["module"].replace(".", "-") + ".html"
-            search_links.append(("doc-index.json", entry["link"]))
-            target = _destination("doc-index.json", entry["link"])
-            document = Document(entry["display_html"])
-            if entry["link"] == "":
-                export = _one(
-                    [node for node in document.root.children if node.tag == "a"],
-                    "native search module reexport",
-                )
-                exported = _destination(page, export.attrs.get("href", ""))
-                targets = [
-                    module
-                    for module in public_modules
-                    if exported == (module.replace(".", "-") + ".html", "")
-                ]
-                module = _one(targets, "public reexport owner")
-                expected = "module " + module
-                headers = [
-                    node
-                    for node in documents[page].nodes
-                    if node.tag == "p"
-                    and node.has("src")
-                    and node.text() == expected
-                    and [item.attrs.get("href") for item in node.walk() if item.tag == "a"]
-                    == [export.attrs.get("href")]
-                ]
-                if entry["name"] != "" or document.root.text() != expected or len(headers) != 1:
-                    raise ValueError("Native search reexport and public module owner disagree")
-                search_links.append((page, export.attrs["href"]))
-                continue
-            if target is None or target[0] != page:
-                raise ValueError("Native search module and declaration owner disagree")
-            owner = target[1][2:] if target[1].startswith("t:") else None
-            binder = _one(
-                [node for node in document.root.children if node.tag == "a"][:1],
-                "native search declaration anchor",
-            )
-            if binder.attrs.get("href") != "#" + target[1]:
-                raise ValueError("Native search display anchor and declaration owner disagree")
-            edits = []
-            for node in document.nodes:
-                href = node.attrs.get("href", "")
-                if node.tag == "a" and href.startswith("#"):
-                    anchor = fields.get(target[0], {}).get((owner, href[1:]))
-                    if anchor:
-                        edits.append(_attribute(document, node, "href", "#" + anchor))
-            entry["display_html"] = _apply(document, edits)
-            counts["searchEdits"] += len(edits)
-            search_links.extend(
-                (page, node.attrs["href"])
-                for node in Document(entry["display_html"]).nodes
-                if node.tag == "a" and "href" in node.attrs
-            )
-        result["doc-index.json"] = (
-            json.dumps(entries, ensure_ascii=False, separators=(",", ":")) + "\n"
+        result["doc-index.json"], search_links = _search_index(
+            result["doc-index.json"], documents, public_modules, fields, counts
         )
     prepared = {name: Document(text) for name, text in result.items() if name.endswith(".html")}
-    for name, document in documents.items():
-        if not name.startswith("src/"):
-            continue
-        before = _one(
-            [node for node in document.nodes if node.tag == "pre"], "native source listing"
-        )
-        after = _one(
-            [node for node in prepared[name].nodes if node.tag == "pre"], "prepared source listing"
-        )
-        if before.text() != after.text() or _line_anchors(before) != _line_anchors(after):
-            raise ValueError("Preparation changed source text or line anchors")
+    _require_unchanged_listings(documents, prepared)
     counts["checkedLocalLinks"] = _validate(result, prepared, search_links)
     return result, dict(counts)
 

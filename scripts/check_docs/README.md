@@ -14,7 +14,9 @@ $ uv run scripts/check_docs/check_docs.py
 ```
 
 `--run` also executes each documented command from the checkout and compares
-its exit status, stdout and stderr. Provision the examples first:
+its exit status, stdout and stderr. A command that outlives its limit fails
+with its example's identifier; the limit is `DEFAULT_TIMEOUT` seconds unless
+the catalogue entry sets `timeout`. Provision the examples first:
 
 ```console
 $ uv run scripts/check_docs/check_docs.py --run
