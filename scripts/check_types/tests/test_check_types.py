@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -161,3 +162,33 @@ def test_a_negative_case_must_fail_for_its_intended_reason(
     with pytest.raises(check_types.TypeCheckError, match="Missing intended type error"):
         check_types.check(checkout.root)
     assert output in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("capture", [False, True])
+def test_each_compilation_has_a_time_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capture: bool
+) -> None:
+    """A GHC run that never ends fails with its command instead of the job's time limit."""
+    seen: list[object] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(kwargs.get("timeout"))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    check_types.compile_source(tmp_path, UNITS, tmp_path, "Case.hs", capture=capture)
+    assert seen == [check_types.COMPILE]
+
+
+def test_the_library_build_has_a_time_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ``cabal build`` ahead of the cases is bounded, and a timeout is a reported failure."""
+    seen: list[object] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(kwargs.get("timeout"))
+        raise subprocess.TimeoutExpired(command, 1)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(SystemExit, match="timed out"):
+        check_types.main()
+    assert seen == [check_types.BUILD]
