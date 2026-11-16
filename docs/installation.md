@@ -56,9 +56,10 @@ $ cabal run --verbose=0 capture-graph -- \
 - The [capture guide](capture.md) covers the object graph, pure lookups and
   scope cleanup.
 
-The API is experimental. The package provides observation, rename/title
-and existing-server session creation operations. First-server bootstrap,
-window/pane creation, pane input and events remain under development.
+The API is experimental. The package provides observation, rename/title,
+session creation, private daemon startup and retirement, and adopted-daemon
+kill operations. Window/pane creation, pane input and events remain under
+development.
 Check [status](status.md) before choosing it for automation.
 
 Browse the [manual](https://libtmux.org/en/haskell/) and
@@ -78,7 +79,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 7907db1f8f34feedf9f3ec2ca572eab1e5ed3431
+  tag: ad190fe73c9d09a553c3c160ecf0b6394b7621a6
 ```
 
 ## Native backend host requirements
@@ -88,6 +89,8 @@ The native backend needs:
 - Linux x86_64.
 - glibc 2.39 or newer, for `pidfd_spawn`.
 - A kernel with compatible pidfd operations.
+- Linux 6.5 or newer for `withOwnedServer` and `killServer`, which take a pidfd
+  from a connected socket.
 - Exclusive ownership of child reaping.
 
 A missing host operation fails before launch. Pure scalar construction and

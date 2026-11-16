@@ -3,7 +3,8 @@
 Use the current source for detached observations and typed input values.
 The API is experimental. Public mutations currently cover session/window
 rename, pane titles and detached session creation, with generation checks
-and correlated recovery.
+and correlated recovery. A scope can start its own tmux daemon and retire it,
+and `killServer` retires an adopted daemon.
 
 | Component | Available to consumers |
 | --- | --- |
@@ -17,7 +18,8 @@ and correlated recovery.
 | Typed predicates, relationships, ordering and cardinality | Implemented through `LibTmux.Query`; see [the complete program](query.md) |
 | Session/window rename and pane title | Implemented through `LibTmux.Server`; see [the complete program](mutations.md) |
 | Detached session creation on an existing daemon | Implemented through `LibTmux.Server` and `LibTmux.Creation`; see [the complete program](creation.md) |
-| First-server bootstrap, window/pane creation, pane input and contextual window operations | Not implemented |
+| Private daemon startup and retirement (`withOwnedServer`), explicit adopted kill (`killServer`) and recovery of unfinished retirement through `cleanupRecoveries` | Implemented through `LibTmux.Server`; Linux 6.5 or newer; see [the lifecycle guide](lifecycle.md) |
+| Startup on an application-chosen endpoint, window/pane creation, pane input and contextual window operations | Not implemented |
 | Query interchange and backend optimization | Not implemented |
 | Control events, streams and cancellation API | Not implemented |
 
@@ -40,7 +42,8 @@ need a concrete requirement. See the
   releases from 3.3a onward are admitted but not run, and releases after 3.8
   are untested.
 - It exercises owned fixtures, scalar framing, socket pins, public capture and
-  mutations, scope recovery and process ownership.
+  mutations, public daemon startup and retirement, scope recovery and process
+  ownership.
 - That covers the implemented subset, not the whole tmux API.
 
 See the [workflow](../.github/workflows/ci.yml) and

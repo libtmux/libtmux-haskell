@@ -6,6 +6,11 @@ name/link cases described below, not the whole lifecycle or mutation protocol.
 
 ## Startup and liveness
 
+The public API implements a subset: `withOwnedServer` starts a daemon on a
+socket the library chooses and retires it, and `killServer` retires an adopted
+daemon (see the [lifecycle guide](../lifecycle.md)). `startDaemonAt`,
+`requireAlive` and the liveness distinctions below remain proposals.
+
 Plain `startDaemonAt` takes an unresolved endpoint and returns `StartAccepted`
 after command completion. It creates no implicit session, changes no lifetime
 option and does not use foreground `-D`. Success does not promise that an
@@ -76,7 +81,7 @@ failure do not invent a creation receipt. Launch cwd and environment are
 explicit inputs; they do not silently inherit the read transport's fixed
 context. The public [creation API and program](../creation.md) use these
 receipts and preserve correlated recovery through pre-request failures.
-First-server bootstrap remains open.
+Startup on an application-chosen endpoint remains open.
 
 ## Creation and reuse
 

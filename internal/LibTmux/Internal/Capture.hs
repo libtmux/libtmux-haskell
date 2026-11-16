@@ -7,7 +7,7 @@
 -- "LibTmux.Server" owns the public scope and cleanup policy.
 module LibTmux.Internal.Capture
   ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
-  , captureVersionWith
+  , captureVersionWith, captureIdentityWith
   , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
   ) where
 
@@ -75,9 +75,19 @@ detachRecovery (CaptureRecovery runtime client receipt) = R.detachReceipt runtim
 -- | Qualify adoption through the same bounded read/recovery ownership as a
 -- capture. The version probe runs no tmux after-hook and acquires no graph.
 captureVersionWith :: P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO (Word64, Word64, Version.TmuxVersion)
-captureVersionWith hooks runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
+captureVersionWith = captureProbe R.readServerVersionWith
+
+-- | The daemon's PID through the same hook-free probe, bounded and correlated like 'captureVersionWith'.
+captureIdentityWith :: P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO (Word64, Word64, Integer)
+captureIdentityWith = captureProbe R.readServerIdentityWith
+
+captureProbe
+  :: NFData value
+  => (P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> ByteString -> R.ReadClass -> IO (R.Request value))
+  -> P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO (Word64, Word64, value)
+captureProbe start hooks runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
   left <- remaining deadline
-  owned runtime receipt (R.readServerVersionWith hooks left runtime client executable R.ScalarRead)
+  owned runtime receipt (start hooks left runtime client executable R.ScalarRead)
 
 captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do

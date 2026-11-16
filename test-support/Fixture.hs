@@ -1,7 +1,7 @@
 module Fixture
   ( Fixture (..), StartupStage (..), Daemon (..), Retirement (..), retirement
   , withFixture, withFixtureAt, withDaemon, retireDaemon, awaitDaemon, pollDaemon, retainedDaemons, guardRetained
-  , withAttachedClient, command, registerPane, withTrackedPane
+  , withAttachedClient, command, registerPane, withTrackedPane, inIsolatedProcess
   ) where
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
@@ -27,7 +27,7 @@ import GHC.Conc (closeFdWith, threadWaitRead)
 import GHC.Foreign qualified as Foreign
 import GHC.IO.Encoding (getFileSystemEncoding)
 import System.Directory (removePathForcibly)
-import System.Environment (getEnvironment, lookupEnv)
+import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..), exitWith)
 import System.FilePath ((</>))
 import System.IO (hFlush, hPutStrLn, stderr)
@@ -36,7 +36,7 @@ import System.Posix.IO (closeFd)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
 import System.Process.Typed
-  ( createPipe, getStderr, getStdin, getStdout, nullStream, proc, setEnv, setStderr, setStdin, setStdout
+  ( createPipe, getStderr, getStdin, getStdout, nullStream, proc, readProcess, setEnv, setStderr, setStdin, setStdout
   , waitExitCode, withProcessTerm
   )
 import System.Timeout (timeout)
@@ -352,3 +352,21 @@ waitReady fd@(Fd raw) = do
   threadWaitRead fd
   ready <- throwErrnoIfMinus1 "fixture socket readiness" (socketReady raw)
   unless (ready == 1) (waitReady fd)
+
+-- | Run one Tasty case in its own process so other cases cannot inherit its descriptors.
+inIsolatedProcess :: String -> IO () -> IO ()
+inIsolatedProcess selected action = lookupEnv "LIBTMUX_ISOLATED_TEST" >>= \case
+  Just current | current == selected -> putStrLn marker >> action
+  _ -> do
+    executable <- getExecutablePath
+    environment <- filter ((/= "LIBTMUX_ISOLATED_TEST") . fst) <$> getEnvironment
+    (code, output, errors) <- readProcess $ setEnv (("LIBTMUX_ISOLATED_TEST", selected) : environment) $
+      setStdin nullStream $ proc executable
+        ["--pattern", "/" <> selected <> "/", "--num-threads", "1", "+RTS", "-N1", "-RTS"]
+    unless (code == ExitSuccess && Lazy.null errors) $
+      fail ("isolated test failed: " <> show (code, output, errors))
+    let shown = Lazy.toStrict output
+    unless ("All 1 tests passed" `Strict.isInfixOf` shown && Ascii.pack marker `Strict.isInfixOf` shown) $
+      fail "isolated test did not enter and finish its selected case"
+  where
+    marker = "libtmux-isolated-test: " <> selected

@@ -5,7 +5,8 @@
 -- releases those resources; it does not send @kill-server@. The tmux noun
 -- @Client@ refers to detached observations in "LibTmux.Snapshot".
 -- 'withRuntime' and 'withServerIn' give several handles shared resource limits
--- and independent Server scopes.
+-- and independent Server scopes. 'withOwnedServer' starts a daemon of its own
+-- and retires it with the scope; 'killServer' retires an adopted daemon.
 --
 -- 'capture' returns fully decoded, validated values. Field access and graph
 -- navigation are pure. Captures use an observation interval, not an atomic
@@ -21,6 +22,8 @@
 module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration
+    -- * Start and retire a daemon
+  , OwnedServerConfig (..), defaultOwnedServerConfig, withOwnedServer, killServer
     -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
     -- * Detached session creation
@@ -50,13 +53,14 @@ import Control.Concurrent.STM (atomically, readTVar)
 import Control.DeepSeq (force)
 import Control.Exception
   ( ExceptionWithContext (..), IOException, SomeAsyncException, SomeException
-  , catchNoPropagate, evaluate, fromException, mask, rethrowIO, throwIO, tryWithContext
+  , catchNoPropagate, evaluate, fromException, mask, onException, rethrowIO, throwIO, toException, tryWithContext
   )
 import Control.Exception.Context (ExceptionContext)
 import Control.Exception.Context qualified as Context
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime)
@@ -71,6 +75,7 @@ import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Mutation (MutationRecovery)
+import LibTmux.Internal.OwnedServer qualified as Owned
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime (ReadRecovery (..))
@@ -91,9 +96,9 @@ import System.OsPath.Posix qualified as Path
 import System.OsString qualified as Platform
 import System.OsString.Posix qualified as Os
 
--- | One pinned endpoint and connection generation.
--- Retaining this value after 'withServer' or 'withServerIn' keeps no admission open.
-data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int
+-- | One pinned endpoint and connection generation. Retaining this value after
+-- 'withServer', 'withServerIn' or 'withOwnedServer' keeps no admission open.
+data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int !(IO ())
 
 -- | Shared resource limits and cleanup ownership for Server handles. Create
 -- one with 'withRuntime', then adopt endpoints through 'withServerIn'.
@@ -117,7 +122,10 @@ withRuntime action = do
 -- after the callback. Other handles remain admitted under the shared limits;
 -- each adoption has its own 'serverGeneration'. Use 'withServer' for one handle.
 -- Before the callback, opening refuses a daemon release older than 3.3a or an
--- unrecognized version reply.
+-- unrecognized version reply. Opening also verifies the listener and holds a
+-- process descriptor for 'killServer' where the host allows it (Linux 6.5 or
+-- newer); the daemon's process ID is read without running a command hook. Where
+-- that fails, the callback still runs and 'killServer' raises the failure.
 --
 -- Failed adoption can retain a t'CleanupRecovery' before a t'Server' exists.
 -- Inspection, retry and waiting through that owner stay scoped to the failed
@@ -137,7 +145,8 @@ withServerIn (Runtime runtime) config action = mask $ \restore -> do
     handle <- operational (R.adoptServerOwnerWith (\_ _ -> pure ()) runtime owner
       (posixBytes config.socketPath) (posixBytes config.pinDirectory))
     operational (qualifyVersion runtime handle executable duration)
-    action (Server runtime handle executable duration)
+    withAdoptedRetirement runtime handle executable duration $ \retire ->
+      action (Server runtime handle executable duration retire)
 
 -- | Pure configuration, checked when 'withServer' or 'withServerIn' opens the handle.
 -- Paths retain POSIX bytes; no text decoding or shell interpretation occurs.
@@ -145,7 +154,7 @@ data ServerConfig = ServerConfig
   { socketPath :: !PosixPath -- ^ Existing tmux socket, with an absolute trusted path.
   , executable :: !PosixPath -- ^ Executable path or a program resolved once through PATH.
   , pinDirectory :: !PosixPath -- ^ Writable trusted directory on the socket's filesystem.
-  , captureTimeout :: !NominalDiffTime -- ^ Capture and initial version-check deadline in seconds, positive and at most ten.
+  , captureTimeout :: !NominalDiffTime -- ^ Per-read admission and capture deadline in seconds, positive and at most ten.
   }
   deriving stock (Eq, Show)
 
@@ -157,8 +166,9 @@ serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeD
 
 -- | Pin the endpoint, check the daemon release against the 3.3a admission
 -- minimum, run the callback, then perform bounded owned cleanup. Version
--- observation runs no command hook. A release older than 3.3a or an
--- unrecognized reply fails before entering the callback.
+-- observation runs no command hook, and neither does the process-ID read that
+-- supports 'killServer'. A release older than 3.3a or an unrecognized reply
+-- fails before entering the callback.
 -- Cleanup never replaces a callback exception. Incomplete cleanup raises
 -- 'CleanupFailed' after success, or annotates the original callback failure
 -- with a reachable t'CleanupRecovery'. No daemon shutdown is requested.
@@ -169,7 +179,8 @@ withServer config action = do
   Scope.runScope runtime $ do
     handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
     operational (qualifyVersion runtime handle executable duration)
-    action (Server runtime handle executable duration)
+    withAdoptedRetirement runtime handle executable duration $ \retire ->
+      action (Server runtime handle executable duration retire)
 
 qualifyVersion :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO ()
 qualifyVersion runtime handle executable duration = do
@@ -177,18 +188,124 @@ qualifyVersion runtime handle executable duration = do
   either (throwIO . UnsupportedTmuxVersion) (const (pure ())) (Version.requireSupported version)
 
 checkedConfiguration :: ServerConfig -> IO (ByteString, Int)
-checkedConfiguration config = do
-  let seconds = toRational config.captureTimeout
+checkedConfiguration config = checkedExecutable "captureTimeout" config.executable config.captureTimeout
+
+-- | Validate a deadline, then resolve the executable; no external effect precedes either check.
+checkedExecutable :: Text.Text -> PosixPath -> NominalDiffTime -> IO (ByteString, Int)
+checkedExecutable field executable limit = do
+  let seconds = toRational limit
   when (seconds <= 0 || seconds > 10) $
-    throwIO (InvalidConfiguration "captureTimeout must be greater than zero and at most ten seconds")
-  executable <- operational (resolveExecutable config.executable)
-  pure (executable, fromInteger (ceiling (seconds * 1000000)))
+    throwIO (InvalidConfiguration (field <> " must be greater than zero and at most ten seconds"))
+  resolved <- operational (resolveExecutable executable)
+  pure (resolved, fromInteger (ceiling (seconds * 1000000)))
+
+-- | Pure configuration for 'withOwnedServer', checked when its scope opens. The
+-- socket is not configurable: the scope creates and removes its own.
+data OwnedServerConfig = OwnedServerConfig
+  { tmuxExecutable :: !PosixPath -- ^ Executable path or a program resolved once through PATH.
+  , operationTimeout :: !NominalDiffTime -- ^ Per-read admission and 'capture' deadline in seconds, positive and at most ten.
+  }
+  deriving stock (Eq, Show)
+
+-- | Resolve @tmux@ through PATH, with a two-second 'operationTimeout'.
+defaultOwnedServerConfig :: OwnedServerConfig
+defaultOwnedServerConfig = OwnedServerConfig (Os.fromBytestring "tmux") 2
+
+-- | Start a tmux daemon of its own, run the callback with a t'Server' for it,
+-- then retire that daemon. The scope creates a private directory under @/tmp@
+-- and the daemon's socket inside it; the caller supplies neither. Like
+-- 'withServer', it refuses a release older than 3.3a before the callback. An
+-- invalid configuration raises 'InvalidConfiguration' before any directory or
+-- process exists.
+--
+-- On return, exception or cancellation the scope signals the original daemon
+-- through a process descriptor and counts it as gone only when the descriptor
+-- reports exit; a missing socket or finished client proves nothing. It then
+-- removes its socket and directory while their identities still match. Replaced
+-- names retain their cleanup owner. The callback keeps the caller's masking
+-- state and exception class. A retained Server raises 'ServerClosed' afterwards.
+--
+-- A known startup failure raises 'OperationFailed'. Cleanup that fails after a
+-- successful callback raises 'CleanupFailed', as 'withServer' does. If exit is
+-- not observed within the bounded wait, the exception context keeps the owner
+-- of the daemon and directory. Retrieve it with 'cleanupRecoveries', inspect
+-- it with 'inspectCleanup', and retry bounded cleanup with 'resumeCleanup'.
+-- 'awaitCleanup' waits on the daemon's process descriptor when one is held, or
+-- on the start client's exit when not, then retries once. After a start that
+-- found no listener it cannot wait for anything: the retry fails and the owner
+-- stays, because no listener and a finished client do not prove the daemon gone.
+-- Needs Linux 6.5 or newer. Panes receive SIGHUP; a background job started by
+-- a hook can outlive the daemon. SIGKILL and process crashes bypass cleanup and
+-- can leave the daemon and directory behind.
+withOwnedServer :: OwnedServerConfig -> (Server -> IO a) -> IO a
+withOwnedServer config action = do
+  (executable, duration) <- checkedExecutable "operationTimeout" config.tmuxExecutable config.operationTimeout
+  lifecycle $ \tracked ->
+    Owned.withOwnedServerWith Owned.defaultProbe {Owned.versionMicros = duration} executable $ \owned ->
+      tracked (action (Server owned.runtime owned.handle executable duration
+        (catchNoPropagate (Owned.settle owned.owner) (rethrowIO . Owned.annotated owned.owner))))
+
+-- | Where the callback stood when a daemon-owning scope failed decides the public exception. A
+-- callback failure stays primary. Cleanup that fails after the callback returned raises
+-- 'CleanupFailed' with the owner's status and cause, as 'withServer' does; a failure before
+-- the callback is an operational failure. Asynchronous exceptions keep their class throughout.
+data Callback = NotEntered | Returned | Raised
+
+lifecycle :: ((IO a -> IO a) -> IO a) -> IO a
+lifecycle scope = do
+  state <- newIORef NotEntered
+  let tracked body = (body >>= \value -> value <$ writeIORef state Returned) `onException` writeIORef state Raised
+  catchNoPropagate (scope tracked) $ \original -> do
+    retained@(ExceptionWithContext context cause) <- Owned.promoteRecoveries original
+    readIORef state >>= \case
+      Raised -> rethrowIO retained
+      Returned
+        | isJust (fromException @SomeAsyncException cause) -> rethrowIO retained
+        | recovery : _ <- cleanupRecoveries context ->
+            rethrowIO (ExceptionWithContext context (toException (CleanupFailed (cleanupObservation recovery) (Just cause))))
+      _ -> operationalFailure retained
+
+-- | Hold a kill capability for the callback when the host and the listener allow one. Otherwise the
+-- callback still runs, and 'killServer' raises the failure that prevented it.
+withAdoptedRetirement :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> (IO () -> IO a) -> IO a
+withAdoptedRetirement runtime handle executable duration action =
+  lifecycle $ \tracked ->
+    Owned.withKillCapability Owned.defaultProbe {Owned.versionMicros = duration} executable runtime handle $ \admitted ->
+      tracked (action (either throwIO retire admitted))
+  where
+    open = Owned.admissionOpen handle
+    retire capability = do
+      _ <- Owned.killAdoptedIf open capability
+      report <- R.shutdownServerHandle runtime handle
+      unless (null report.pending && null report.readWorkers && null report.closeFailures)
+        (throwIO (Owned.CleanupPending (show report)))
+      remaining <- atomically $ do
+        forM_ report.unresolved (R.detachOperation runtime . fst)
+        (.unresolved) <$> R.inspectServerHandle runtime handle
+      unless (null remaining) (throwIO (Owned.OperationsUnresolved (length remaining)))
+
+-- | Retire the daemon behind an owned or adopted Server and return after its exit is
+-- observed through a process descriptor. The descriptor comes from the pinned
+-- socket when the Server is admitted, and the daemon's reported process ID must
+-- match it. Retirement needs no tmux response or command lane. A socket rebound
+-- after adoption refuses instead of stopping another server. Later operations
+-- raise 'ServerClosed', and so does a call that arrives after the adopting
+-- scope's callback has left; a call admitted before that finishes. Interrupted
+-- cleanup keeps a t'CleanupRecovery'; known failures raise 'OperationFailed',
+-- including the failure that prevented holding the descriptor at admission.
+-- An owned Server also settles its operation pool and private directory; cleanup
+-- can fail after daemon exit was observed. Needs Linux 6.5 or newer.
+killServer :: Server -> IO ()
+killServer (Server _ handle _ _ retire) = operational $ do
+  closed <- atomically (readTVar (R.serverPool handle).closing)
+  when closed (throwIO ServerClosed)
+  catchNoPropagate retire (\problem -> Owned.promoteRecoveries problem >>= rethrowIO)
 
 -- | Acquire the complete baseline graph, metadata and attached clients.
 -- Returned values own their data and remain usable after 'withServer' exits.
 -- Capacity and acquisition failure are errors; they never become empty lists.
 capture :: Server -> IO Snapshot
-capture (Server runtime handle executable duration) = operational $ do
+capture (Server runtime handle executable duration _) = operational $ do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   (started, finished, decoded) <- C.captureSnapshot runtime handle executable duration
@@ -198,7 +315,7 @@ capture (Server runtime handle executable duration) = operational $ do
 
 -- | The handle's opaque generation, available without contacting tmux.
 serverGeneration :: Server -> Generation
-serverGeneration (Server _ handle _ _) = Pin.pinGeneration (R.serverPin handle)
+serverGeneration (Server _ handle _ _ _) = Pin.pinGeneration (R.serverPin handle)
 
 -- | Per-command deadline, checked before admission. Start from
 -- 'defaultMutationOptions' and update 'timeout' in seconds.
@@ -226,7 +343,7 @@ createSession = createSessionWith defaultMutationOptions
 -- environment beyond the native launch budget raises 'InvalidConfiguration'
 -- without admitting an operation.
 createSessionWith :: MutationOptions -> Server -> Creation.SessionOptions -> IO Creation.CreatedSession
-createSessionWith options (Server runtime handle executable _) settings = operational $ do
+createSessionWith options (Server runtime handle executable _ _) settings = operational $ do
   duration <- mutationDuration options
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
@@ -271,7 +388,7 @@ setPaneTitleWith options server (G.PaneRef generation ident) label =
   mutate options server generation (Command.SetPaneTitle ident label)
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
-mutate options server@(Server runtime handle executable _) generation command = operational $ do
+mutate options server@(Server runtime handle executable _ _) generation command = operational $ do
   duration <- mutationDuration options
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
@@ -419,7 +536,11 @@ posixBytes :: PosixPath -> ByteString
 posixBytes = Bytes.pack . map (fromIntegral . fromEnum . Os.toChar) . Os.unpack
 
 operational :: IO a -> IO a
-operational action = catchNoPropagate action $ \original@(ExceptionWithContext context (problem :: SomeException)) ->
+operational action = catchNoPropagate action operationalFailure
+
+-- | Wrap a known backend failure, keeping its context; application exceptions and cancellation pass through.
+operationalFailure :: ExceptionWithContext SomeException -> IO a
+operationalFailure original@(ExceptionWithContext context problem) =
   let known = or
         [ isJust (fromException @IOException problem)
         , isJust (fromException @Pin.PinError problem)
@@ -429,6 +550,7 @@ operational action = catchNoPropagate action $ \original@(ExceptionWithContext c
         , isJust (fromException @P.OwnerError problem)
         , isJust (fromException @N.Failure problem)
         , isJust (fromException @S.AdmissionError problem)
+        , isJust (fromException @Owned.OwnedError problem)
         ]
   in if known && not (isJust (fromException @SomeAsyncException problem))
        then rethrowIO (ExceptionWithContext context (OperationFailed problem))
