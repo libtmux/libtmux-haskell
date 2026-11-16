@@ -3,7 +3,10 @@ module FixtureTest (tests) where
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Async (AsyncCancelled (..), cancel, race, wait, waitCatch, waitEither, withAsync)
 import Control.Exception (bracket, IOException, fromException, throwIO, try)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Control.Monad (void, when)
+import Data.Foldable (for_)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Foreign.C.Types (CInt)
 import Fixture
 import GHC.Conc (closeFdWith, threadWaitRead)
 import System.Posix.IO (closeFd)
@@ -11,8 +14,7 @@ import System.Posix.Types (Fd)
 import System.Timeout (timeout)
 import System.Directory (doesDirectoryExist)
 import System.Exit (ExitCode (..))
-import System.IO.Error (ioeGetErrorString)
-import System.Process.Typed (getExitCode)
+import System.IO.Error (ioeGetErrorString, isDoesNotExistError)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
@@ -79,7 +81,62 @@ tests = testGroup "owned tmux fixture"
         let teardown = command fixture ["kill-window", "-t", "fixture:1"] >>= (@?= (ExitSuccess, "", ""))
         result <- try @AsyncCancelled (withTrackedPane pid teardown (throwIO AsyncCancelled))
         result @?= Left @AsyncCancelled @() AsyncCancelled
+  , testCase "a daemon ended outside the fixture is collected once, after success and after failure" $
+      for_ [False, True] $ \failing -> do
+        saved <- newIORef Nothing
+        result <- try @IOException $ withFixture $ \fixture -> do
+          writeIORef saved (Just fixture)
+          void (command fixture ["kill-server"])
+          when failing (throwIO (userError "body failed"))
+        case (failing, result) of
+          (False, Right ()) -> pure ()
+          (True, Left problem) -> ioeGetErrorString problem @?= "body failed"
+          _ -> assertFailure ("unexpected outcome: " <> show result)
+        readIORef saved >>= maybe (assertFailure "callback never started") assertReleased
+  , testCase "retiring a daemon collects no other child" $
+      withDaemon retirement "bystander" "/bin/sh" ["-c", "exit 7"] [] $ \bystander -> do
+        -- A readable pidfd means the bystander has exited and is waiting to be collected.
+        threadWaitRead bystander.pidfd
+        withFixture (\_ -> pure ())
+        awaitDaemon bystander >>= (@?= ExitFailure 7)
+  , testCase "a refused daemon never runs its body, and one that exits at once reports its status" $ do
+      refused <- try @IOException (withDaemon retirement "missing" "/nonexistent/fixture-daemon" [] [] (\_ -> assertFailure "ran"))
+      either (assertBool "refusal is not a missing file" . isDoesNotExistError) (const (assertFailure "a missing program started")) refused
+      withDaemon retirement "exits at once" "/bin/false" [] [] awaitDaemon >>= (@?= ExitFailure 1)
+  , testCase "retirement signals only a live child, escalates to SIGKILL, and keeps one that survives" retireBounds
   ]
+
+-- | Signals are logged in delivery order. A swallowed signal reaches the pidfd's owner as
+-- success, as it would for a child that ignores it.
+retireBounds :: IO ()
+retireBounds = do
+  sent <- newIORef []
+  let quick = retirement {step = 50000}
+      logged :: [CInt] -> Retirement
+      logged swallow = quick {deliver = \fd number -> do
+        modifyIORef' sent (<> [number])
+        if number `elem` swallow then pure 0 else quick.deliver fd number}
+      signalsOf :: IO a -> IO [CInt]
+      signalsOf action = writeIORef sent [] >> action >> readIORef sent
+      sleeper retiring = withDaemon retiring "sleeper" "/bin/sleep" ["30"] []
+  -- Already collected: nothing is signaled.
+  signalsOf (withDaemon (logged []) "exited" "/bin/true" [] [] awaitDaemon) >>= (@?= [])
+  -- A live child gets SIGTERM only.
+  signalsOf (sleeper (logged []) (\_ -> pure ())) >>= (@?= [15])
+  -- SIGTERM swallowed: SIGKILL ends it within the second step.
+  signalsOf (sleeper (logged [15]) pure >>= \daemon -> pollDaemon daemon >>= (@?= Just (ExitFailure (-9))))
+    >>= (@?= [15, 9])
+  -- Both swallowed: bounded, the body's exception keeps its class, and the owner is kept.
+  let stuck = logged [15, 9]
+  failing <- timeout 2000000 (try @IOException (sleeper stuck (\_ -> throwIO (userError "body failed"))))
+  fmap (either ioeGetErrorString (const "returned")) failing @?= Just "body failed"
+  clean <- timeout 2000000 (try @IOException (sleeper stuck (\_ -> pure ())))
+  fmap (either ioeGetErrorString (const "returned")) clean @?= Just "fixture daemon did not exit: sleeper"
+  owners <- retainedDaemons
+  map (.label) owners @?= ["sleeper", "sleeper"]
+  -- End them for real through the retained pidfds.
+  for_ owners $ \owner -> retireDaemon owner {how = quick}
+  retainedDaemons >>= (@?= []) . map (.label)
 
 cancelDuringStartup :: Bool -> IO ()
 cancelDuringStartup afterCreation = bracket (newIORef Nothing) closeProbe $ \probe -> do
@@ -160,7 +217,7 @@ assertReleased fixture = do
 
 assertStopped :: Fixture -> IO ()
 assertStopped fixture = do
-  getExitCode fixture.daemon >>= \case
+  pollDaemon fixture.daemon >>= \case
     Nothing -> assertFailure "owned daemon remains alive"
     Just _ -> pure ()
   present <- doesDirectoryExist fixture.directory

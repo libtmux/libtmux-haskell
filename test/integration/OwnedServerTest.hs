@@ -61,7 +61,7 @@ import System.Posix.Signals (sigCONT, sigKILL, sigSTOP, sigTERM, sigUSR1)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (DeviceID, FileID, Fd (..))
 import System.Process.Typed
-  (getExitCode, nullStream, proc, readProcess, setEnv, setStderr, setStdin, setStdout, waitExitCode, withProcessTerm)
+  (nullStream, proc, readProcess, setEnv, setStderr, setStdin, setStdout, waitExitCode, withProcessTerm)
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, localOption, mkTimeout, testGroup)
 import Test.Tasty.HUnit
@@ -616,7 +616,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           (withKill OS.defaultProbe exe runtime adopted $ \capability -> do
               how <- OS.killAdopted capability
               assertBool "ended through the pidfd" (how `elem` [OS.Terminated, OS.Killed])
-              code <- timeout 2000000 (waitExitCode fixture.daemon)
+              code <- timeout 2000000 (Fixture.awaitDaemon fixture.daemon)
               -- tmux exits 0 on SIGTERM; what matters is that the fixture, the daemon's real parent, reaped it.
               assertBool "the fixture's own child observed the exit" (isJust code))
             `finally` void (R.shutdown runtime)
@@ -635,7 +635,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           fdCount >>= (@?= before)
           (withKill OS.defaultProbe exe runtime third $ \capability -> do
               void (Fixture.command fixture ["kill-server"])
-              timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust
+              timeout 2000000 (Fixture.awaitDaemon fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust
               OS.killAdopted capability >>= (@?= OS.AlreadyGone))
             `finally` void (R.shutdown runtime)
 
@@ -658,7 +658,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
                 how <- OS.killAdopted capability
                 -- A stopped process cannot act on SIGTERM; the pidfd's SIGKILL ends it.
                 how @?= OS.Killed
-                timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
+                timeout 2000000 (Fixture.awaitDaemon fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
             `finally` (void (N.cSignal witness sigCONT)))
             `finally` (readIORef queued >>= mapM_ N.close >> N.close witness)
 
@@ -685,7 +685,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
               adoptedAgain <- R.adopt runtime (Ascii.pack fixture.socket) (Ascii.pack fixture.directory)
               withKill OS.defaultProbe exe runtime adoptedAgain $ \fresh ->
                 OS.killAdopted fresh >>= \how -> assertBool "ended through the pidfd" (how `elem` [OS.Terminated, OS.Killed])
-              timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
+              timeout 2000000 (Fixture.awaitDaemon fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
             `finally` (void (N.cSignal witness sigCONT) >> readIORef queued >>= mapM_ N.close >> N.close witness
                          >> void (R.shutdown runtime))
 
@@ -728,9 +728,9 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
               -- The failure leaves the callback untouched and the scope's own failed release adds the
               -- same owner: it is attached once.
               recovery <- OS.recoveryOwner <$> recoveryOf "the propagated kill failure" notRetired outer
-              getExitCode fixture.daemon >>= (@?= Nothing)
+              Fixture.pollDaemon fixture.daemon >>= (@?= Nothing)
               OS.settle recovery {OS.probe = OS.defaultProbe}
-              timeout 2000000 (waitExitCode fixture.daemon)
+              timeout 2000000 (Fixture.awaitDaemon fixture.daemon)
                 >>= assertBool "the resume retired the daemon through the retained pidfd" . isJust)
             `finally` void (R.shutdown runtime)
 
@@ -792,7 +792,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
               wait killer >>= \how -> assertBool "the admitted kill ended through the pidfd" (how `elem` [OS.Terminated, OS.Killed])
               waitCatch scope >>= either (assertFailure . ("the release failed: " <>) . show) pure
               OS.awaitExit witness 0 >>= assertBool "the admitted kill did not end the daemon"
-              timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
+              timeout 2000000 (Fixture.awaitDaemon fixture.daemon) >>= assertBool "the real parent saw the exit" . isJust)
             `finally` (N.close witness >> void (R.shutdown runtime))
 
     , testCase "an unsupported host leaves plain adoption to the callback, and the kill's failure is the stored one" $
@@ -1539,7 +1539,7 @@ withKill probe exe runtime adopted action = OS.withKillCapability probe exe runt
 
 borrowedAlive :: Fixture.Fixture -> Assertion
 borrowedAlive fixture = do
-  getExitCode fixture.daemon >>= (@?= Nothing)
+  Fixture.pollDaemon fixture.daemon >>= (@?= Nothing)
   (code, _, errors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
   (code, errors) @?= (ExitSuccess, "")
   doesPathExist fixture.socket >>= assertBool "borrowed socket still present"

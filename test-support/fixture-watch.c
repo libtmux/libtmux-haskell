@@ -1,7 +1,10 @@
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
+#include <spawn.h>
 #include <stddef.h>
 #include <string.h>
 #include <sys/file.h>
@@ -9,11 +12,116 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/un.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 int libtmux_fixture_pidfd(int pid)
 {
     return syscall(SYS_pidfd_open, pid, 0);
+}
+
+typedef int (*pidfd_spawn_call)(int *, const char *, const posix_spawn_file_actions_t *,
+                                const posix_spawnattr_t *, char *const[], char *const[]);
+
+/* Start `file` (searched on PATH) with stdin and stdout on /dev/null and store its
+ * pidfd. The kernel creates the pidfd together with the child, so it can never name
+ * another process, whatever the child does next. Zero on success, otherwise an errno
+ * value, with no child and no descriptor left.
+ *
+ * Resolves glibc 2.39's pidfd_spawnp at run time, as the library's own launcher does,
+ * and refuses a SIGCHLD policy that reaps children without a status. */
+int libtmux_fixture_spawn(const char *file, char *const argv[], char *const envp[], int *pidfd)
+{
+    *pidfd = -1;
+    void *symbol = dlsym(RTLD_DEFAULT, "pidfd_spawnp");
+    pidfd_spawn_call spawn;
+    memcpy(&spawn, &symbol, sizeof spawn);
+    if (!spawn)
+        return ENOSYS;
+    struct sigaction policy;
+    if (sigaction(SIGCHLD, NULL, &policy) == -1)
+        return errno;
+    if (policy.sa_handler == SIG_IGN || (policy.sa_flags & SA_NOCLDWAIT))
+        return ENOTSUP;
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
+    int rc = posix_spawn_file_actions_init(&actions);
+    if (rc)
+        return rc;
+    if ((rc = posix_spawnattr_init(&attributes))) {
+        posix_spawn_file_actions_destroy(&actions);
+        return rc;
+    }
+    sigset_t mask, defaults;
+    sigemptyset(&mask);
+    sigemptyset(&defaults);
+    const int reset[] = {SIGPIPE, SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGCHLD};
+    for (size_t i = 0; i < sizeof reset / sizeof reset[0]; ++i)
+        sigaddset(&defaults, reset[i]);
+    int fd = -1;
+    if (!(rc = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)) &&
+        !(rc = posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)) &&
+        !(rc = posix_spawnattr_setsigmask(&attributes, &mask)) &&
+        !(rc = posix_spawnattr_setsigdefault(&attributes, &defaults)) &&
+        !(rc = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)))
+        rc = spawn(&fd, file, &actions, &attributes, argv, envp);
+    posix_spawnattr_destroy(&attributes);
+    posix_spawn_file_actions_destroy(&actions);
+    if (rc)
+        return rc;
+    *pidfd = fd;
+    return 0;
+}
+
+/* Zero when delivered, otherwise an errno value; ESRCH means the process is gone. */
+int libtmux_fixture_pidfd_signal(int pidfd, int signal_number)
+{
+    return syscall(SYS_pidfd_send_signal, pidfd, signal_number, NULL, 0) == 0 ? 0 : errno;
+}
+
+/* Collect the child's status through its pidfd without blocking, and only that
+ * child's. One with out = {1 exited | 2 killed | 3 dumped, status or signal}, zero
+ * while it still runs, otherwise -errno. Linux's P_PIDFD selector is 3, including
+ * libc headers predating the name. */
+int libtmux_fixture_reap(int pidfd, int *out)
+{
+    siginfo_t info;
+    memset(&info, 0, sizeof info);
+    int rc;
+    do
+        rc = waitid((idtype_t)3, pidfd, &info, WEXITED | WNOHANG);
+    while (rc == -1 && errno == EINTR);
+    if (rc == -1)
+        return -errno;
+    if (info.si_pid == 0)
+        return 0;
+    out[0] = info.si_code == CLD_EXITED ? 1 : info.si_code == CLD_KILLED ? 2 : 3;
+    out[1] = info.si_status;
+    return 1;
+}
+
+static long long monotonic_ms(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/* One when the pidfd is readable (its process ended), zero when `milliseconds`
+ * pass first, otherwise -errno. A signal restarts the wait against the same deadline. */
+int libtmux_fixture_pidfd_wait(int pidfd, int milliseconds)
+{
+    long long deadline = monotonic_ms() + milliseconds;
+    for (;;) {
+        struct pollfd entry = {.fd = pidfd, .events = POLLIN, .revents = 0};
+        long long left = deadline - monotonic_ms();
+        int rc = poll(&entry, 1, left > 0 ? (int)left : 0);
+        if (rc >= 0)
+            return rc > 0;
+        if (errno != EINTR)
+            return -errno;
+    }
 }
 
 /* Hold an exclusive flock on a file as a starting tmux daemon does before it

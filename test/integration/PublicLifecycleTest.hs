@@ -36,7 +36,7 @@ import System.Posix.Files (setFileMode)
 import System.Posix.IO (closeFd)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
-import System.Process.Typed (nullStream, proc, readProcess, setEnv, setStdin, waitExitCode)
+import System.Process.Typed (nullStream, proc, readProcess, setEnv, setStdin)
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, localOption, mkTimeout, testGroup)
 import Test.Tasty.HUnit
@@ -210,7 +210,7 @@ tests = localOption (mkTimeout 60000000) $ testGroup "public lifecycle"
             again.pid @?= witness.pid
             Tmux.killServer server
             exited witness.daemon >>= assertBool "killServer did not retire the original daemon"
-            timeout 2000000 (waitExitCode fixture.daemon) >>= assertBool "the fixture's own child saw the exit" . isJust
+            timeout 2000000 (Fixture.awaitDaemon fixture.daemon) >>= assertBool "the fixture's own child saw the exit" . isJust
             refuses "capture after adopted kill" (Tmux.capture server)
             refuses "creation after adopted kill" (Tmux.createSession server options)
 

@@ -1,29 +1,42 @@
-module Fixture (Fixture (..), StartupStage (..), withFixture, withFixtureAt, withAttachedClient, command, registerPane, withTrackedPane, inIsolatedProcess) where
+module Fixture
+  ( Fixture (..), StartupStage (..), Daemon (..), Retirement (..), retirement
+  , withFixture, withFixtureAt, withDaemon, retireDaemon, awaitDaemon, pollDaemon, retainedDaemons
+  , withAttachedClient, command, registerPane, withTrackedPane, inIsolatedProcess
+  ) where
 
 import Control.Concurrent.Async (race, waitBoth, withAsync)
-import Control.Exception (bracket, finally, mask_, throwIO)
-import Control.Monad (unless)
+import Control.Concurrent.MVar (MVar, modifyMVarMasked, modifyMVarMasked_, newMVar, withMVarMasked)
+import Control.Exception (IOException, SomeException, bracket, finally, mask, mask_, onException, throwIO, try, uninterruptibleMask_)
+import Control.Monad (unless, void)
 import Data.ByteString qualified as Strict
 import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as Bytes
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
-import Foreign.C.Error (throwErrnoIfMinus1)
+import Foreign.C.Error (Errno (..), errnoToIOError, throwErrnoIfMinus1)
 import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CInt (..))
-import GHC.Conc (threadWaitRead)
+import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (allocaArray, withArray0)
+import Foreign.Marshal.Utils (withMany)
+import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Storable (peek, peekElemOff)
+import GHC.Conc (closeFdWith, threadWaitRead)
+import GHC.Foreign qualified as Foreign
+import GHC.IO.Encoding (getFileSystemEncoding)
 import System.Directory (removePathForcibly)
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import System.IO (hFlush)
+import System.IO (hFlush, hPutStrLn, stderr)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.IO (closeFd)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
 import System.Process.Typed
-  ( Process, createPipe, getStderr, getStdin, getStdout, nullStream, proc, readProcess, setEnv, setStderr, setStdin, setStdout
+  ( createPipe, getStderr, getStdin, getStdout, nullStream, proc, readProcess, setEnv, setStderr, setStdin, setStdout
   , waitExitCode, withProcessTerm
   )
 import System.Timeout (timeout)
@@ -37,12 +50,25 @@ foreign import ccall unsafe "libtmux_fixture_socket_ready"
 foreign import ccall unsafe "libtmux_fixture_pidfd"
   panePidfd :: CInt -> IO CInt
 
+foreign import ccall unsafe "libtmux_fixture_spawn"
+  spawnChild :: CString -> Ptr CString -> Ptr CString -> Ptr CInt -> IO CInt
+
+foreign import ccall unsafe "libtmux_fixture_pidfd_signal"
+  signalPidfd :: CInt -> CInt -> IO CInt
+
+foreign import ccall unsafe "libtmux_fixture_reap"
+  reapPidfd :: CInt -> Ptr CInt -> IO CInt
+
+-- Safe: it blocks this OS thread for at most the bound, and no exception interrupts it.
+foreign import ccall safe "libtmux_fixture_pidfd_wait"
+  waitPidfd :: CInt -> CInt -> IO CInt
+
 data Fixture = Fixture
   { directory :: !FilePath
   , socket :: !FilePath
   , executable :: !FilePath
   , environment :: ![(String, String)]
-  , daemon :: !(Process () () ())
+  , daemon :: !Daemon
   , paneExitObserved :: !(IORef Bool)
   }
 
@@ -57,14 +83,12 @@ withFixtureAt checkpoint action = do
   paneExitObserved <- newIORef False
   executable <- fromMaybe "tmux" <$> lookupEnv "LIBTMUX_TEST_TMUX"
   environment <- filter (\(key, _) -> key /= "TMUX" && key /= "TMUX_PANE") <$> getEnvironment
-  bracket (mkdtemp "/tmp/libtmux-haskell-") removePathForcibly $ \directory ->
+  bracket (mkdtemp "/tmp/libtmux-haskell-") removeUnlessRetained $ \directory ->
     bracket (openWatch directory) closeFd $ \watch ->
       bracket (newIORef Nothing) (finishPane paneExitObserved) $ \pane -> do
         let socket = directory </> "socket"
-            config = setEnv environment . setStdin nullStream . setStdout nullStream $
-              proc executable ["-D", "-S", socket, "-f", "/dev/null"]
-        withProcessTerm config $ \daemon -> do
-          readiness <- race (waitExitCode daemon) (waitReady watch)
+        withDaemon retirement directory executable ["-D", "-S", socket, "-f", "/dev/null"] environment $ \daemon -> do
+          readiness <- race (awaitDaemon daemon) (waitReady watch)
           case readiness of
             Right () -> pure ()
             Left code -> throwIO (userError ("fixture daemon exited at startup: " <> show code))
@@ -77,6 +101,139 @@ withFixtureAt checkpoint action = do
           checkpoint (PaneCreated output) fixture
           registerPane pane output
           action fixture
+
+-- | A child owned through a pidfd the kernel creates with it, so the pidfd cannot name any
+-- other process. Every signal and every status read goes through it and never through a PID.
+-- Nothing else in the process may reap children without naming them.
+data Daemon = Daemon
+  { label :: !String
+  , pidfd :: !Fd
+  , phase :: !(MVar Phase)
+  , how :: !Retirement
+  }
+
+-- | The pidfd is read, signaled and closed only under the 'phase' lock, in this order.
+data Phase = Live | Reaped !ExitCode | Closed !ExitCode
+
+-- | How long each retirement step waits, and how a signal is delivered. The kernel offers no
+-- child that survives SIGKILL, so a test replaces 'deliver' to reach the retention path.
+data Retirement = Retirement
+  { step :: !Int
+  , deliver :: !(Fd -> CInt -> IO CInt)
+  }
+
+retirement :: Retirement
+retirement = Retirement {step = 2000000, deliver = \(Fd fd) signal -> signalPidfd fd signal}
+
+-- | Run a child for the body and retire it afterwards. A failure of the body is rethrown as
+-- it is, whether or not the retirement then succeeds; a retirement that fails after a clean
+-- body is raised.
+withDaemon :: Retirement -> String -> FilePath -> [String] -> [(String, String)] -> (Daemon -> IO a) -> IO a
+withDaemon how label executable arguments environment body = mask $ \restore -> do
+  daemon <- startDaemon how label executable arguments environment
+  outcome <- try @SomeException (restore (body daemon))
+  retired <- try @SomeException (retireDaemon daemon)
+  case (outcome, retired) of
+    (Left problem, _) -> throwIO problem
+    (Right _, Left problem) -> throwIO problem
+    (Right result, Right ()) -> pure result
+
+startDaemon :: Retirement -> String -> FilePath -> [String] -> [(String, String)] -> IO Daemon
+startDaemon how label executable arguments environment = do
+  encoding <- getFileSystemEncoding
+  let text = Foreign.withCString encoding
+  fd <-
+    withMany text (executable : arguments) $ \argv ->
+      withMany text [key <> "=" <> value | (key, value) <- environment] $ \envp ->
+        withArray0 nullPtr argv $ \argvArray ->
+          withArray0 nullPtr envp $ \envArray ->
+            text executable $ \file -> alloca $ \out -> do
+              rc <- spawnChild file argvArray envArray out
+              unless (rc == 0) (ioError (errnoToIOError "fixture daemon spawn" (Errno rc) Nothing (Just executable)))
+              peek out
+  phase <- newMVar Live
+  pure Daemon {label, pidfd = Fd fd, phase, how}
+
+-- | End the child through its pidfd and collect its status. Each wait is bounded; the
+-- escalation is SIGTERM, then SIGKILL. A child that cannot be retired stays owned: its pidfd is
+-- kept open and listed by 'retainedDaemons', and the failure is raised.
+retireDaemon :: Daemon -> IO ()
+retireDaemon daemon = uninterruptibleMask_ $ do
+  (end >> closeDaemon daemon) `onException` keep
+  atomicModifyIORef' retained (\kept -> (filter ((/= daemon.phase) . (.phase)) kept, ()))
+  where
+    Fd raw = daemon.pidfd
+    end = pollDaemon daemon >>= \case
+      Just _ -> pure ()
+      Nothing -> do
+        signalDaemon daemon 15
+        endedWithin >>= \case
+          True -> pure ()
+          False -> do
+            signalDaemon daemon 9
+            ended <- endedWithin
+            unless ended (ioError (userError ("fixture daemon did not exit: " <> daemon.label)))
+    endedWithin = do
+      _ <- waitPidfd raw (fromIntegral (daemon.how.step `div` 1000))
+      (/= Nothing) <$> pollDaemon daemon
+    keep = do
+      atomicModifyIORef' retained (\kept -> (daemon : filter ((/= daemon.phase) . (.phase)) kept, ()))
+      hPutStrLn stderr ("fixture daemon " <> daemon.label <> " could not be retired; its pidfd stays open")
+
+-- | The status if the child has exited, collecting it on first sight. Never blocks.
+pollDaemon :: Daemon -> IO (Maybe ExitCode)
+pollDaemon daemon = modifyMVarMasked daemon.phase $ \case
+  Live -> allocaArray 2 $ \out -> do
+    let Fd raw = daemon.pidfd
+    rc <- reapPidfd raw out
+    case rc of
+      0 -> pure (Live, Nothing)
+      1 -> do
+        kind <- peekElemOff out 0
+        value <- peekElemOff out 1
+        let code
+              | kind == 1 && value == 0 = ExitSuccess
+              | kind == 1 = ExitFailure (fromIntegral value)
+              | otherwise = ExitFailure (negate (fromIntegral value))
+        pure (Reaped code, Just code)
+      _ -> ioError (errnoToIOError "fixture daemon status" (Errno (negate rc)) Nothing (Just daemon.label))
+  state@(Reaped code) -> pure (state, Just code)
+  state@(Closed code) -> pure (state, Just code)
+
+-- | Wait for the child to exit and return its status. Cancelling the wait changes nothing.
+awaitDaemon :: Daemon -> IO ExitCode
+awaitDaemon daemon = pollDaemon daemon >>= \case
+  Just code -> pure code
+  Nothing -> do
+    -- A concurrent retirement closes the pidfd, which ends this wait with an error.
+    woken <- try @IOException (threadWaitRead daemon.pidfd)
+    pollDaemon daemon >>= \case
+      Just code -> pure code
+      Nothing -> either throwIO (\() -> ioError (userError ("fixture daemon pidfd readable without a status: " <> daemon.label))) woken
+
+signalDaemon :: Daemon -> CInt -> IO ()
+signalDaemon daemon number = withMVarMasked daemon.phase $ \case
+  Live -> void (daemon.how.deliver daemon.pidfd number)
+  _ -> pure ()
+
+closeDaemon :: Daemon -> IO ()
+closeDaemon daemon = modifyMVarMasked_ daemon.phase $ \case
+  Reaped code -> closeFdWith closeFd daemon.pidfd >> pure (Closed code)
+  state -> pure state
+
+-- | Daemons that could not be retired, still owned through their open pidfds.
+retained :: IORef [Daemon]
+retained = unsafePerformIO (newIORef [])
+{-# NOINLINE retained #-}
+
+retainedDaemons :: IO [Daemon]
+retainedDaemons = readIORef retained
+
+-- | A retained daemon still needs its directory.
+removeUnlessRetained :: FilePath -> IO ()
+removeUnlessRetained directory = do
+  kept <- any ((== directory) . (.label)) <$> readIORef retained
+  unless kept (removePathForcibly directory)
 
 command :: Fixture -> [String] -> IO (ExitCode, ByteString, ByteString)
 command fixture args = withProcessTerm config $ \client -> do
