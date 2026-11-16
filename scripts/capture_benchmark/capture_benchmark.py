@@ -14,21 +14,25 @@ import os
 import platform
 import shutil
 import statistics
-import subprocess
+import sys
 import time
 from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import Any, Protocol, cast
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(Path(__file__).resolve().parents[1] / "bounded"))
+
+import bounded
+from bounded import QUICK
+
 SOURCE = ROOT / "examples/capture-graph/run.py"
 
 type Size = tuple[str, int, int, int]
 type Sample = dict[str, int]
 
-# Seconds. Every external command is bounded: these cover the short ones, a
-# case's fixture commands share one budget, and the workload has its own limit.
-QUICK = 120
+# Seconds. A case's fixture commands share one budget; README.md records what it
+# sits above. The short commands use ``QUICK`` and the workload has its own limit.
 CASE_BUDGET = 120
 CREATED = "#{window_id} #{pane_id} #{pane_pid}"
 
@@ -160,8 +164,8 @@ class Graph:
     def tmux(self, *arguments: str) -> list[str]:
         """Run one tmux command against the fixture's socket and split its output."""
         if time.monotonic() - self.started > CASE_BUDGET:
-            raise RuntimeError("benchmark fixture exceeded its two-minute case budget")
-        result = subprocess.run(
+            raise RuntimeError(f"benchmark fixture exceeded its {CASE_BUDGET} s case budget")
+        result = bounded.run(
             [self.binary, "-u", "-N", "-S", self.socket, *arguments],
             env=self.environment,
             capture_output=True,
@@ -250,7 +254,7 @@ def run_workload(
     output: Path,
 ) -> list[Sample]:
     """Run the Haskell benchmark against the built graph and keep its raw output."""
-    result = subprocess.run(
+    result = bounded.run(
         [program, socket, binary, str(samples), "+RTS", "-N1", "-RTS"],
         env=environment,
         capture_output=True,
@@ -277,7 +281,7 @@ def measure(
 ) -> dict[str, Any]:
     """Build one owned graph, run the Haskell benchmark against it and record the result."""
     name, session_count, window_count, pane_count = size
-    version = subprocess.check_output([binary, "-V"], text=True, timeout=QUICK).strip()
+    version = bounded.output([binary, "-V"], timeout=QUICK).strip()
     key = f"{version.replace(' ', '-')}-{binary_index}-{binary_hash[:12]}-{name}"
     started = time.monotonic()
     before = host_state()
@@ -321,7 +325,7 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
     """Identify the sources, executable and toolchain a sweep measured."""
     git = shutil.which("git")
     owner = (
-        subprocess.run(
+        bounded.run(
             [git, "rev-parse", "--show-toplevel"],
             cwd=ROOT,
             capture_output=True,
@@ -335,7 +339,7 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
     if not owner or owner.returncode or Path(owner.stdout.strip()).resolve() != ROOT:
         git = None
     revision = (
-        subprocess.run(
+        bounded.run(
             [git, "rev-parse", "HEAD"],
             cwd=ROOT,
             capture_output=True,
@@ -347,7 +351,7 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
         else None
     )
     patch = (
-        subprocess.run(
+        bounded.run(
             [git, "diff", "--binary", "HEAD"],
             cwd=ROOT,
             capture_output=True,
@@ -373,12 +377,8 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
         "harnessSha256": {
             path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in HARNESS
         },
-        "ghc": subprocess.check_output(
-            ["ghc", "--numeric-version"], text=True, timeout=QUICK
-        ).strip(),
-        "cabal": subprocess.check_output(
-            ["cabal", "--numeric-version"], text=True, timeout=QUICK
-        ).strip(),
+        "ghc": bounded.output(["ghc", "--numeric-version"], timeout=QUICK).strip(),
+        "cabal": bounded.output(["cabal", "--numeric-version"], timeout=QUICK).strip(),
         "platform": platform.platform(),
         "cases": reports,
         "limits": (
@@ -408,10 +408,9 @@ def main() -> None:
     if not 1 <= args.samples <= 50:
         parser.error("samples must be between 1 and 50")
     args.output.mkdir(parents=True, exist_ok=False)
-    program = subprocess.check_output(
+    program = bounded.output(
         ["cabal", "list-bin", "bench:capture", "--offline", "-v0"],
         cwd=ROOT,
-        text=True,
         timeout=QUICK,
     ).strip()
     if not Path(program).is_file():
