@@ -452,6 +452,39 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
           forM_ operations $ \operation ->
             atomically (S.status operation) >>= \status -> status.retained @?= False
 
+    , testCase "awaiting retained daemon cleanup waits on a duplicate and closes it" $
+        Fixture.inIsolatedProcess "awaiting retained daemon cleanup waits on a duplicate and closes it" $
+        withTmux $ \exe -> do
+          normalLifecycle exe
+          before <- fdCount
+          watch <- newWatch
+          let probe = watching watch (Just OS.Admitted) refusingProbe
+          outcome <- try @SomeException (OS.withOwnedServerWith probe exe (\_ -> pure ()))
+          recovery <- OS.recoveryOwner <$> recoveryOf "the refused retirement" notRetired outcome
+          daemon <- readIORef watch.daemonFd >>= maybe (assertFailure "no daemon witness") pure
+          let actions = OS.cleanupActions recovery
+          (do held <- fdCount
+              withAsync actions.waitCleanup $ \waiter -> do
+                let awaitDuplicate = do
+                      count <- fdCount
+                      blocked <- threadStatus (asyncThreadId waiter) >>= \case
+                        ThreadBlocked _ -> pure True
+                        _ -> pure False
+                      stillHeld <- fdCount
+                      unless (count == held + 1 && blocked && stillHeld == held + 1) (yield >> awaitDuplicate)
+                bounded (race (waitCatch waiter) awaitDuplicate) >>= \case
+                  Left ended -> assertFailure ("cleanup wait ended before the daemon exited: " <> either show (const "completed") ended)
+                  Right () -> pure ()
+                actions.observeCleanup >>= assertBool "cleanup completed while the daemon was alive" . not . (.complete)
+                OS.awaitExit daemon 0 >>= assertBool "the witness observed exit before the test signaled it" . not
+                N.cSignal daemon sigTERM >>= (@?= 0)
+                status <- bounded (wait waiter)
+                assertBool "cleanup did not finish after physical exit" status.complete)
+            `finally` do
+              OS.settle recovery {OS.probe = OS.defaultProbe}
+              assertRetired watch
+          fdCount >>= (@?= before)
+
     , testCase "two concurrent settlers signal and close the daemon pidfd exactly once" concurrentSettlers
 
     , testCase "repeated cancellation while cleanup is held at the daemon, pool and name boundaries (4 rounds each)" $
