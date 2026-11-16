@@ -22,7 +22,8 @@ Every `cabal`, `git` and built-program call has a time limit, so a hang fails
 with the command's name.
 
 `upload` needs `HACKAGE_AUTH_TOKEN` and refuses to overwrite a published
-version with different bytes. HTTP 401 means Hackage rejected the token; HTTP
+version with different bytes. Every failure message prints the token as
+`[redacted]`, and a `cabal upload` timeout names no command line. HTTP 401 means Hackage rejected the token; HTTP
 403 means the token's owner lacks uploader or maintainer rights.
 
 The tests replace Cabal and the network with stand-ins:

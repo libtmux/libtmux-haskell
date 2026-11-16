@@ -319,6 +319,50 @@ def test_cabal_failure_uses_https_and_redacts_tokens(
     assert other_guidance not in str(error.value)
 
 
+def test_a_timed_out_upload_names_no_token(
+    release_directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``TimeoutExpired`` prints the argv, which carries ``--token=``; the error must not."""
+
+    def hang(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, 120)
+
+    monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "secret-token")
+    monkeypatch.setattr(subprocess, "run", hang)
+    with pytest.raises(ValueError, match="cabal upload timed out") as error:
+        release.cabal_upload(release_directory / DOCS, True, True)
+    assert "secret-token" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ValueError("Hackage said secret-token"),
+        subprocess.TimeoutExpired(["cabal", "--token=secret-token"], 120),
+        subprocess.CalledProcessError(1, ["cabal", "--token=secret-token"]),
+    ],
+    ids=["value", "timeout", "called"],
+)
+def test_the_script_redacts_the_token_from_every_failure(
+    failure: Exception,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Whatever a step raises, ``main`` prints the message with the token replaced."""
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "secret-token")
+    monkeypatch.setattr(release, "upload", fail)
+    with pytest.raises(SystemExit):
+        release.main(["upload", "--directory", str(tmp_path)])
+    error = capsys.readouterr().err
+    assert "secret-token" not in error
+    assert "[redacted]" in error
+
+
 @pytest.fixture
 def external_consumer(release_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand-ins for ``cabal`` and the built program, with an example to copy."""
