@@ -1,10 +1,12 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Verify public examples against one owned tmux endpoint."""
 
 import argparse
-from contextlib import ExitStack, contextmanager
 import ctypes
 import os
-from pathlib import Path
 import select
 import shutil
 import struct
@@ -12,9 +14,14 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Generator, Iterable
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+
+Checkpoint = Callable[[str, tuple[int, ...], str], None]
 
 
-def exited(descriptors):
+def exited(descriptors: Iterable[int]) -> None:
     """Observe owned process exits through pidfd readiness."""
     pending = set(descriptors)
     watch = select.poll()
@@ -30,7 +37,7 @@ def exited(descriptors):
             watch.unregister(descriptor)
 
 
-def watch_socket(directory, owners):
+def watch_socket(directory: str, owners: ExitStack) -> int:
     """Watch tmux's post-listen chmod before dispatching a client."""
     libc = ctypes.CDLL(None, use_errno=True)
     libc.inotify_init1.argtypes = [ctypes.c_int]
@@ -44,7 +51,7 @@ def watch_socket(directory, owners):
     return descriptor
 
 
-def await_socket(watch, daemon):
+def await_socket(watch: int, daemon: int) -> None:
     ready = select.poll()
     ready.register(watch, select.POLLIN)
     ready.register(daemon, select.POLLIN)
@@ -71,7 +78,11 @@ def await_socket(watch, daemon):
 
 
 @contextmanager
-def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expected_panes=None):
+def fixture(
+    binary: str,
+    checkpoint: Checkpoint = lambda _stage, _descriptors, _socket: None,
+    expected_panes: int | None = None,
+) -> Generator[tuple[str, dict[str, str]]]:
     environment = {
         key: value for key, value in os.environ.items() if key not in {"TMUX", "TMUX_PANE"}
     }
@@ -128,6 +139,8 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expec
             creation = subprocess.Popen(
                 arguments, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
+            assert creation.stdout is not None
+            assert creation.stderr is not None
             owners.callback(creation.stdout.close)
             owners.callback(creation.stderr.close)
             try:
@@ -136,7 +149,7 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expec
                 try:
                     creation.kill()
                     creation.wait(timeout=1)
-                except BaseException as cleanup:
+                except BaseException as cleanup:  # noqa: BLE001 - noted on the primary error
                     problem.add_note(f"session command cleanup: {cleanup}")
                 raise
             if creation.returncode:
@@ -171,6 +184,7 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expec
                 ],
                 env=environment,
                 capture_output=True,
+                check=False,
                 timeout=1,
             )
             linked.check_returncode()
@@ -227,7 +241,7 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expec
                         and len(panes) != expected_panes
                     ):
                         raise RuntimeError("example changed the expected physical pane count")
-            except BaseException as cleanup:
+            except BaseException as cleanup:  # noqa: BLE001 - reported with the primary error
                 cleanup_errors.append(cleanup)
             try:
                 if daemon.poll() is None:
@@ -244,7 +258,7 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expec
                     raise RuntimeError(
                         "session creation failed before pane exit ownership was established"
                     )
-            except BaseException as cleanup:
+            except BaseException as cleanup:  # noqa: BLE001 - reported with the primary error
                 cleanup_errors.append(cleanup)
             if cleanup_errors:
                 if primary is None:
@@ -256,7 +270,12 @@ def fixture(binary, checkpoint=lambda _stage, _descriptors, _socket: None, expec
                     primary.add_note(f"owned fixture cleanup: {cleanup}")
 
 
-def run(program, binary, expected_output=None, expected_panes=1):
+def run(
+    program: str,
+    binary: str,
+    expected_output: Path | None = None,
+    expected_panes: int = 1,
+) -> None:
     expected_path = (
         Path(expected_output)
         if expected_output is not None
@@ -272,7 +291,7 @@ def run(program, binary, expected_output=None, expected_panes=1):
         sys.stdout.buffer.write(result.stdout)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--program", help="already-built public consumer executable")
     parser.add_argument(
