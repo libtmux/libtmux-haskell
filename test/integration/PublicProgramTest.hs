@@ -114,6 +114,38 @@ applications = testGroup "enabled application operations"
         normal <- Tmux.runProgram server (options "/bin/sh" ["-c", "exit 127"])
         normal.programExit @?= Program.ProgramExited 127
         borrowedOnly server
+  , testCase "pane removal wakes an observation while the borrowed daemon stays alive" $
+      withServer $ \fixture server -> forM_ [False, True] $ \hasForeign -> do
+        observed <- newEmptyTMVarIO
+        selected <- newEmptyTMVarIO
+        outcome <- tryWithContext @SomeException $ Tmux.withProgram server (options "/bin/cat" ["-"]) $ \program -> do
+          snapshot <- Tmux.capture server
+          session <- case [value | value <- Tmux.sessions snapshot, value.name /= "fixture"] of
+            [value] -> pure (Text.unpack (Tmux.renderSessionId (Tmux.sessionId value.ref)))
+            _ -> fail "owned application session was not unique"
+          atomically (putTMVar selected session)
+          if not hasForeign then do
+            configured fixture ["resize-window", "-t", session <> ":", "-x", "81", "-y", "25"]
+            configured fixture ["resize-window", "-t", session <> ":", "-x", "80", "-y", "24"]
+            Program.waitProgramFor 0.001 program >>= (@?= Nothing)
+          else pure ()
+          (code, pane, errors) <- Fixture.command fixture ["display-message", "-p", "-t", session <> ":", "#{pane_id}"]
+          (code, errors) @?= (ExitSuccess, "")
+          if hasForeign then configured fixture ["split-window", "-t", session <> ":", "/bin/cat", "-"] else pure ()
+          configured fixture ["kill-pane", "-t", Bytes.unpack (Bytes.takeWhile (/= '\n') (Lazy.toStrict pane))]
+          result <- try @Program.ProgramError (Program.waitProgramFor 0.1 program)
+          atomically (putTMVar observed result)
+        case outcome of
+          Left (ExceptionWithContext context _) -> do
+            session <- atomically (readTMVar selected)
+            (present, _, _) <- Fixture.command fixture ["has-session", "-t", session]
+            if present == ExitSuccess then configured fixture ["kill-session", "-t", session] else pure ()
+            mapM_ Program.resumeProgramCleanup (Program.programRecoveries context)
+          Right () -> pure ()
+        atomically (tryReadTMVar observed) >>= \case
+          Just (Left (Program.ProgramObservationLost _)) -> pure ()
+          other -> assertFailure ("removed pane observation became " <> show other)
+        borrowedOnly server
   , testCase "input and cancelled or expired observations leave the owner running" $
       withServer $ \_ server -> do
         Tmux.withProgram server (options "/bin/sh" ["-c", "IFS= read -r line; printf 'ack=%s' \"$line\""]) $ \program -> do
