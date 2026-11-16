@@ -48,7 +48,7 @@ import System.Posix.Directory.ByteString (removeDirectory)
 import System.Posix.Files.ByteString qualified as Files
 import System.Posix.Signals (sigKILL, sigTERM)
 import System.Posix.Temp.ByteString (mkdtemp)
-import System.Posix.Types (Fd (..))
+import System.Posix.Types (DeviceID, FileID, Fd (..))
 import System.Timeout (timeout)
 
 -- No call here blocks: the connect is nonblocking, the lock probe is a try-lock, poll
@@ -154,7 +154,8 @@ data OwnedError
   | NotRetired !Owner !String
     -- ^ Uncertainty: the owner still holds its journal; retry with 'settle'.
   | CleanupPending !String
-    -- ^ The pool, its pin or an operation worker has not finished.
+    -- ^ The pool, its pin or an operation worker has not finished, or a private name no
+    -- longer denotes what this run created and was left in place.
   | OperationsUnresolved !Int
     -- ^ Operations without a published outcome remain after the daemon exited.
   deriving stock (Show)
@@ -163,17 +164,29 @@ instance Exception OwnedError
 -- | Everything one run acquired and has not yet released, as a single value.
 data Held = Held
   { created :: !(Maybe Names) -- ^ Private directory made here, until removed.
+  , directoryId :: !(Maybe Identity)
+    -- ^ The directory's inode when it was made; without it nothing under 'created' is removed.
+  , directoryAnchor :: !(Maybe CInt) -- ^ Keeps the directory identity alive across rename or deletion.
   , client :: !(Maybe P.Ticket) -- ^ Start client, until its pool job is gone.
   , launched :: !Bool
     -- ^ A start client ran and neither a pidfd nor a launch refusal accounts for what it may have started.
   , pidfd :: !(Maybe CInt) -- ^ The listener's pidfd, until exit is proven or released.
   , anchor :: !(Maybe CInt) -- ^ O_PATH descriptor on the adopted inode.
+  , socketAnchor :: !(Maybe CInt)
+    -- ^ O_PATH descriptor on the socket inode the listener pidfd was taken through. It names the
+    -- one socket this run may unlink, and keeps that inode number from being reused until then.
   , exit :: !(Maybe Retirement) -- ^ Exit proven through the pidfd.
   , fate :: !Fate -- ^ The disposition requested for the daemon, read by every attempt.
   }
 
+-- | Device and inode: what a name must still denote for this run to remove it.
+type Identity = (DeviceID, FileID)
+
+identity :: Files.FileStatus -> Identity
+identity status = (Files.deviceID status, Files.fileID status)
+
 emptyHeld :: Fate -> Held
-emptyHeld = Held Nothing Nothing False Nothing Nothing Nothing
+emptyHeld = Held Nothing Nothing Nothing Nothing False Nothing Nothing Nothing Nothing
 
 -- | The journal plus the gate that serializes every attempt on it.
 data Owner = Owner
@@ -344,6 +357,10 @@ placement owner = case owner.probe.occupied of
     directory <- mkdtemp (owner.probe.root <> "/libtmux-haskell-")
     let names = Names directory (directory <> "/s")
     journal owner (\held -> held {created = Just names})
+    status <- Files.getSymbolicLinkStatus directory
+    journal owner (\held -> held {directoryId = Just (identity status)})
+    fd <- openAnchor directory >>= either N.raise pure
+    journal owner (\held -> held {directoryAnchor = Just fd})
     pure names
   where
     parentOf path = let prefix = fst (Bytes.breakEnd (== 47) path) in
@@ -362,8 +379,8 @@ converge owner names = do
   waited <- timeout (owner.probe.lockMs * 1000) (awaitLock names.directory (names.socket <> ".lock") owner.probe.lockBusy)
     >>= maybe (throwIO LockWaitExpired) pure
   owner.probe.lockWait waited
-  mask_ $ peerPidfd names.socket >>= \case
-    Right fd -> Just fd <$ journal owner (\held -> held {pidfd = Just fd})
+  mask_ $ anchoredPeer names.socket >>= \case
+    Right (anchor, fd) -> Just fd <$ journal owner (\held -> held {pidfd = Just fd, socketAnchor = Just anchor})
     Left problem
       | problem == N.errno eNOENT || problem == N.errno eCONNREFUSED -> pure Nothing
       | problem == N.errno eAGAIN -> throwIO ListenerBusy
@@ -392,6 +409,15 @@ peerPidfd :: ByteString -> IO (Either CInt CInt)
 peerPidfd path = Bytes.useAsCString path $ \c -> do
   rc <- cPeerPidfd c
   pure (if rc >= 0 then Right rc else Left (negate rc))
+
+-- | An anchor on the socket inode a path names, and the listener pidfd taken through that same
+-- anchor, so the identity the anchor reports is the process capability's own inode.
+anchoredPeer :: ByteString -> IO (Either CInt (CInt, CInt))
+anchoredPeer path = openAnchor path >>= \case
+  Left problem -> pure (Left problem)
+  Right anchor -> peerVia anchor >>= \case
+    Left problem -> Left problem <$ N.close anchor
+    Right pidfd -> pure (Right (anchor, pidfd))
 
 -- | The same, through a held anchor descriptor rather than a directory entry.
 peerVia :: CInt -> IO (Either CInt CInt)
@@ -567,14 +593,51 @@ endOperations runtime serverOwner = do
     (.unresolved) <$> R.inspectServerOwner runtime serverOwner
   unless (null remaining) (throwIO (OperationsUnresolved (length remaining)))
 
--- | Phase: remove only names created here, after the daemon is proven gone and the
--- pin is closed. A nonempty directory is reported, not forced, and stays journaled.
+-- | Phase: remove only names this run created and can still identify, after the daemon is
+-- proven gone and the pin is closed. The directory must still be the inode made here and the
+-- socket the inode the listener pidfd came from; a replacement, and everything inside a
+-- replaced directory, is left alone and reported. The startup lock is never unlinked: tmux
+-- removes it once it listens, so a lock name now is not ours. A nonempty directory is
+-- reported, not forced, and stays journaled.
 endNames :: Owner -> IO ()
-endNames owner = readIORef owner.held >>= \held -> forM_ held.created $ \names -> mask_ $ do
-  ignoreMissing (Files.removeLink names.socket)
-  ignoreMissing (Files.removeLink (names.socket <> ".lock"))
-  ignoreMissing (removeDirectory names.directory)
-  journal owner (\current -> current {created = Nothing})
+endNames owner = readIORef owner.held >>= \held -> mask_ $ do
+  forM_ held.created $ \names -> do
+    fd <- case held.directoryAnchor of
+      Just owned -> pure owned
+      Nothing -> do
+        current <- statusIfPresent names.directory
+        unless (maybe False (\entry -> Files.isDirectory entry && Just (identity entry) == held.directoryId) current) $
+          replaced "private directory" names.directory
+        acquired <- openAnchor names.directory >>= either N.raise pure
+        journal owner (\state -> state {directoryAnchor = Just acquired})
+        pure acquired
+    original <- Files.getFdStatus (Fd fd)
+    unless (Files.isDirectory original && Just (identity original) == held.directoryId) $ do
+      journal owner (\state -> state {directoryAnchor = Nothing})
+      N.close fd
+      replaced "private directory" names.directory
+    -- A vanished path can be a rename; only an unlinked held directory proves removal.
+    unless (Files.linkCount original == 0) $ do
+      current <- statusIfPresent names.directory
+      unless (maybe False (\entry -> Files.isDirectory entry && identity entry == identity original) current) $
+        replaced "private directory" names.directory
+      anchored <- forM held.socketAnchor (Files.getFdStatus . Fd)
+      statusIfPresent names.socket >>= mapM_ (\socket ->
+        if Files.isSocket socket && any (\inode -> Files.isSocket inode && identity inode == identity socket) anchored
+          then ignoreMissing (Files.removeLink names.socket)
+          else replaced "socket" names.socket)
+      ignoreMissing (removeDirectory names.directory)
+  journal owner (\current -> current {created = Nothing, directoryId = Nothing})
+  forM_ held.socketAnchor $ \fd -> do
+    journal owner (\current -> current {socketAnchor = Nothing})
+    N.close fd
+  latest <- readIORef owner.held
+  forM_ latest.directoryAnchor $ \fd -> do
+    journal owner (\current -> current {directoryAnchor = Nothing})
+    N.close fd
+  where
+    replaced what path = throwIO (CleanupPending
+      (what <> " " <> show path <> " no longer names what this run created; it was left in place"))
 
 -- | A private capability to end an adopted daemon generation. It holds the
 -- daemon's pidfd and an O_PATH anchor on the pinned inode, both taken and verified

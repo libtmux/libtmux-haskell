@@ -46,17 +46,18 @@ import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin qualified as Pin
-import System.Directory (doesPathExist, listDirectory, removePathForcibly)
+import System.Directory (createDirectory, doesPathExist, listDirectory, removeDirectory, removePathForcibly)
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
+import System.IO.Error (isDoesNotExistError)
 import System.OsString.Posix qualified as Os
 import System.Posix.Files qualified as Files
 import System.Posix.IO qualified as Posix
 import System.Posix.Process (getProcessID)
 import System.Posix.Signals (sigCONT, sigKILL, sigSTOP, sigTERM, sigUSR1)
 import System.Posix.Temp (mkdtemp)
-import System.Posix.Types (Fd (..))
+import System.Posix.Types (DeviceID, FileID, Fd (..))
 import System.Process.Typed
   (getExitCode, nullStream, proc, readProcess, setEnv, setStderr, setStdin, setStdout, waitExitCode, withProcessTerm)
 import System.Timeout (timeout)
@@ -503,6 +504,12 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
     , testCase "a callback failure keeps its class when a second cancellation interrupts the held cleanup wait; the cancellation and owner stay attached" $
         withTmux callbackFailureThenCancellation
     ]
+  , testGroup "name ownership"
+    [ testCase "a replacement listener at the original socket path survives retirement; the owner stays until it is removed" replacedSocket
+    , testCase "a replacement private directory at the original path survives retirement; the owner stays until the namespace is restored" (replacedDirectory True)
+    , testCase "a renamed private directory stays owned when its original path is absent" (replacedDirectory False)
+    , testCase "a lock name that appears after startup is never unlinked; the owner stays until it is removed" unrecordedLock
+    ]
   , testGroup "bounded acquisition"
     [ testCase "convergence waits for a starting daemon's lock until it is unlinked, then finds no listener" $
         withTmux $ \exe -> withScratch $ \scratch -> do
@@ -673,6 +680,131 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
             `finally` void (R.shutdown runtime)
     ]
   ]
+
+-- Name ownership ------------------------------------------------------------
+
+-- | The kernel identity of whatever a path names now, without following links.
+identityAt :: FilePath -> IO (Maybe (DeviceID, FileID))
+identityAt path = (Just . (\status -> (Files.deviceID status, Files.fileID status)) <$> Files.getSymbolicLinkStatus path)
+  `catch` \(problem :: IOException) -> if isDoesNotExistError problem then pure Nothing else throwIO problem
+
+-- | A recorded path with the identity this test gave it. Test cleanup removes a path only while
+-- it still names that identity, so a library mistake can never make the test delete anything else.
+data Planted = Planted {path :: FilePath, planted :: Maybe (DeviceID, FileID)}
+
+plant :: FilePath -> IO Planted
+plant path = Planted path <$> identityAt path
+
+-- | Remove the planted name, once, if and only if it is still the recorded one.
+unplant :: IORef (Maybe Planted) -> (FilePath -> IO ()) -> IO ()
+unplant ref remove = atomicModifyIORef' ref (\held -> (Nothing, held)) >>= mapM_ (\recorded ->
+  identityAt recorded.path >>= \now -> when (isJust now && now == recorded.planted) (remove recorded.path))
+
+-- | The callback of an unsettled scope: the application's exception stays primary, one owner is
+-- attached, and its cleanup failure is recorded.
+retainedAfter :: String -> Either SomeException a -> IO OS.OwnedRecovery
+retainedAfter label outcome = do
+  recovery <- recoveryOf label (\Boom -> True) outcome
+  assertBool (label <> ": the cleanup failure is retained") (isJust (OS.recoveryFailure recovery))
+  pure recovery
+
+-- | The original daemon's socket path is unlinked and a test-owned listener binds the same path,
+-- then the callback fails. The original daemon must still retire through its pidfd and the
+-- replacement name and listener must survive; the scope stays unsettled until the test removes
+-- exactly the listener and name it planted.
+replacedSocket :: Assertion
+replacedSocket = withTmux $ \exe -> do
+  watch <- newWatch
+  listener <- newIORef Nothing
+  replacement <- newIORef Nothing
+  let discard = do
+        unplant replacement Files.removeLink
+        atomicModifyIORef' listener (\held -> (Nothing, held)) >>= mapM_ (Posix.closeFd . Fd)
+  (do outcome <- try @SomeException $ OS.withOwnedServerWith (watching watch (Just OS.Admitted) OS.defaultProbe) exe $ \owned -> do
+        let socket = Ascii.unpack owned.names.socket
+        Files.removeLink socket
+        fd <- withCString socket (\name -> listenAt name 1)
+        assertBool "the replacement listener bound the original path" (fd >= 0)
+        writeIORef listener (Just fd)
+        plant socket >>= writeIORef replacement . Just
+        throwIO Boom
+      assertProcessesGone watch
+      recorded <- readIORef replacement >>= maybe (assertFailure "no replacement was planted") pure
+      identityAt recorded.path >>= \now ->
+        assertBool "cleanup unlinked the replacement socket name" (now == recorded.planted)
+      self <- getProcessID
+      OS.peerPidfd (Ascii.pack recorded.path) >>= \case
+        Right pidfd -> (OS.pidfdPid pidfd >>= (@?= Just (toInteger self))) `finally` N.close pidfd
+        Left problem -> assertFailure ("the replacement listener is unreachable: errno " <> show problem)
+      recovery <- retainedAfter "the replaced socket name" outcome
+      names <- readIORef watch.names >>= maybe (assertFailure "no directory") pure
+      doesPathExist (Ascii.unpack names.directory) >>= assertBool "the private directory is retained with its owner"
+      discard
+      OS.settle (OS.recoveryOwner recovery)
+      assertNamesGone watch)
+    `finally` (discard >> retireWitnessed watch)
+
+-- | After the original witness is held and before the pin is acquired, the private directory is
+-- renamed to a recorded backup and an empty directory takes its path. The original daemon must still
+-- retire; the replacement must stay and the owner remain until the test restores the namespace
+-- from the exact paths it recorded.
+replacedDirectory :: Bool -> Assertion
+replacedDirectory replace = withTmux $ \exe -> do
+  watch <- newWatch
+  backup <- newIORef Nothing
+  replacement <- newIORef Nothing
+  let displace point names = when (point == OS.DaemonOwned) $ do
+        let original = Ascii.unpack names.directory
+            moved = original <> ".displaced"
+        Files.rename original moved
+        writeIORef backup (Just moved)
+        when replace $ do
+          createDirectory original
+          plant original >>= writeIORef replacement . Just
+        throwIO Boom
+      probe = watching watch (Just OS.DaemonOwned) OS.defaultProbe {OS.stage = displace}
+      discard = do
+        unplant replacement removeDirectory
+        atomicModifyIORef' backup (\held -> (Nothing, held)) >>= mapM_ removePathForcibly
+  (do outcome <- try @SomeException (OS.withOwnedServerWith probe exe (\_ -> pure ()))
+      assertProcessesGone watch
+      names <- readIORef watch.names >>= maybe (assertFailure "no original directory") pure
+      let original = Ascii.unpack names.directory
+      when replace $ do
+        recorded <- readIORef replacement >>= maybe (assertFailure "no replacement was planted") pure
+        identityAt recorded.path >>= \now ->
+          assertBool "cleanup removed the replacement private directory" (now == recorded.planted)
+      recovery <- retainedAfter "the replaced private directory" outcome
+      -- Restore the namespace with the exact paths acquired above, then resume.
+      unplant replacement removeDirectory
+      moved <- readIORef backup >>= maybe (assertFailure "no backup was recorded") pure
+      Files.rename moved original
+      writeIORef backup Nothing
+      OS.settle (OS.recoveryOwner recovery)
+      assertNamesGone watch)
+    `finally` (discard >> retireWitnessed watch)
+
+-- | Normal tmux unlinks its startup lock once it listens, so a lock name present after
+-- admission is not evidence that this run made it. It must stay, and the directory with it.
+unrecordedLock :: Assertion
+unrecordedLock = withTmux $ \exe -> do
+  watch <- newWatch
+  lock <- newIORef Nothing
+  let discard = unplant lock Files.removeLink
+  (do outcome <- try @SomeException $ OS.withOwnedServerWith (watching watch (Just OS.Admitted) OS.defaultProbe) exe $ \owned -> do
+        let path = Ascii.unpack owned.names.socket <> ".lock"
+        writeFile path ""
+        plant path >>= writeIORef lock . Just
+        throwIO Boom
+      assertProcessesGone watch
+      recorded <- readIORef lock >>= maybe (assertFailure "no lock was planted") pure
+      identityAt recorded.path >>= \now ->
+        assertBool "cleanup unlinked a lock name it never recorded" (now == recorded.planted)
+      recovery <- retainedAfter "the unrecorded lock name" outcome
+      discard
+      OS.settle (OS.recoveryOwner recovery)
+      assertNamesGone watch)
+    `finally` (discard >> retireWitnessed watch)
 
 -- Cases --------------------------------------------------------------------
 
