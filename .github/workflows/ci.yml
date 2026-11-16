@@ -51,6 +51,7 @@ jobs:
         with:
           ref: '3.8'
           configure-args: --disable-utf8proc
+          add-to-path: 'true'
       - name: Restore Haskell dependencies
         id: dependencies
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -165,6 +166,7 @@ jobs:
         with:
           ref: ${{ matrix.tmux }}
           configure-args: --disable-utf8proc
+          add-to-path: 'true'
       - name: Provision integration dependencies
         run: |
           cabal update
