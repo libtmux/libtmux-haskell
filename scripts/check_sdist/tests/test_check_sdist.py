@@ -128,8 +128,8 @@ def commands(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
         seen.append((command[0], kwargs.get("timeout")))
         return "program"
 
-    monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(subprocess, "check_output", output)
+    monkeypatch.setattr(check_sdist, "bounded_run", run)
+    monkeypatch.setattr(check_sdist, "output", output)
     return seen
 
 
@@ -186,9 +186,7 @@ def public_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable
         )
         program.chmod(0o755)
         monkeypatch.setattr(check_sdist, "run", lambda *_args: None)
-        monkeypatch.setattr(
-            check_sdist.subprocess, "check_output", lambda *_args, **_kwargs: str(program)
-        )
+        monkeypatch.setattr(check_sdist, "output", lambda *_args, **_kwargs: str(program))
         with tarfile.open(archive) as source:
             check_sdist.check_public_commands(source, prefix, directory, "0.0.1.0")
 
