@@ -101,8 +101,7 @@ timed checks:
 $ uv sync --locked
 ```
 
-Check formatting, lint rules and types for every script and for the example
-runner in `examples/capture-graph`:
+Run the format, lint and type checks with uv.
 
 ```console
 $ uv run --locked ruff format --check scripts

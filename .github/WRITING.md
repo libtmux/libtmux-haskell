@@ -62,11 +62,8 @@ A README is scanned, not read. Each line has to survive a glance.
 - Never remove an example, command block or table to shorten the README.
   Shorten the prose. Code may add lines; prose may not.
 - Examples start with their imports, so a reader can paste one into a file.
-- Examples start and clean up their own tmux server through the library.
-  The library cannot start or stop a server yet
-  ([#34](https://github.com/libtmux/libtmux-haskell/issues/34),
-  [#28](https://github.com/libtmux/libtmux-haskell/issues/28)), so the
-  README does those two steps in the shell and says so.
+- Live examples use `withOwnedServer` to start and retire a private tmux
+  server.
 - Every displayed example comes from a program CI runs (see
   `examples/catalogue.json` below).
 - The README shows the headline features the library has, each with an

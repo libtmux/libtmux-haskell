@@ -177,18 +177,10 @@ empty relationships, numeric bounds, retained bytes and generated predicates
 against an independent interpreter. Public type checks reject wrong rows,
 operands, operators and cross-row coercion using their intended diagnostics.
 
-The capture runner owns a foreground daemon before session creation. Its
-critical failure cases independently observe pidfds after setup failure,
-callback failure and cancellation. A waiting after-new-session hook also
-exercises interruption before the pane receipt. The runner joins the command
-client and preserves the interruption. It reports unestablished pane ownership
-in a cleanup note, even when the test independently observes the pane's exit;
-that test observation does not establish the runner's ownership receipt.
-A failed response followed by failed command retirement also preserves the
-primary failure. Daemon shutdown precedes the remaining bounded command wait.
-Before teardown, the runner discovers any additional live physical panes and
-tracks their PIDs. Creation's fixture requires both initial and created pane
-processes to exit on success, callback failure and cancellation.
+Live examples use `withOwnedServer`. The native integration suite verifies
+that its private daemon and pane processes exit after normal return, callback
+failure and cancellation. The archive check runs the same example programs
+against the installed package and the source pin offered to readers.
 
 A real-tmux capability program must include its own setup and cleanup,
 explicit target, feature floor and observable result. Run it end to end;
