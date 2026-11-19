@@ -7,7 +7,7 @@
 -- "LibTmux.Server" owns the public scope and cleanup policy.
 module LibTmux.Internal.Capture
   ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
-  , captureVersionWith
+  , captureVersionWith, capturePaneWith
   , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
   ) where
 
@@ -24,6 +24,8 @@ import Data.IORef
 import Data.Maybe (listToMaybe)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
+import LibTmux.Id (PaneId)
+import LibTmux.Internal.Command (PaneCaptureReply)
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Graph qualified as Session (Session (..))
 import LibTmux.Internal.Graph qualified as Window (Window (..))
@@ -32,6 +34,7 @@ import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin (pinGeneration)
+import LibTmux.Pane (PaneCaptureOptions)
 import LibTmux.Version qualified as Version
 import LibTmux.Internal.Topology qualified as T
 import System.Timeout (timeout)
@@ -78,6 +81,13 @@ captureVersionWith :: P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> In
 captureVersionWith hooks runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
   left <- remaining deadline
   owned runtime receipt (R.readServerVersionWith hooks left runtime client executable R.ScalarRead)
+
+capturePaneWith :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> PaneId
+  -> PaneCaptureOptions -> IO (Word64, Word64, PaneCaptureReply)
+capturePaneWith runtime client executable duration pane options =
+  withinDeadline runtime client duration $ \receipt deadline -> do
+    left <- remaining deadline
+    owned runtime receipt (R.readPaneCaptureWith P.defaultHooks left runtime client executable pane options)
 
 captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do

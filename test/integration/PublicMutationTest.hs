@@ -130,6 +130,54 @@ tests = testGroup "public mutation API"
         assertBool "bystander received input" (all Lazy.null (Lazy.lines screen))
         Tmux.killPane server target.ref
 
+  , testCase "captures bounded plain and styled text from an explicit pane" $
+      Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+        before <- Tmux.capture server
+        bystander <- one (Tmux.panes before)
+        let application = unlines
+              [ "set -eu"
+              , "printf 'caf\\033[31m\\303\\251\\033[0m\\n\\n%%end 12 34 0\\n\\n'"
+              , "\"$1\" -N -S \"$2\" wait-for -S capture-visible"
+              , "\"$1\" -N -S \"$2\" wait-for capture-more"
+              , "i=0; while [ \"$i\" -lt 48 ]; do printf 'row %02d\\n' \"$i\"; i=$((i+1)); done"
+              , "\"$1\" -N -S \"$2\" wait-for -S capture-history"
+              , "exec /bin/cat -"
+              ]
+        configured fixture ["split-window", "-d", "/bin/sh", "-c", application,
+          "sh", fixture.executable, fixture.socket]
+        bounded (configured fixture ["wait-for", "capture-visible"])
+        observed <- Tmux.capture server
+        target <- one [pane | pane <- Tmux.panes observed, pane.ref /= bystander.ref]
+        configured fixture ["set-hook", "-g", "after-capture-pane",
+          "display-message -p libtmux-unrelated-hook-output"]
+
+        plain <- Tmux.paneText <$> Tmux.capturePane server target.ref Tmux.defaultPaneCapture
+        assertBool "plain text lost Unicode, blanks or the control-shaped line"
+          ("café\n\n%end 12 34 0\n" `Text.isPrefixOf` plain)
+        assertBool "hook output contaminated the capture"
+          (not ("libtmux-unrelated-hook-output" `Text.isInfixOf` plain))
+        let styledOptions = Tmux.defaultPaneCapture {Tmux.rendering = Tmux.AnsiStyled}
+        styled <- Tmux.paneText <$> Tmux.capturePane server target.ref styledOptions
+        assertBool "styled text lost the color change inside café"
+          ("caf\ESC[31mé" `Text.isPrefixOf` styled)
+        bystanderText <- Tmux.paneText <$> Tmux.capturePane server bystander.ref Tmux.defaultPaneCapture
+        assertBool "selected pane was confused with its bystander" (Text.all (== '\n') bystanderText)
+
+        let tiny = Tmux.defaultPaneCapture {Tmux.byteLimit = 4}
+        Tmux.tryTmux (Tmux.capturePane server target.ref tiny) >>= \case
+          Left (ExceptionWithContext _ (Tmux.PaneTextTooLarge 4)) -> pure ()
+          _ -> assertFailure "the byte limit did not refuse this capture"
+        configured fixture ["wait-for", "-S", "capture-more"]
+        bounded (configured fixture ["wait-for", "capture-history"])
+        let history = Tmux.defaultPaneCapture {Tmux.rows = Tmux.RowsBetween (-3) (-1)}
+        previous <- Tmux.paneText <$> Tmux.capturePane server target.ref history
+        length (Text.lines previous) @?= 3
+        assertBool "history rows did not come from the pane" (all (Text.isPrefixOf "row ") (Text.lines previous))
+        Tmux.killPane server target.ref
+        Tmux.tryTmux (Tmux.capturePane server target.ref Tmux.defaultPaneCapture) >>= \case
+          Left (ExceptionWithContext _ (Tmux.PaneCaptureRejected _)) -> pure ()
+          _ -> assertFailure "a vanished pane was accepted"
+
   , testCase "refuses foreign and offline references before changing the daemon" $
       Fixture.withFixture $ \fixture -> do
         configured fixture ["rename-window", "-t", "@0", "original-window"]

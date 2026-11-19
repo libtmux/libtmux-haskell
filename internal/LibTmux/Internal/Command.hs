@@ -8,6 +8,7 @@ module LibTmux.Internal.Command
   ( Mutation (..), ProgramCommand (..), ProgramIdentity (..), ArgumentError (..), compileMutation
   , compileProgramMutation, decodeProgramReply
   , compileKeyProbe, decodeKeyProbe
+  , PaneCaptureReply (..), compilePaneCapture, decodePaneCapture
   , MutationReply (..), ReplyError (..), decodeControlReply
   , SessionReceipt (..), SessionCreationReply (..)
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
@@ -32,6 +33,7 @@ import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Frame qualified as Frame
 import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Pane (PaneCaptureOptions (..), PaneRendering (..), PaneRows (..))
 import LibTmux.Snapshot qualified as Snapshot
 import LibTmux.Value qualified as Value
 import System.OsString.Posix (PosixString)
@@ -346,6 +348,61 @@ decodeControlReply exit output errors
           (diagnostic, tailBytes) <- errorBody stamp body
           Right (Rejected (Bytes.copy (diagnostic <> tailBytes)))
         Nothing -> Left UnexpectedReply
+
+data PaneCaptureReply = CapturedPaneText !ByteString | CaptureRejected !ByteString
+  deriving stock (Eq, Show)
+
+instance NFData PaneCaptureReply where
+  rnf (CapturedPaneText bytes) = rnf bytes
+  rnf (CaptureRejected diagnostic) = rnf diagnostic
+
+compilePaneCapture :: Id.PaneId -> PaneCaptureOptions -> Either ArgumentError [ByteString]
+compilePaneCapture pane options = do
+  when (options.byteLimit < 1 || options.byteLimit > 1048576)
+    (Left (InvalidOperand "pane.capture.byteLimit" "expected 1 through 1048576 bytes"))
+  selection <- case options.rows of
+    VisibleRows -> Right []
+    RowsBetween first lastRow
+      | first <= lastRow && first >= -2147483648 && lastRow <= 2147483647 ->
+          Right ["-S", Ascii.pack (show first), "-E", Ascii.pack (show lastRow)]
+      | otherwise -> Left (InvalidOperand "pane.capture.rows" "expected ordered signed 32-bit offsets")
+  pure (["capture-pane", "-p", "-t", Utf8.encodeUtf8 (Id.renderPaneId pane)] <> selection
+    <> ["-e" | options.rendering == AnsiStyled])
+
+-- Capture writes its rows within the primary command's guard. After-hooks
+-- have separate guards. Repeated matches with this command's stamp make the
+-- payload ambiguous, including when the pane contains a guard-shaped line.
+decodePaneCapture :: Int -> Maybe Int -> ByteString -> ByteString -> Either ReplyError PaneCaptureReply
+decodePaneCapture limit exit output errors
+  | Bytes.length output > 1048576 = Left ReplyTooLarge
+  | not (Bytes.null errors) = Left UnexpectedReply
+  | otherwise = do
+      packet <- maybe (Left UnexpectedReply) Right (stripControlExit output)
+      (header, body) <- maybe (Left UnexpectedReply) Right (boundedLine 64 packet)
+      stamp <- guardStamp header
+      (success, count) <- paneBoundary stamp body
+      case (success, exit) of
+        (True, Just 0)
+          | count > limit -> Left ReplyTooLarge
+          | otherwise -> Right (CapturedPaneText (Bytes.copy (Bytes.take count body)))
+        (False, Just 1) -> Right (CaptureRejected (Bytes.copy (Bytes.take count body)))
+        _ -> Left UnexpectedReply
+
+paneBoundary :: ByteString -> ByteString -> Either ReplyError (Bool, Int)
+paneBoundary stamp = scan 0 Nothing
+  where
+    ended = "%end " <> stamp
+    failed = "%error " <> stamp
+    scan !offset found bytes
+      | Bytes.null bytes = maybe (Left UnexpectedReply) Right found
+      | otherwise = do
+          let (line, following) = Bytes.break (== 10) bytes
+          rest <- maybe (Left UnexpectedReply) Right (Bytes.stripPrefix "\n" following)
+          let next = offset + Bytes.length line + 1
+          case (line == ended, line == failed, found) of
+            (False, False, _) -> scan next found rest
+            (success, _, Nothing) -> scan next (Just (success, offset)) rest
+            _ -> Left UnexpectedReply
 
 guardStamp :: ByteString -> Either ReplyError ByteString
 guardStamp header
