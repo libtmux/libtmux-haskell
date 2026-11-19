@@ -36,6 +36,9 @@
 - Read visible or historical rows with `capturePane`. Plain and ANSI
   captures preserve empty rows, reject text over the byte limit and report a
   failed after-hook separately from rejection of the capture. ([#25])
+- Wait for present or newly observed pane text with `waitForText`. Timeout
+  and pane exit are distinct and retain the last complete capture when
+  available. ([#47])
 
 ### Changed
 
@@ -167,3 +170,4 @@
 [#28]: https://github.com/libtmux/libtmux-haskell/issues/28
 [#24]: https://github.com/libtmux/libtmux-haskell/issues/24
 [#25]: https://github.com/libtmux/libtmux-haskell/issues/25
+[#47]: https://github.com/libtmux/libtmux-haskell/issues/47
