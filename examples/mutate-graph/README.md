@@ -15,18 +15,13 @@
 [`setPaneTitle`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-setpanetitle/).
 
 - A fresh capture shows the changes; the original snapshot keeps its old values.
-- The renamed window still has two appearances.
 
-This program changes the server you give it. Start the
-[README's demo server](../../README.md), then run from the repository root:
+The program creates its own daemon. Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 mutate-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 mutate-graph
 ```
 
-Expected output: [expected.stdout](expected.stdout). Then run the README's
-cleanup commands; the program leaves your server running.
+Compare the result with [expected.stdout](expected.stdout).
 
 More: [mutations](../../docs/mutations.md).

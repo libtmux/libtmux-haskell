@@ -30,7 +30,7 @@ generation and retain recovery.
 | Absolute pane/window width, height or both | Implemented through `resizePane` and `resizeWindow`; see [resizing](resizing.md). Other resize modes remain open. |
 | Built-in options and hooks by daemon release | Implemented through `LibTmux.Options`; see [options and hooks](options.md) |
 | Scoped scalar settings and built-in hooks | `readOption`, `setOption`, `readHook` and `setHook`; see [scope and values](options.md#select-a-store) |
-| First-server bootstrap | Not implemented |
+| Private daemons and explicit server shutdown | See [server scopes](capture.md) |
 | Query interchange and backend optimization | Not implemented |
 | Bounded control notifications and optional pane output records | [Control scope](control.md) |
 

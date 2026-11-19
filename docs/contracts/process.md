@@ -115,8 +115,8 @@ Runtime close requests cleanup for all registered pools and reports ordinary
 request failures. Waiting propagates a failed cleanup restart before awaiting
 workers that could not start. It can also throw a retained pin-cleanup failure,
 and has no hard deadline. Existing pool workers own physical cleanup; the
-registry adds no process-global state or detached reaper. It does not issue
-`kill-server` or establish completion of daemon-side work.
+registry adds no process-global state or detached reaper. Daemon shutdown
+and completion of daemon-side work require their own evidence.
 
 The separate `shutdown` operation closes admission and shares one owned
 attempt among concurrent callers. Caller cancellation stops that caller's

@@ -13,14 +13,12 @@
 and retries an observation, and bounds an owning run. It checks exit status,
 rendered output and preservation of the borrowed session and panes.
 
-Use the [private demonstration server](../../README.md) with tmux 3.8 or newer,
+Put tmux 3.8 or newer on `PATH`,
 Linux 6.9 process-group pidfds and the required Bash builtins, then run from the
 repository root:
 
 ```console
-$ cabal run --verbose=0 managed-program -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 managed-program
 ```
 
 Compare with [expected.stdout](expected.stdout), then follow the README's daemon

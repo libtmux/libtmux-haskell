@@ -16,13 +16,10 @@ predicate.
 - Traverses relationships and checks cardinality.
 - Tells one physical pane from its two appearances through window links.
 
-Start the [README's demo server](../../README.md), then run from the
-repository root:
+Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 query-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 query-graph
 ```
 
 Expected output: [expected.stdout](expected.stdout). Then run the README's

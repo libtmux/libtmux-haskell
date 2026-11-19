@@ -5,7 +5,7 @@ session environment: empty, removed, absent
 initial window: api
 pane title: editor-ready
 same created targets: True
-captured sessions: 1 -> 2
+captured sessions: 0 -> 1
 created session links: 2
 new window: worker
 new window panes: 2

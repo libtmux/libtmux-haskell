@@ -5,18 +5,17 @@ resource and cleanup owner. Open each endpoint with
 [`withServerIn`](../src/LibTmux/Server.hs). Closing one Server scope releases
 only that handle; the others keep working under the shared limits.
 
-Start the [demo server](../README.md) from the README, then run from a
-checkout:
+The program opens two handles to a private daemon and checks their lifetimes.
+Run from a checkout.
 
 ```console
-$ cabal run --verbose=0 shared-runtime -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 shared-runtime
 ```
 
 <!-- example: shared-runtime -->
 ```haskell
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | Share Runtime resources while keeping Server lifetimes independent.
 module Main (main) where
@@ -25,17 +24,16 @@ import Control.Exception (ExceptionWithContext (..))
 import Control.Monad (forM_, unless)
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
-import System.Environment (getArgs)
-import System.Exit (die)
-import System.OsPath.Posix qualified as Path
+import LibTmux.Creation qualified as Creation
 
 main :: IO ()
-main = getArgs >>= \case
-  [socketArgument, executableArgument] -> do
-    socket <- Path.encodeFS socketArgument
-    executable <- Path.encodeFS executableArgument
-    let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
-    snapshot <- Tmux.withRuntime $ \runtime ->
+main = do
+  snapshot <- Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \owned -> do
+    _ <- Tmux.createSession owned Creation.defaultSessionOptions
+      {Creation.process = Creation.ShellCommand "exec /bin/cat -"}
+    initial <- Tmux.capture owned
+    let config = Tmux.serverConfig (Tmux.serverInfo initial).socketPath
+    Tmux.withRuntime $ \runtime ->
       Tmux.withServerIn runtime config $ \outer -> do
         first <- Tmux.capture outer
         closed <- Tmux.withServerIn runtime config $ \inner -> do
@@ -52,14 +50,13 @@ main = getArgs >>= \case
           Left problem -> fail ("closed handle returned an unexpected error: " <> show problem)
           Right _ -> fail "the inner handle remained open after its scope"
         Tmux.capture outer
-    putStrLn "independent handles: verified"
-    putStrLn "closed inner handle: rejected"
-    putStrLn $ "outer capture panes: " <> show (length (Tmux.panes snapshot))
-    forM_ (Tmux.panes snapshot) $ \pane -> do
-      window <- either (fail . show) pure (Tmux.lookupWindow snapshot pane.window)
-      putStrLn $ "detached pane " <> Text.unpack (Tmux.renderPaneId (Tmux.paneId pane.ref))
-        <> " belongs to " <> Text.unpack (Tmux.renderWindowId (Tmux.windowId window.ref))
-  _ -> die "Usage: shared-runtime SOCKET TMUX_EXECUTABLE"
+  putStrLn "independent handles: verified"
+  putStrLn "closed inner handle: rejected"
+  putStrLn $ "outer capture panes: " <> show (length (Tmux.panes snapshot))
+  forM_ (Tmux.panes snapshot) $ \pane -> do
+    window <- either (fail . show) pure (Tmux.lookupWindow snapshot pane.window)
+    putStrLn $ "detached pane " <> Text.unpack (Tmux.renderPaneId (Tmux.paneId pane.ref))
+      <> " belongs to " <> Text.unpack (Tmux.renderWindowId (Tmux.windowId window.ref))
 ```
 
 The program checks that:
@@ -108,7 +105,6 @@ executable shared-runtime
   ghc-options: -Wall -Werror
   build-depends:
     base >=4.22 && <4.23,
-    filepath >=1.5.4 && <1.6,
     libtmux-haskell ^>=0.0.1.0,
     text >=2.1.3 && <2.2
 ```

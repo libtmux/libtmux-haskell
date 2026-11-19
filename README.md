@@ -55,117 +55,53 @@ More: [installation](https://libtmux.org/en/haskell/latest/guides/installation/)
 
 ### [`capture`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capture/): the whole graph in one read
 
-[`withServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withserver/) scopes the
-connection. Run this from a checkout.
-
-Start a demo server on a private socket:
+[`withOwnedServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withownedserver/)
+starts a private daemon and retires it after the example. Run from a checkout.
 
 ```console
-$ export LIBTMUX_DEMO_DIR="$(mktemp -d -t libtmux-haskell-demo.XXXXXX)"
+$ cabal run --verbose=0 capture-graph
 ```
-
-```console
-$ env -u TMUX -u TMUX_PANE tmux \
-    -S "$LIBTMUX_DEMO_DIR/s" \
-    -f /dev/null \
-    new-session \
-    -d \
-    -s demo \
-    -n editor \
-    -x 120 \
-    -y 40 \
-    /bin/cat -
-```
-
-Link its window at a second index:
-
-```console
-$ env -u TMUX -u TMUX_PANE tmux \
-    -N \
-    -S "$LIBTMUX_DEMO_DIR/s" \
-    link-window \
-    -s demo:0 \
-    -t demo:4
-```
-
-Run the example:
-
-```console
-$ cabal run --verbose=0 capture-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
-```
-
-The complete program:
 
 <!-- example: capture-graph -->
 ```haskell
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Capture once, then navigate detached values after the Server scope closes.
 module Main (main) where
 
-import Control.Exception (ExceptionWithContext (..), rethrowIO)
 import Control.Monad (forM_)
-import Data.List (intercalate)
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
-import System.Environment (getArgs)
-import System.Exit (die)
-import System.OsPath.Posix qualified as Path
+import LibTmux.Creation qualified as Creation
 
 main :: IO ()
 main = do
-  arguments <- getArgs
-  case arguments of
-    [socketArgument, executableArgument] -> do
-      socket <- Path.encodeFS socketArgument
-      executable <- Path.encodeFS executableArgument
-      let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
-      snapshot <- Tmux.tryTmux (Tmux.withServer config Tmux.capture) >>= \case
-        Left (ExceptionWithContext _ Tmux.IncompatibleTmuxClientProtocol) ->
-          die "The tmux client cannot query this daemon's protocol"
-        Left problem -> rethrowIO problem
-        Right captured -> pure captured
+  alias <- either (fail . show) pure (Tmux.mkWindowIndex 4)
+  snapshot <- Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server -> do
+    created <- Tmux.createSession server Creation.defaultSessionOptions
+      { Creation.name = Just "demo"
+      , Creation.process = Creation.ShellCommand "exec /bin/cat -"
+      }
+    Tmux.linkWindow server (Creation.WindowSlot created.session created.windowIndex)
+      (Creation.WindowSlot created.session alias)
+    Tmux.capture server
 
-      let activeWidePanes =
-            [ pane
-            | pane <- Tmux.panes snapshot
-            , pane.active
-            , Tmux.dimensionValue pane.width >= 120
-            ]
-      putStrLn $ "physical entities (sessions, windows, panes): " <> show
-        (length (Tmux.sessions snapshot), length (Tmux.windows snapshot), length (Tmux.panes snapshot))
-      putStrLn $ "contextual appearances (links, panes): " <> show
-        (length (Tmux.windowLinks snapshot), length (Tmux.paneOccurrences snapshot))
-      putStrLn $ "active panes at least 120 cells wide: " <> show (length activeWidePanes)
-
-      forM_ (Tmux.sessions snapshot) $ \session -> do
-        links <- either (fail . show) pure (Tmux.linksForSession snapshot session.ref)
-        forM_ links $ \link -> do
-          window <- either (fail . show) pure (Tmux.lookupWindow snapshot link.window)
-          children <- either (fail . show) pure (Tmux.panesForWindow snapshot window.ref)
-          let paneIds = [Text.unpack (Tmux.renderPaneId (Tmux.paneId pane.ref)) | pane <- children]
-          putStrLn $ Text.unpack session.name <> ":" <> show (Tmux.windowIndexValue link.index)
-            <> " -> " <> Text.unpack (Tmux.renderWindowId (Tmux.windowId window.ref))
-            <> " panes=" <> intercalate "," paneIds
-    _ -> die "Usage: capture-graph SOCKET TMUX_EXECUTABLE"
+  putStrLn $ "Physical windows: " <> show (length (Tmux.windows snapshot))
+  forM_ (Tmux.windowLinks snapshot) $ \link ->
+    putStrLn $ "Window index " <> show (Tmux.windowIndexValue link.index)
+      <> " refers to " <> Text.unpack (Tmux.renderWindowId (Tmux.windowId link.window))
 ```
 
 It prints:
 
 <!-- example-output: capture-graph -->
 ```text
-physical entities (sessions, windows, panes): (1,1,1)
-contextual appearances (links, panes): (2,2)
-active panes at least 120 cells wide: 1
-demo:0 -> @0 panes=%0
-demo:4 -> @0 panes=%0
+Physical windows: 1
+Window index 0 refers to @0
+Window index 4 refers to @0
 ```
 
-The values stay usable after the scope closes. Closing the handle leaves the
-daemon running.
+The snapshot stays usable after the private daemon exits.
 
 More: [capture and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) ·
 [`withRuntime`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withruntime/) for
@@ -184,12 +120,10 @@ show the typed predicates.
 [`matching`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-matching/) filters a source,
 [`exactlyOne`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-exactlyone/) insists on a single
 match and [`fetch`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-fetch/) captures fresh. Run it
-against the same demo server:
+on its own private daemon.
 
 ```console
-$ cabal run --verbose=0 query-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 query-graph
 ```
 
 The complete program:
@@ -207,11 +141,10 @@ import Data.Bifunctor (first)
 import Data.Function ((&))
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
+import LibTmux.Creation qualified as Creation
 import LibTmux.Query qualified as Q
 import LibTmux.Query.Fields qualified as F
-import System.Environment (getArgs)
 import System.Exit (die)
-import System.OsPath.Posix qualified as Path
 
 data ApplicationError
   = OperationalFailure (ExceptionWithContext Tmux.TmuxException)
@@ -226,22 +159,25 @@ selectedPanes :: Q.Query Tmux.Pane
 selectedPanes = Q.panes & Q.matching activeWide
 
 main :: IO ()
-main = getArgs >>= \case
-  [socketArgument, executableArgument] -> do
-    socket <- Path.encodeFS socketArgument
-    executable <- Path.encodeFS executableArgument
-    let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
-    acquired <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
-      snapshot <- Tmux.capture server
-      fresh <- Q.fetch server selectedPanes
-      pure (snapshot, fresh)
-    case first OperationalFailure acquired >>= uncurry report of
-      Left (OperationalFailure problem) -> rethrowIO problem
-      Left (InvalidQuery problem) -> die ("Query validation failed: " <> show problem)
-      Left (InvalidSelection problem) -> die ("Selection failed: " <> show problem)
-      Left (UnexpectedResult problem) -> die problem
-      Right linesToPrint -> mapM_ putStrLn linesToPrint
-  _ -> die "Usage: query-graph SOCKET TMUX_EXECUTABLE"
+main = do
+  width <- either (fail . show) pure (Tmux.mkDimension 120)
+  alias <- either (fail . show) pure (Tmux.mkWindowIndex 4)
+  acquired <- Tmux.tryTmux $ Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server -> do
+    created <- Tmux.createSession server Creation.defaultSessionOptions
+      { Creation.width = Just width
+      , Creation.process = Creation.ShellCommand "exec /bin/cat -"
+      }
+    Tmux.linkWindow server (Creation.WindowSlot created.session created.windowIndex)
+      (Creation.WindowSlot created.session alias)
+    snapshot <- Tmux.capture server
+    fresh <- Q.fetch server selectedPanes
+    pure (snapshot, fresh)
+  case first OperationalFailure acquired >>= uncurry report of
+    Left (OperationalFailure problem) -> rethrowIO problem
+    Left (InvalidQuery problem) -> die ("Query validation failed: " <> show problem)
+    Left (InvalidSelection problem) -> die ("Selection failed: " <> show problem)
+    Left (UnexpectedResult problem) -> die problem
+    Right linesToPrint -> mapM_ putStrLn linesToPrint
 
 report :: Tmux.Snapshot -> Either Q.QueryError [Tmux.Pane] -> Either ApplicationError [String]
 report snapshot acquired = do
@@ -290,17 +226,14 @@ in the contextual source. More: [typed queries](https://libtmux.org/en/haskell/l
 
 ## Change tmux
 
-### [`renameSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamesession/): rename what a query found
+### [`renameSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamesession/): change a session by reference
 
-[`exactlyOne`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-exactlyone/) insists on a single
-match first. [`renameWindow`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamewindow/)
-and [`setPaneTitle`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-setpanetitle/) follow.
-The [mutation program](https://libtmux.org/en/haskell/latest/guides/mutations/):
+Keep the references returned by creation. The
+[mutation program](https://libtmux.org/en/haskell/latest/guides/mutations/)
+uses them to rename a session and window and change a pane title.
 
 ```console
-$ cabal run --verbose=0 mutate-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 mutate-graph
 ```
 
 A new capture shows the changes; the old snapshot keeps its values. Each
@@ -314,9 +247,7 @@ The [creation program](https://libtmux.org/en/haskell/latest/guides/creation/)
 uses the returned window and pane, then captures the updated graph:
 
 ```console
-$ cabal run --verbose=0 create-session -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 create-session
 ```
 
 After checking duplicate-name rejection, the example removes the targets it
@@ -382,9 +313,7 @@ The [session settings program](docs/options.md) reads a local history limit
 and observes a rename hook's effect.
 
 ```console
-$ cabal run --verbose=0 configure-session -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 configure-session
 ```
 
 <!-- example-output: configure-session -->
@@ -399,9 +328,7 @@ The [control example](docs/control.md) reads one native notification from
 a bounded stream and retires its client at the end of the scope.
 
 ```console
-$ cabal run --verbose=0 watch-window -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 watch-window
 ```
 
 <!-- example-output: watch-window -->
@@ -417,9 +344,7 @@ The [geometry program](docs/resizing.md) chooses a width, height or both,
 prints fresh dimensions and removes its disposable session:
 
 ```console
-$ cabal run --verbose=0 resize-geometry -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 resize-geometry
 ```
 
 <!-- example-output: resize-geometry -->
@@ -447,9 +372,7 @@ cancels and retries an interactive wait, and bounds an owning scope. It requires
 tmux 3.8, Linux 6.9 process-group pidfds and Bash timed reads:
 
 ```console
-$ cabal run --verbose=0 managed-program -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 managed-program
 ```
 
 <!-- example-output: managed-program -->
@@ -464,20 +387,12 @@ borrowed resources preserved: True
 
 More: [program ownership, bounds and recovery](docs/programs.md).
 
-## Clean up
+## Connect to an existing daemon
 
-Stop the demo server and remove its directory:
+### [`withServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withserver/): borrow a connection
 
-```console
-$ env -u TMUX -u TMUX_PANE tmux \
-    -N \
-    -S "$LIBTMUX_DEMO_DIR/s" \
-    kill-server
-```
-
-```console
-$ rm -r -- "$LIBTMUX_DEMO_DIR"
-```
+Pass its socket path to `serverConfig`. The scope retires the library’s
+connection resources and leaves the daemon running.
 
 ## Find the right guide
 
@@ -500,8 +415,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 ## Support and status
 
 - **Experimental.** The API may change.
-- **Works today.** Captures, typed queries, session/window creation, pane splits, renames and pane titles.
-- **In development.** Window/pane creation, pane input and event streams.
+- **Works today.** Private daemon scopes, typed graph queries, pane input, bounded capture and control notifications.
 - **Platform.** Linux x86_64. [Host requirements](docs/installation.md).
 - **More.** [Status](https://libtmux.org/en/haskell/latest/guides/status/) · [source guides](docs/README.md).
 

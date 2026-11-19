@@ -1,67 +1,32 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Rename a session and a window, set a pane title, then show the state
--- before and after.
 module Main (main) where
 
-import Control.Exception (rethrowIO)
-import Data.Function ((&))
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
-import LibTmux.Query qualified as Q
-import LibTmux.Query.Fields qualified as F
-import System.Environment (getArgs)
-import System.Exit (die)
-import System.OsPath.Posix qualified as Path
+import LibTmux.Creation qualified as Creation
 
 main :: IO ()
-main = getArgs >>= \case
-  [socketArgument, executableArgument] -> do
-    socket <- Path.encodeFS socketArgument
-    executable <- Path.encodeFS executableArgument
-    let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
-        selected = Q.panes & Q.matching (Q.eq F.paneActive True)
-    result <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
-      before <- Tmux.capture server
-      session <- require "Session selection"
-        (Q.exactlyOne (Tmux.sessions before))
-      matches <- require "Pane query" (Q.runQuery before selected)
-      pane <- require "Pane selection" (Q.exactlyOne matches)
-      window <- require "Pane's window" (Tmux.lookupWindow before pane.window)
+main = do
+  (created, before, after) <- Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server -> do
+    created <- Tmux.createSession server Creation.defaultSessionOptions
+      { Creation.name = Just "demo"
+      , Creation.windowName = Just "editor"
+      , Creation.process = Creation.ShellCommand "exec /bin/cat -"
+      }
+    before <- Tmux.capture server
+    Tmux.renameSession server created.session "workspace"
+    Tmux.renameWindow server created.window "api #{pid};"
+    Tmux.setPaneTitle server created.pane "editor-ready"
+    after <- Tmux.capture server
+    pure (created, before, after)
 
-      Tmux.renameSession server session.ref "workspace"
-      Tmux.renameWindow server window.ref "api #{pid};"
-      Tmux.setPaneTitle server pane.ref "editor-ready"
-      after <- Tmux.capture server
-      pure (before, after, session, window, pane)
-    case result of
-      Left problem -> rethrowIO problem
-      Right (before, after, session, window, pane) -> do
-        changedSession <- require "Fresh session"
-          (Tmux.lookupSession after session.ref)
-        changedWindow <- require "Fresh window"
-          (Tmux.lookupWindow after window.ref)
-        changedPane <- require "Fresh pane" (Tmux.lookupPane after pane.ref)
-        oldWindow <- require "Old window" (Tmux.lookupWindow before window.ref)
-        oldName <- require "Old window encoding" (Tmux.labelText oldWindow.name)
-        newName <- require "New window encoding"
-          (Tmux.labelText changedWindow.name)
-        let links =
-              [link | link <- Tmux.windowLinks after, link.window == window.ref]
-        putStrLn $ "session: " <> Text.unpack session.name <> " -> "
-          <> Text.unpack changedSession.name
-        putStrLn $ "window: " <> Text.unpack oldName <> " -> "
-          <> Text.unpack newName
-        putStrLn $ "pane title: " <> Text.unpack changedPane.title
-        putStrLn $ "physical window links: " <> show (length links)
-        putStrLn $ "same target identities: " <> show
-          (session.ref == changedSession.ref
-            && window.ref == changedWindow.ref
-            && pane.ref == changedPane.ref)
-        putStrLn $ "old snapshot values: " <> Text.unpack session.name <> ", "
-          <> Text.unpack oldName
-  _ -> die "Usage: mutate-graph SOCKET TMUX_EXECUTABLE"
-
-require :: Show problem => String -> Either problem a -> IO a
-require context = either (die . ((context <> ": ") <>) . show) pure
+  previous <- either (fail . show) pure (Tmux.lookupSession before created.session)
+  current <- either (fail . show) pure (Tmux.lookupSession after created.session)
+  window <- either (fail . show) pure (Tmux.lookupWindow after created.window)
+  pane <- either (fail . show) pure (Tmux.lookupPane after created.pane)
+  label <- either (fail . show) pure (Tmux.labelText window.name)
+  putStrLn $ "Session: " <> Text.unpack previous.name <> " -> " <> Text.unpack current.name
+  putStrLn $ "Window: " <> Text.unpack label
+  putStrLn $ "Pane title: " <> Text.unpack pane.title

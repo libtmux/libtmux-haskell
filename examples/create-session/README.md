@@ -17,13 +17,10 @@ unlinks the second index. It sends input to the split pane, waits for fresh text
 duplicate name rejection and removes its new targets.
 It reads the detached graph after closing the Server scope.
 
-Use the [private demonstration server](../../README.md), then run from the
-repository root:
+Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 create-session -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 create-session
 ```
 
 Compare with [expected.stdout](expected.stdout), then follow the README's

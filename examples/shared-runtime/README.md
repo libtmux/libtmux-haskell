@@ -16,13 +16,10 @@
 - Closes one handle; the other still captures.
 - Detached observations stay usable after their handle closes.
 
-Start the [README's demo server](../../README.md), then run from the
-repository root:
+Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 shared-runtime -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 shared-runtime
 ```
 
 Expected output: [expected.stdout](expected.stdout). Then run the README's

@@ -34,7 +34,6 @@ executable capture-graph
   ghc-options: -Wall -Werror
   build-depends:
     base >=4.22 && <4.23,
-    filepath >=1.5.4 && <1.6,
     libtmux-haskell ^>=0.0.1.0,
     text >=2.1.3 && <2.2
 ```
@@ -46,12 +45,10 @@ update the package index:
 $ cabal update
 ```
 
-Start the [demo server](../README.md) from the README, then run:
+Run the program. It starts and retires a private daemon.
 
 ```console
-$ cabal run --verbose=0 capture-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 capture-graph
 ```
 
 - Enable
@@ -61,13 +58,10 @@ $ cabal run --verbose=0 capture-graph -- \
 - The [capture guide](capture.md) covers the object graph, pure lookups and
   scope cleanup.
 
-The API is experimental. The package provides observation, rename/title
-and existing-server session creation operations, plus scoped terminal programs
-with input, rendered output and exit observation. Program needs tmux 3.8,
-Linux 6.9 process-group pidfds and the Bash features described in the
-[program guide](programs.md). First-server bootstrap, general window/pane
-commands and byte streaming remain under development.
-Check [status](status.md) before choosing it for automation.
+The API is experimental. It supports private daemons, typed snapshots and
+mutations, pane I/O and bounded control notifications. Managed terminal
+programs also require tmux 3.8, Linux 6.9 process-group pidfds and the Bash
+features in the [program guide](programs.md). See [status](status.md).
 
 Browse the [manual](https://libtmux.org/en/haskell/) and
 [`LibTmux.Server` API](https://libtmux.org/en/haskell/latest/reference/libtmux-server/)

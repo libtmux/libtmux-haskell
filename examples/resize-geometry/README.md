@@ -4,16 +4,13 @@
 absolute widths, heights and combined sizes, and prints fresh geometry. It
 checks an invalid size and preserves the original windows and sessions.
 
-Start the [private demonstration server](../../README.md), then run from the
-repository root:
+Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 resize-geometry -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 resize-geometry
 ```
 
 Compare with [expected.stdout](expected.stdout). The program removes its new
-session; follow the README's teardown for the borrowed server. The
+session before the daemon retires. The
 [resizing guide](../../docs/resizing.md) explains validation, native layout
 constraints and recovery.

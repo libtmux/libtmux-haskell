@@ -11,7 +11,7 @@ description:
   pane titles with checked references, bounded deadlines and correlated
   recovery. Scoped terminal programs provide literal input, leader exit,
   bounded rendered output and cleanup on the qualified Linux host.
-  Additional contextual commands and streams remain under development.
+  Open private daemons and observe bounded control notifications.
   See the <https://libtmux.org/en/haskell/ documentation> for installation
   and examples, and the
   <https://libtmux.org/en/haskell/latest/reference/ API reference> for public

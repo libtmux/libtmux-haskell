@@ -3,13 +3,10 @@
 [Main.hs](Main.hs) creates a session, opens a bounded control stream,
 renames its window and prints the matching event.
 
-Start the [private demonstration server](../../README.md) and run from the
-repository root.
+Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 watch-window -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 watch-window
 ```
 
 Compare with [expected.stdout](expected.stdout). The program retires the

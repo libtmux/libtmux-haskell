@@ -16,13 +16,11 @@ The program finds active panes at least 120 cells wide, then:
 The demo links one window at indices 0 and 4, so its one physical pane
 appears twice as a contextual match.
 
-Start the [demo server](../README.md) from the README, then run from a
-[checkout](../.github/CONTRIBUTING.md#toolchain):
+Run from a [checkout](../.github/CONTRIBUTING.md#toolchain). The program
+creates its own graph.
 
 ```console
-$ cabal run --verbose=0 query-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 query-graph
 ```
 
 Everything in it is pure except [`capture`](../src/LibTmux/Server.hs) and
@@ -41,11 +39,10 @@ import Data.Bifunctor (first)
 import Data.Function ((&))
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
+import LibTmux.Creation qualified as Creation
 import LibTmux.Query qualified as Q
 import LibTmux.Query.Fields qualified as F
-import System.Environment (getArgs)
 import System.Exit (die)
-import System.OsPath.Posix qualified as Path
 
 data ApplicationError
   = OperationalFailure (ExceptionWithContext Tmux.TmuxException)
@@ -60,22 +57,25 @@ selectedPanes :: Q.Query Tmux.Pane
 selectedPanes = Q.panes & Q.matching activeWide
 
 main :: IO ()
-main = getArgs >>= \case
-  [socketArgument, executableArgument] -> do
-    socket <- Path.encodeFS socketArgument
-    executable <- Path.encodeFS executableArgument
-    let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
-    acquired <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
-      snapshot <- Tmux.capture server
-      fresh <- Q.fetch server selectedPanes
-      pure (snapshot, fresh)
-    case first OperationalFailure acquired >>= uncurry report of
-      Left (OperationalFailure problem) -> rethrowIO problem
-      Left (InvalidQuery problem) -> die ("Query validation failed: " <> show problem)
-      Left (InvalidSelection problem) -> die ("Selection failed: " <> show problem)
-      Left (UnexpectedResult problem) -> die problem
-      Right linesToPrint -> mapM_ putStrLn linesToPrint
-  _ -> die "Usage: query-graph SOCKET TMUX_EXECUTABLE"
+main = do
+  width <- either (fail . show) pure (Tmux.mkDimension 120)
+  alias <- either (fail . show) pure (Tmux.mkWindowIndex 4)
+  acquired <- Tmux.tryTmux $ Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server -> do
+    created <- Tmux.createSession server Creation.defaultSessionOptions
+      { Creation.width = Just width
+      , Creation.process = Creation.ShellCommand "exec /bin/cat -"
+      }
+    Tmux.linkWindow server (Creation.WindowSlot created.session created.windowIndex)
+      (Creation.WindowSlot created.session alias)
+    snapshot <- Tmux.capture server
+    fresh <- Q.fetch server selectedPanes
+    pure (snapshot, fresh)
+  case first OperationalFailure acquired >>= uncurry report of
+    Left (OperationalFailure problem) -> rethrowIO problem
+    Left (InvalidQuery problem) -> die ("Query validation failed: " <> show problem)
+    Left (InvalidSelection problem) -> die ("Selection failed: " <> show problem)
+    Left (UnexpectedResult problem) -> die problem
+    Right linesToPrint -> mapM_ putStrLn linesToPrint
 
 report :: Tmux.Snapshot -> Either Q.QueryError [Tmux.Pane] -> Either ApplicationError [String]
 report snapshot acquired = do

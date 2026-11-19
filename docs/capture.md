@@ -6,19 +6,14 @@
 closes. The [README](../README.md) shows the
 [complete program](../examples/capture-graph/Main.hs).
 
-Start the [demo server](../README.md) from the README, then run from a
-checkout:
+The example starts a private daemon with `withOwnedServer`. Run from a checkout.
 
 ```console
-$ cabal run --verbose=0 capture-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 capture-graph
 ```
 
-To inspect your own server, pass its socket and tmux executable instead. The
-program reads that daemon; it never creates or stops it.
-
-The library needs:
+To inspect an existing daemon, pass its socket through `serverConfig` and
+open it with `withServer`. Borrowing an endpoint requires:
 
 - A trusted absolute socket path.
 - A writable pin directory on the socket's filesystem. The default is the

@@ -4,13 +4,10 @@
 The hook records the rename in a user option. The program deletes its session
 when it leaves the scope.
 
-Start the [private demonstration server](../../README.md) and run from the
-repository root.
+Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 configure-session -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 configure-session
 ```
 
 Compare with [expected.stdout](expected.stdout). Follow the

@@ -9,24 +9,15 @@
 
 # Capture a tmux graph
 
-[Main.hs](Main.hs) captures a server once, closes the handle, then reads the
-detached result with [`withServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withserver/) and
-[`capture`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capture/).
+[Main.hs](Main.hs) opens a private daemon, links one window at two indices,
+and prints both links from a detached snapshot after the daemon exits.
 
-- Filters panes by width.
-- Follows session-to-window links.
-- Reports one window linked at two indices as two appearances.
-
-Start the [README's demo server](../../README.md), then run from the
-repository root:
+Run from the repository root.
 
 ```console
-$ cabal run --verbose=0 capture-graph -- \
-    "$LIBTMUX_DEMO_DIR/s" \
-    "$(command -v tmux)"
+$ cabal run --verbose=0 capture-graph
 ```
 
-Expected output: [expected.stdout](expected.stdout). Then run the README's
-cleanup commands; the program leaves your server running.
+Compare the result with [expected.stdout](expected.stdout).
 
 More: [capture and recovery](../../docs/capture.md).

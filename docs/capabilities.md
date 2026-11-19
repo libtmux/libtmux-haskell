@@ -12,7 +12,8 @@ The client executable's release never enables a feature on an older daemon.
 An incompatible older wire protocol raises
 [`IncompatibleTmuxClientProtocol`](../src/LibTmux/Server.hs) through
 [`tryTmux`](../src/LibTmux/Server.hs). It supplies no inferred daemon release.
-The [graph example](../examples/capture-graph/Main.hs) handles this refusal.
+This diagnostic can occur when `withServer` adopts a daemon through a different
+client release.
 
 The root [manifest](../capabilities.json) uses `libtmux-capabilities/1`.
 It records this port and its admission floor, and projects only shared claim

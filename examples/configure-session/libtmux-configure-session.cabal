@@ -11,5 +11,4 @@ executable configure-session
   ghc-options: -Wall -Werror
   build-depends:
     base >=4.22 && <4.23,
-    filepath >=1.5.4 && <1.6,
     libtmux-haskell ^>=0.0.1.0
