@@ -39,6 +39,8 @@
 - Wait for present or newly observed pane text with `waitForText`. Timeout
   and pane exit are distinct and retain the last complete capture when
   available. ([#47])
+- Link, unlink and select exact session/index slots. Select a pane through
+  its slot and apply a shared named layout to the physical window. ([#12])
 
 ### Changed
 
@@ -171,3 +173,4 @@
 [#24]: https://github.com/libtmux/libtmux-haskell/issues/24
 [#25]: https://github.com/libtmux/libtmux-haskell/issues/25
 [#47]: https://github.com/libtmux/libtmux-haskell/issues/47
+[#12]: https://github.com/libtmux/libtmux-haskell/issues/12
