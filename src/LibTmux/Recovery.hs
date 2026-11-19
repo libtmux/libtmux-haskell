@@ -18,6 +18,8 @@ module LibTmux.Recovery
     -- * Program cleanup
   , ProgramRecovery, ProgramCleanupStatus (..), programRecoveries, programCleanupFailure
   , inspectProgramCleanup, resumeProgramCleanup
+    -- * Control client cleanup
+  , ControlRecovery, controlRecoveries, controlRetired, resumeControlCleanup
     -- * Operation metadata
   , Operation, Status (..), Stage (..), Outcome (..), operationStatus
   ) where
@@ -27,6 +29,7 @@ import Control.Exception.Context (ExceptionContext, getExceptionAnnotations)
 import LibTmux.Creation qualified as Creation
 import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
+import LibTmux.Internal.Control (ControlRecovery, controlRecoveries, controlRetired, resumeControlCleanup)
 import LibTmux.Internal.Creation (CreationRecovery)
 import LibTmux.Internal.Creation qualified as Create
 import LibTmux.Internal.Mutation (MutationRecovery)

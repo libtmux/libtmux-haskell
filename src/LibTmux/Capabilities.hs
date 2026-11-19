@@ -17,6 +17,7 @@ import LibTmux.Version (TmuxVersion, parseVersion)
 -- | Individually discoverable daemon operations and command flags.
 data Capability
   = ManagedPrograms | ProgramInput | RenderedScreen | ProgramExitEvents | RawBufferPasteFlag
+  | ControlNotifications
   deriving stock (Eq, Ord, Enum, Bounded, Show)
 
 -- | Refuse the operation or use an older native behavior below its floor.
@@ -69,6 +70,7 @@ registryEntry selected = case selected of
   RenderedScreen -> program "program-screen" ["readProgramScreen"] ["capture-pane", "save-buffer", "wait-for -E"]
   ProgramExitEvents -> program "program-exit" ["waitProgram", "waitProgramFor"] ["wait-for -E", "pane-died", "window-unlinked", "window-layout-changed"]
   RawBufferPasteFlag -> entry "paste-buffer-no-vis" "3.7" Fallback ["pasteBuffer", "pasteBufferWith"] ["paste-buffer -S"]
+  ControlNotifications -> entry "control-notifications" "3.2" Refuse ["withControl"] ["attach-session -f"]
   where
     program key = entry key "3.8" Refuse
     entry key minimumRelease policy publicApis nativeCommands =
