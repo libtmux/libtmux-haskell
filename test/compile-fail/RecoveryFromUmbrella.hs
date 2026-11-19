@@ -2,4 +2,5 @@ module RecoveryFromUmbrella where
 
 import LibTmux qualified as Tmux
 
-inspect = Tmux.inspectCleanup
+available :: Bool
+available = Tmux.inspectCleanup `seq` True
