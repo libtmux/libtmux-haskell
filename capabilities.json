@@ -1,10 +1,7 @@
 {
   "schema": "libtmux-capabilities/1",
-  "capabilities": [
-    {"id": "program-execution", "since": "3.8", "handling": "refuse", "apis": ["withProgram", "runProgram", "terminateProgram"], "commands": ["new-session", "wait-for -E"]},
-    {"id": "program-input", "since": "3.8", "handling": "refuse", "apis": ["sendProgramInput"], "commands": ["send-keys -H", "wait-for -E"]},
-    {"id": "program-screen", "since": "3.8", "handling": "refuse", "apis": ["readProgramScreen"], "commands": ["capture-pane", "save-buffer", "wait-for -E"]},
-    {"id": "program-exit", "since": "3.8", "handling": "refuse", "apis": ["waitProgram", "waitProgramFor"], "commands": ["wait-for -E", "pane-died", "window-unlinked", "window-layout-changed"]},
-    {"id": "paste-buffer-no-vis", "since": "3.7", "handling": "fallback", "apis": ["pasteBuffer", "pasteBufferWith"], "commands": ["paste-buffer -S"]}
-  ]
+  "port": "haskell",
+  "floor": {"minimum": "3.3a"},
+  "capabilities": [],
+  "workarounds": []
 }

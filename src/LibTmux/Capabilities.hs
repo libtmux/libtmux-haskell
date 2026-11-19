@@ -11,7 +11,8 @@ module LibTmux.Capabilities
 import Control.Exception (Exception)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import LibTmux.Version (TmuxVersion, parseVersion, renderVersion)
+import Data.Maybe (mapMaybe)
+import LibTmux.Version (TmuxVersion, parseVersion)
 
 -- | Individually discoverable daemon operations and command flags.
 data Capability
@@ -59,7 +60,10 @@ capabilityRegistry = map capabilityInfo [minBound .. maxBound]
 
 -- | The authoritative requirement for an operation.
 capabilityInfo :: Capability -> CapabilityInfo
-capabilityInfo selected = case selected of
+capabilityInfo = fst . registryEntry
+
+registryEntry :: Capability -> (CapabilityInfo, Maybe Text)
+registryEntry selected = case selected of
   ManagedPrograms -> program "program-execution" ["withProgram", "runProgram", "terminateProgram"] ["new-session", "wait-for -E"]
   ProgramInput -> program "program-input" ["sendProgramInput"] ["send-keys -H", "wait-for -E"]
   RenderedScreen -> program "program-screen" ["readProgramScreen"] ["capture-pane", "save-buffer", "wait-for -E"]
@@ -67,7 +71,8 @@ capabilityInfo selected = case selected of
   RawBufferPasteFlag -> entry "paste-buffer-no-vis" "3.7" Fallback ["pasteBuffer", "pasteBufferWith"] ["paste-buffer -S"]
   where
     program key = entry key "3.8" Refuse
-    entry key minimumRelease = CapabilityInfo selected key (either (error . show) id (parseVersion minimumRelease))
+    entry key minimumRelease policy publicApis nativeCommands =
+      (CapabilityInfo selected key (either (error . show) id (parseVersion minimumRelease)) policy publicApis nativeCommands, Nothing)
 
 -- | Whether this complete operation is available. This is a version check;
 -- host process-group support and endpoint liveness are checked separately.
@@ -80,18 +85,14 @@ requireCapability available selected
   | supports available selected = Right ()
   | otherwise = Left (CapabilityUnavailable selected (daemonVersion available))
 
--- | Deterministic metadata generated from the same table as the runtime gates.
+-- | The shared @libtmux-capabilities/1@ projection of the runtime registry.
+-- Its vocabulary currently names none of this port's gated operations, so
+-- both claim arrays are empty. 'capabilityRegistry' still reports every
+-- Haskell operation and 'supports' checks the connected daemon's release.
 -- The unit suite checks the packaged @capabilities.json@ against this value.
 capabilityManifest :: Text
-capabilityManifest = "{\n  \"schema\": \"libtmux-capabilities/1\",\n  \"capabilities\": [\n"
-  <> Text.intercalate ",\n" (map entry capabilityRegistry) <> "\n  ]\n}\n"
+capabilityManifest = "{\n  \"schema\": \"libtmux-capabilities/1\",\n  \"port\": \"haskell\",\n"
+  <> "  \"floor\": {\"minimum\": \"3.3a\"},\n  \"capabilities\": ["
+  <> Text.intercalate ", " shared <> "],\n  \"workarounds\": []\n}\n"
   where
-    quote value = "\"" <> value <> "\""
-    array values = "[" <> Text.intercalate ", " (map quote values) <> "]"
-    handlingName Refuse = "refuse"
-    handlingName Fallback = "fallback"
-    entry info = "    {\"id\": " <> quote info.identifier
-      <> ", \"since\": " <> quote (renderVersion info.since)
-      <> ", \"handling\": " <> quote (handlingName info.handling)
-      <> ", \"apis\": " <> array info.apis
-      <> ", \"commands\": " <> array info.commands <> "}"
+    shared = mapMaybe (snd . registryEntry . (.capability)) capabilityRegistry

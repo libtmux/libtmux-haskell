@@ -104,7 +104,8 @@ borrowed resources preserved: True
 the Server's pinned socket. The client executable's release does not enable an
 older daemon. `supports` and `requireCapability` use the same
 [`capabilityRegistry`](../src/LibTmux/Capabilities.hs) as each operation.
-[`capabilities.json`](../capabilities.json) is checked against that table.
+The [capability guide](capabilities.md) explains the separate shared manifest
+and the older-daemon protocol refusal.
 
 The complete Program operations require released tmux 3.8. Older versions,
 `next-3.8` and 3.8 release candidates refuse before application effects. Each

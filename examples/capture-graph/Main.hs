@@ -4,6 +4,7 @@
 -- | Capture once, then navigate detached values after the Server scope closes.
 module Main (main) where
 
+import Control.Exception (ExceptionWithContext (..), rethrowIO)
 import Control.Monad (forM_)
 import Data.List (intercalate)
 import Data.Text qualified as Text
@@ -20,7 +21,11 @@ main = do
       socket <- Path.encodeFS socketArgument
       executable <- Path.encodeFS executableArgument
       let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
-      snapshot <- Tmux.withServer config Tmux.capture
+      snapshot <- Tmux.tryTmux (Tmux.withServer config Tmux.capture) >>= \case
+        Left (ExceptionWithContext _ Tmux.IncompatibleTmuxClientProtocol) ->
+          die "The tmux client cannot query this daemon's protocol"
+        Left problem -> rethrowIO problem
+        Right captured -> pure captured
 
       let activeWidePanes =
             [ pane

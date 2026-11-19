@@ -6,6 +6,11 @@ Requirements:
   [package manifest](../libtmux-haskell.cabal).
 - Linux x86_64; see [host requirements](#native-backend-host-requirements).
 - tmux 3.3a or newer.
+
+Opening a Server refuses older observed releases before entering the callback.
+An older daemon that rejects the selected client's wire protocol raises
+`IncompatibleTmuxClientProtocol`; its release remains unknown to that client.
+See [capability discovery](capabilities.md).
 - To reproduce the tested toolchain, see
   [contributor setup](../.github/CONTRIBUTING.md#toolchain).
 

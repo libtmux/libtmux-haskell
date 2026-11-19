@@ -205,13 +205,80 @@ jobs:
           LC_ALL: C
         run: cabal test integration --offline --test-show-details=direct --test-options='--pattern=/scalar/||/lossless/||/graph/||/record/||/metadata/||/snapshot/||/control/ +RTS -N1 -RTS'
 
+  floor:
+    name: old daemon refusal (${{ matrix.daemon }})
+    needs: checks
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - daemon: '3.0a'
+            client: '3.3a'
+          - daemon: '3.1c'
+            client: '3.3a'
+          - daemon: '3.2a'
+            client: '3.2a'
+          - daemon: '3.3'
+            client: '3.3'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
+        id: haskell
+        with:
+          ghc-version: '9.14.1'
+          cabal-version: '3.18.2.0'
+          enable-stack: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.haskell.outputs.cabal-store }}
+            ~/.cabal/packages
+          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
+          restore-keys: haskell-ubuntu26-x64-9.14.1-3.18.2.0-
+      - name: Build released daemon
+        id: daemon
+        uses: libtmux/.github/actions/build-tmux@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          ref: ${{ matrix.daemon }}
+          configure-args: --disable-utf8proc
+      - name: Build the compatible probing client
+        id: client
+        if: matrix.client != matrix.daemon
+        uses: libtmux/.github/actions/build-tmux@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          ref: ${{ matrix.client }}
+          configure-args: --disable-utf8proc
+      - name: Update the Cabal package index
+        run: cabal update
+      - name: Build refusal dependencies
+        run: cabal build test:floor --only-dependencies
+      - name: Build the public refusal consumer
+        run: cabal build test:floor --offline
+      - name: Refuse the actual daemon before effects
+        env:
+          DAEMON: ${{ steps.daemon.outputs.binary }}
+          CLIENT: ${{ steps.client.outputs.binary || steps.daemon.outputs.binary }}
+          RELEASE: ${{ matrix.daemon }}
+          LC_ALL: C.UTF-8
+        run: >-
+          python3 scripts/check_floor/check_floor.py
+          --daemon "$DAEMON"
+          --client "$CLIENT"
+          --expect "$RELEASE"
+          --consumer "$(cabal list-bin test:floor --offline)"
+
   required:
     if: always()
-    needs: [checks, tmux]
+    needs: [checks, tmux, floor]
     runs-on: ubuntu-26.04
     steps:
       - name: Require every planned job
         env:
           CHECKS: ${{ needs.checks.result }}
           TMUX: ${{ needs.tmux.result }}
-        run: test "$CHECKS $TMUX" = "success success"
+          FLOOR: ${{ needs.floor.result }}
+        run: test "$CHECKS $TMUX $FLOOR" = "success success success"

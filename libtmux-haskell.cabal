@@ -35,6 +35,7 @@ extra-doc-files:
   docs/programs.md
   docs/buffers.md
   docs/options.md
+  docs/capabilities.md
   docs/mutations.md
   docs/fixtures.md
   docs/performance.md
@@ -106,6 +107,9 @@ extra-source-files:
   scripts/check_docs/README.md
   scripts/check_docs/check_docs.py
   scripts/check_docs/tests/test_check_docs.py
+  scripts/check_floor/README.md
+  scripts/check_floor/check_floor.py
+  scripts/check_floor/tests/test_check_floor.py
   scripts/prepare_haddock/README.md
   scripts/prepare_haddock/assets/responsive.css
   scripts/prepare_haddock/assets/source-popover.js
@@ -261,6 +265,20 @@ test-suite unit
     tasty-hunit >=0.10.2 && <0.11,
     tasty-quickcheck >=0.11.1 && <0.12,
     QuickCheck >=2.19 && <2.20,
+    text >=2.1.3 && <2.2
+
+test-suite floor
+  import: modern
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test/floor
+  main-is: Main.hs
+  ghc-options: -threaded
+  if !os(linux)
+    buildable: False
+  build-depends:
+    libtmux-haskell,
+    bytestring >=0.12.2 && <0.13,
+    os-string >=2.0.8 && <2.1,
     text >=2.1.3 && <2.2
 
 test-suite integration
