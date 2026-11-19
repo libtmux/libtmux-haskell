@@ -8,6 +8,7 @@
 module LibTmux.Internal.Capture
   ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
   , captureVersionWith, capturePaneWith, waitForPaneText, TextObservation (..)
+  , captureEnvironmentWith
   , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
   ) where
 
@@ -27,8 +28,9 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
-import LibTmux.Id (PaneId)
-import LibTmux.Internal.Command (PaneCaptureReply (CaptureRejected))
+import LibTmux.Environment (EnvironmentVisibility (..))
+import LibTmux.Id (PaneId, SessionId)
+import LibTmux.Internal.Command (ControlDataReply (ControlData, ControlDataRejected))
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Graph qualified as Session (Session (..))
 import LibTmux.Internal.Graph qualified as Window (Window (..))
@@ -86,7 +88,7 @@ captureVersionWith hooks runtime client executable duration = withinDeadline run
   owned runtime receipt (R.readServerVersionWith hooks left runtime client executable R.ScalarRead)
 
 capturePaneWith :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> PaneId
-  -> PaneCaptureOptions -> IO (Word64, Word64, PaneCaptureReply)
+  -> PaneCaptureOptions -> IO (Word64, Word64, ControlDataReply)
 capturePaneWith runtime client executable duration pane options =
   withinDeadline runtime client duration $ \receipt deadline -> do
     left <- remaining deadline
@@ -100,7 +102,7 @@ data TextObservation
 -- | Acquire the visible evidence and liveness through the pinned daemon.
 -- The complete wait shares one monotonic deadline and one active read owner.
 waitForPaneText :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> PaneId
-  -> PaneCaptureOptions -> (PaneCaptureReply -> IO Text) -> Text -> Int -> IO TextObservation
+  -> PaneCaptureOptions -> (ControlDataReply -> IO Text) -> Text -> Int -> IO TextObservation
 waitForPaneText runtime client executable duration pane options decode needle initialCount = do
   latest <- newIORef Nothing
   let observe = do
@@ -116,7 +118,7 @@ waitForPaneText runtime client executable duration pane options decode needle in
       reply <- nextWaitRead runtime receipt deadline $ \left ->
         R.readPaneCaptureWith P.defaultHooks left runtime client executable pane options
       case reply of
-        CaptureRejected _ -> do
+        ControlDataRejected _ -> do
           alive <- paneAlive receipt deadline
           if alive then Just <$> decode reply else pure Nothing
         _ -> do
@@ -139,6 +141,27 @@ nextWaitRead runtime receipt deadline start = do
   value <- owned runtime receipt (start left)
   writeIORef receipt Nothing
   pure value
+
+-- | Read an ordinary entry, or a hidden entry when tmux acknowledges the
+-- name but emits no ordinary value. Both reads share the same deadline.
+captureEnvironmentWith :: R.Runtime -> R.ServerHandle -> ByteString -> Int
+  -> Maybe SessionId -> ByteString -> IO (Word64, Word64, (EnvironmentVisibility, ControlDataReply))
+captureEnvironmentWith runtime client executable duration scope name =
+  withinDeadline runtime client duration $ \receipt deadline -> do
+    let readEntry visibility = do
+          left <- remaining deadline
+          owned runtime receipt (R.readEnvironmentWith P.defaultHooks left runtime client executable scope visibility name)
+        observe retries = do
+          visible <- readEntry Visible
+          case visible of
+            ControlData bytes | Bytes.null bytes -> do
+              hidden <- readEntry Hidden
+              case hidden of
+                ControlData payload | Bytes.null payload && retries > 0 -> observe (retries - 1)
+                ControlData payload | Bytes.null payload -> throwIO CaptureChanged
+                _ -> pure (Hidden, hidden)
+            _ -> pure (Visible, visible)
+    observe (1 :: Int)
 
 captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do

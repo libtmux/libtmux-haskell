@@ -8,7 +8,8 @@ module LibTmux.Internal.Command
   ( Mutation (..), ProgramCommand (..), ProgramIdentity (..), ArgumentError (..), compileMutation
   , compileProgramMutation, decodeProgramReply, NamedLayout (..)
   , compileKeyProbe, decodeKeyProbe
-  , PaneCaptureReply (..), compilePaneCapture, decodePaneCapture
+  , ControlDataReply (..), compilePaneCapture, decodeControlData
+  , EnvironmentChange (..), compileEnvironmentRead
   , MutationReply (..), ReplyError (..), decodeControlReply
   , SessionReceipt (..), SessionCreationReply (..)
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
@@ -28,6 +29,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NonEmpty
 import LibTmux.Creation (SessionOptions (..), InitialProcess (..), defaultSessionOptions)
 import LibTmux.Creation qualified as Creation
+import LibTmux.Environment (EnvironmentVisibility (..))
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Frame qualified as Frame
@@ -55,7 +57,19 @@ data Mutation
   | SelectWindowLink !Id.SessionId !Value.WindowIndex
   | SelectExactPane !Id.SessionId !Value.WindowIndex !Id.PaneId
   | SelectLayout !Id.SessionId !Value.WindowIndex !NamedLayout
+  | ChangeEnvironment !(Maybe Id.SessionId) !ByteString !EnvironmentChange
   deriving stock (Eq, Show)
+
+data EnvironmentChange
+  = SetVariable !EnvironmentVisibility !ByteString
+  | MarkVariableRemoved
+  | UnsetVariable
+  deriving stock (Eq)
+
+instance Show EnvironmentChange where
+  show (SetVariable visibility _) = "SetVariable " <> show visibility
+  show MarkVariableRemoved = "MarkVariableRemoved"
+  show UnsetVariable = "UnsetVariable"
 
 -- | Layout names shared by tmux 3.3a and 3.8.
 data NamedLayout = EvenHorizontal | EvenVertical | MainHorizontal | MainVertical | Tiled
@@ -363,18 +377,18 @@ decodeControlReply exit output errors
           Right (Rejected (Bytes.copy (diagnostic <> tailBytes)))
         Nothing -> Left UnexpectedReply
 
-data PaneCaptureReply
-  = CapturedPaneText !ByteString
-  | CaptureExceedsLimit
-  | CaptureHookFailed !ByteString
-  | CaptureRejected !ByteString
+data ControlDataReply
+  = ControlData !ByteString
+  | ControlDataExceedsLimit
+  | ControlDataHookFailed !ByteString
+  | ControlDataRejected !ByteString
   deriving stock (Eq, Show)
 
-instance NFData PaneCaptureReply where
-  rnf (CapturedPaneText bytes) = rnf bytes
-  rnf CaptureExceedsLimit = ()
-  rnf (CaptureHookFailed diagnostic) = rnf diagnostic
-  rnf (CaptureRejected diagnostic) = rnf diagnostic
+instance NFData ControlDataReply where
+  rnf (ControlData bytes) = rnf bytes
+  rnf ControlDataExceedsLimit = ()
+  rnf (ControlDataHookFailed diagnostic) = rnf diagnostic
+  rnf (ControlDataRejected diagnostic) = rnf diagnostic
 
 compilePaneCapture :: Id.PaneId -> PaneCaptureOptions -> Either ArgumentError [ByteString]
 compilePaneCapture pane options = do
@@ -389,30 +403,30 @@ compilePaneCapture pane options = do
   pure (["capture-pane", "-p", "-t", Utf8.encodeUtf8 (Id.renderPaneId pane)] <> selection
     <> ["-e" | options.rendering == AnsiStyled])
 
--- Capture writes its rows within the primary command's guard. After-hooks
--- have separate guards. Repeated matches with this command's stamp make the
--- payload ambiguous, including when the pane contains a guard-shaped line.
-decodePaneCapture :: Int -> Maybe Int -> ByteString -> ByteString -> Either ReplyError PaneCaptureReply
-decodePaneCapture limit exit output errors
+-- Data belongs to the primary command's guard. After-hooks have separate
+-- guards. A duplicate matching boundary makes the reply ambiguous, including
+-- when the payload contains a guard-shaped line.
+decodeControlData :: Int -> Maybe Int -> ByteString -> ByteString -> Either ReplyError ControlDataReply
+decodeControlData limit exit output errors
   | Bytes.length output > 1048576 = Left ReplyTooLarge
   | not (Bytes.null errors) = Left UnexpectedReply
   | otherwise = do
       packet <- maybe (Left UnexpectedReply) Right (stripControlExit output)
       (header, body) <- maybe (Left UnexpectedReply) Right (boundedLine 64 packet)
       stamp <- guardStamp header
-      (success, count) <- paneBoundary stamp body
+      (success, count) <- payloadBoundary stamp body
       case (success, exit) of
         (True, Just 0)
-          | count > limit -> Right CaptureExceedsLimit
-          | otherwise -> Right (CapturedPaneText (Bytes.copy (Bytes.take count body)))
+          | count > limit -> Right ControlDataExceedsLimit
+          | otherwise -> Right (ControlData (Bytes.copy (Bytes.take count body)))
         (True, Just 1)
           | let following = Bytes.drop (count + Bytes.length stamp + Bytes.length "%end \n") body
-          , not (Bytes.null following) -> Right (CaptureHookFailed (Bytes.copy following))
-        (False, Just 1) -> Right (CaptureRejected (Bytes.copy (Bytes.take count body)))
+          , not (Bytes.null following) -> Right (ControlDataHookFailed (Bytes.copy following))
+        (False, Just 1) -> Right (ControlDataRejected (Bytes.copy (Bytes.take count body)))
         _ -> Left UnexpectedReply
 
-paneBoundary :: ByteString -> ByteString -> Either ReplyError (Bool, Int)
-paneBoundary stamp = scan 0 Nothing
+payloadBoundary :: ByteString -> ByteString -> Either ReplyError (Bool, Int)
+payloadBoundary stamp = scan 0 Nothing
   where
     ended = "%end " <> stamp
     failed = "%error " <> stamp
@@ -497,6 +511,13 @@ compileMutation = \case
           MainVertical -> "main-vertical"
           Tiled -> "tiled"
     pure ["select-layout", "-t", slot, "--", name]
+  ChangeEnvironment scope name change -> do
+    validateEnvironmentName name
+    let (flags, operands) = case change of
+          SetVariable visibility value -> (visibilityFlag visibility, [name, value])
+          MarkVariableRemoved -> (["-r"], [name])
+          UnsetVariable -> (["-u"], [name])
+    literalArguments "environment" (["set-environment"] <> environmentScope scope <> flags <> ["--"]) operands
   SendPaneText ident text ->
     literalArguments "pane.input" (target "send-keys" (Id.renderPaneId ident) <> ["-l", "--"])
       [Utf8.encodeUtf8 text]
@@ -614,6 +635,25 @@ checkProgramCost values = do
   mapM_ (\value -> when (Bytes.elem 0 value) (Left (NulOperand "program"))) values
   when (sum (map ((+ 1) . toInteger . Bytes.length) values) > commandLimitBytes)
     (Left (EncodedCommandTooLarge "program"))
+
+compileEnvironmentRead :: Maybe Id.SessionId -> EnvironmentVisibility -> ByteString -> Either ArgumentError [ByteString]
+compileEnvironmentRead scope visibility name = do
+  validateEnvironmentName name
+  literalArguments "environment.name"
+    (["show-environment"] <> environmentScope scope <> visibilityFlag visibility <> ["--"]) [name]
+
+environmentScope :: Maybe Id.SessionId -> [ByteString]
+environmentScope Nothing = ["-g"]
+environmentScope (Just session) = ["-t", creationSessionTarget session]
+
+visibilityFlag :: EnvironmentVisibility -> [ByteString]
+visibilityFlag Visible = []
+visibilityFlag Hidden = ["-h"]
+
+validateEnvironmentName :: ByteString -> Either ArgumentError ()
+validateEnvironmentName name =
+  when (Bytes.null name || Bytes.elem 0 name || Bytes.elem 61 name)
+    (Left (InvalidOperand "environment.name" "expected a nonempty name without NUL or '='"))
 
 literalArguments :: Text -> [ByteString] -> [ByteString] -> Either ArgumentError [ByteString]
 literalArguments field prefix operands = do

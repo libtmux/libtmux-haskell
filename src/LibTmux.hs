@@ -17,6 +17,7 @@ module LibTmux
   , module LibTmux.Server
   , module LibTmux.Program
   , module LibTmux.Snapshot
+  , module LibTmux.Environment
   , module LibTmux.Id
   , module LibTmux.Pane
   , module LibTmux.Value
@@ -25,6 +26,7 @@ module LibTmux
 
 import LibTmux.Capabilities
 import LibTmux.Creation
+import LibTmux.Environment
 import LibTmux.Id
 import LibTmux.Pane
 import LibTmux.Server

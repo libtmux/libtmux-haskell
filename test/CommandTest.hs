@@ -82,22 +82,22 @@ tests = testGroup "typed mutation arguments"
           footer = "%exit\n"
           payload = "caf\ESC[31m" <> Bytes.pack [195, 169] <> "\n\n%end 12 34 0\n\n"
           hook = "%begin 1794000000 28 0\nhook output\n%end 1794000000 28 0\n"
-          decode limit body = C.decodePaneCapture limit (Just 0) (begin <> body <> footer) ""
-      decode 64 (payload <> ended <> hook) @?= Right (C.CapturedPaneText payload)
-      decode 4 (payload <> ended) @?= Right C.CaptureExceedsLimit
+          decode limit body = C.decodeControlData limit (Just 0) (begin <> body <> footer) ""
+      decode 64 (payload <> ended <> hook) @?= Right (C.ControlData payload)
+      decode 4 (payload <> ended) @?= Right C.ControlDataExceedsLimit
       decode 128 (ended <> payload <> ended) @?= Left C.UnexpectedReply
       decode 128 (failed <> payload <> ended) @?= Left C.UnexpectedReply
-      C.decodePaneCapture 64 (Just 1) (begin <> "can't find pane: %5\n" <> failed <> footer) ""
-        @?= Right (C.CaptureRejected "can't find pane: %5\n")
-      C.decodePaneCapture 64 (Just 0) (begin <> payload <> ended) ""
+      C.decodeControlData 64 (Just 1) (begin <> "can't find pane: %5\n" <> failed <> footer) ""
+        @?= Right (C.ControlDataRejected "can't find pane: %5\n")
+      C.decodeControlData 64 (Just 0) (begin <> payload <> ended) ""
         @?= Left C.UnexpectedReply
 
   , testCase "a failed capture hook leaves a known native outcome" $ do
       let primary = "%begin 1794000000 27 0\nREADY\n%end 1794000000 27 0\n"
           failedHook = "%begin 1794000000 28 0\ndelay invalid\n%error 1794000000 28 0\n"
-      C.decodePaneCapture 64 (Just 1) (primary <> failedHook <> "%exit\n") ""
-        @?= Right (C.CaptureHookFailed failedHook)
-      C.decodePaneCapture 64 (Just 1) (primary <> "%exit\n") "" @?= Left C.UnexpectedReply
+      C.decodeControlData 64 (Just 1) (primary <> failedHook <> "%exit\n") ""
+        @?= Right (C.ControlDataHookFailed failedHook)
+      C.decodeControlData 64 (Just 1) (primary <> "%exit\n") "" @?= Left C.UnexpectedReply
   , testCase "closed control replies separate primary and following failures" $ do
       let begin = "%begin 1794000000 27 0\n"
           ended = "%end 1794000000 27 0\n"

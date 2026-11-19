@@ -357,6 +357,49 @@ tests = testGroup "public mutation API"
                       _ -> assertFailure "cancelled text wait lost its exact capture owner"
                   Right _ -> assertFailure "cancelled text wait returned a result"
 
+  , testCase "observes exact environment bytes and distinguishes empty, removed and absent" $
+      Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+        snapshot <- Tmux.capture server
+        session <- one (Tmux.sessions snapshot)
+        let name = "-LIBTMUX_EXACT_ENVIRONMENT"
+            value = "caf" <> Bytes.pack [255] <> "\nvalue=\"#{pid};\\\n"
+            global = Tmux.GlobalEnvironment
+            local = Tmux.SessionEnvironment session.ref
+            readEntry scope = Tmux.getEnvironment server scope name
+            expect label expected action = do
+              actual <- action
+              assertBool label (actual == expected)
+        expect "unknown global variable was present" Nothing (readEntry global)
+        Tmux.setEnvironment server global name Tmux.Visible ""
+        expect "global empty value was lost" (Just (Tmux.EnvironmentValue Tmux.Visible "")) (readEntry global)
+        expect "session lookup implicitly read the global entry" Nothing (readEntry local)
+
+        configured fixture ["set-hook", "-g", "after-show-environment", "display-message -p environment-hook-noise"]
+        Tmux.setEnvironment server local name Tmux.Hidden value
+        expect "hidden value bytes changed" (Just (Tmux.EnvironmentValue Tmux.Hidden value)) (readEntry local)
+        Tmux.markEnvironmentRemoved server local name
+        expect "the removal marker lost hidden visibility" (Just (Tmux.EnvironmentRemoved Tmux.Hidden)) (readEntry local)
+        Tmux.unsetEnvironment server local name
+        expect "unset left a session entry" Nothing (readEntry local)
+        Tmux.setEnvironment server local name Tmux.Visible "literal #{pid};"
+        expect "variable value was formatted or lost its semicolon"
+          (Just (Tmux.EnvironmentValue Tmux.Visible "literal #{pid};")) (readEntry local)
+        Tmux.unsetEnvironment server global name
+        expect "global unset left an entry" Nothing (readEntry global)
+        expect "global unset changed the session entry"
+          (Just (Tmux.EnvironmentValue Tmux.Visible "literal #{pid};")) (readEntry local)
+
+        Tmux.tryTmux (Tmux.setEnvironment server local "bad=name" Tmux.Visible "ignored") >>= \case
+          Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument _)) -> pure ()
+          _ -> assertFailure "invalid environment name reached tmux"
+        configured fixture ["new-session", "-d", "-s", "temporary-environment", "/bin/cat", "-"]
+        expanded <- Tmux.capture server
+        temporary <- one [row | row <- Tmux.sessions expanded, row.name == "temporary-environment"]
+        Tmux.killSession server temporary.ref
+        Tmux.tryTmux (readEntry (Tmux.SessionEnvironment temporary.ref)) >>= \case
+          Left (ExceptionWithContext _ (Tmux.EnvironmentReadRejected _)) -> pure ()
+          _ -> assertFailure "missing session was reported as absent variable"
+
   , testCase "refuses foreign and offline references before changing the daemon" $
       Fixture.withFixture $ \fixture -> do
         configured fixture ["rename-window", "-t", "@0", "original-window"]

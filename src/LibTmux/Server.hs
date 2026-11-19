@@ -32,6 +32,9 @@ module LibTmux.Server
   , withProgram, runProgram
     -- * Rename and title
   , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
+    -- * Environment
+  , getEnvironment, setEnvironment, setEnvironmentWith
+  , markEnvironmentRemoved, markEnvironmentRemovedWith, unsetEnvironment, unsetEnvironmentWith
     -- * Window links, selection and layout
   , linkWindow, linkWindowWith, unlinkWindow, unlinkWindowWith
   , selectWindowLink, selectWindowLinkWith, selectExactPane, selectExactPaneWith
@@ -79,6 +82,8 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
 import Data.Time.Clock (NominalDiffTime)
 import Data.Type.Coercion (coerceWith, sym)
+import LibTmux.Environment (EnvironmentEntry (..), EnvironmentScope (..), EnvironmentVisibility)
+import LibTmux.Id (SessionId)
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
@@ -368,6 +373,73 @@ setPaneTitleWith :: MutationOptions -> Server -> PaneRef -> Text.Text -> IO ()
 setPaneTitleWith options server (G.PaneRef generation ident) label =
   mutate options server generation (Command.SetPaneTitle ident label)
 
+-- | Look up one name in the selected tmux environment. A removal marker and
+-- an empty value are present entries. A missing name returns 'Nothing'. A
+-- missing session raises 'EnvironmentReadRejected'. Bytes stay literal.
+-- The Server capture deadline covers ordinary and hidden value observations.
+getEnvironment :: Server -> EnvironmentScope -> ByteString -> IO (Maybe EnvironmentEntry)
+getEnvironment server@(Server runtime handle executable duration _) scope name = operational $ do
+  let (generation, target) = environmentTarget server scope
+  checkTarget server generation
+  (_, _, (visibility, reply)) <- catchNoPropagate
+    (C.captureEnvironmentWith runtime handle executable duration target name) $
+      \original@(ExceptionWithContext context problem) -> case problem of
+        R.InvalidCommandOperands invalid ->
+          rethrowIO (ExceptionWithContext context (InvalidConfiguration (Text.pack (show invalid))))
+        _ -> rethrowIO original
+  case reply of
+    Command.ControlDataRejected diagnostic
+      | diagnostic == "unknown variable: " <> name <> "\n" -> pure Nothing
+      | otherwise -> throwIO (EnvironmentReadRejected diagnostic)
+    Command.ControlDataHookFailed diagnostic -> throwIO (EnvironmentReadHookFailed diagnostic)
+    Command.ControlDataExceedsLimit -> throwIO (InvalidObservation "environment response exceeded its byte limit")
+    Command.ControlData bytes ->
+      case Bytes.stripSuffix "\n" bytes of
+        Just row | row == "-" <> name -> pure (Just (EnvironmentRemoved visibility))
+        Just row | Just value <- Bytes.stripPrefix (name <> "=") row ->
+          pure (Just (EnvironmentValue visibility (Bytes.copy value)))
+        _ -> throwIO (InvalidObservation "environment reply did not contain the named entry")
+
+-- | Set a literal value with explicit visibility. The name cannot be empty
+-- or contain NUL or @=@. Values cannot contain NUL. An empty value is valid.
+setEnvironment :: Server -> EnvironmentScope -> ByteString -> EnvironmentVisibility -> ByteString -> IO ()
+setEnvironment = setEnvironmentWith defaultMutationOptions
+
+-- | 'setEnvironment' with an explicit deadline.
+setEnvironmentWith :: MutationOptions -> Server -> EnvironmentScope -> ByteString
+  -> EnvironmentVisibility -> ByteString -> IO ()
+setEnvironmentWith options server scope name visibility value =
+  changeEnvironment options server scope name (Command.SetVariable visibility value)
+
+-- | Store a removal marker. tmux preserves the visibility of an existing
+-- entry and uses visible for a new marker.
+markEnvironmentRemoved :: Server -> EnvironmentScope -> ByteString -> IO ()
+markEnvironmentRemoved = markEnvironmentRemovedWith defaultMutationOptions
+
+-- | 'markEnvironmentRemoved' with an explicit deadline.
+markEnvironmentRemovedWith :: MutationOptions -> Server -> EnvironmentScope -> ByteString -> IO ()
+markEnvironmentRemovedWith options server scope name =
+  changeEnvironment options server scope name Command.MarkVariableRemoved
+
+-- | Erase an entry from the selected table. Unsetting a session entry lets
+-- later processes inherit the global value, when one exists.
+unsetEnvironment :: Server -> EnvironmentScope -> ByteString -> IO ()
+unsetEnvironment = unsetEnvironmentWith defaultMutationOptions
+
+-- | 'unsetEnvironment' with an explicit deadline.
+unsetEnvironmentWith :: MutationOptions -> Server -> EnvironmentScope -> ByteString -> IO ()
+unsetEnvironmentWith options server scope name =
+  changeEnvironment options server scope name Command.UnsetVariable
+
+changeEnvironment :: MutationOptions -> Server -> EnvironmentScope -> ByteString -> Command.EnvironmentChange -> IO ()
+changeEnvironment options server scope name change =
+  let (generation, target) = environmentTarget server scope
+  in mutate options server generation (Command.ChangeEnvironment target name change)
+
+environmentTarget :: Server -> EnvironmentScope -> (Generation, Maybe SessionId)
+environmentTarget server GlobalEnvironment = (serverGeneration server, Nothing)
+environmentTarget _ (SessionEnvironment (G.SessionRef generation session)) = (generation, Just session)
+
 -- | Link the current occupant of the first slot at the second slot. Both
 -- slots belong to this Server generation. The destination must be vacant.
 -- Existing links remain and the new link starts unselected.
@@ -509,12 +581,12 @@ paneCaptureErrors options action = catchNoPropagate action $ \original@(Exceptio
       rethrowIO (ExceptionWithContext context (PaneTextTooLarge options.byteLimit))
     _ -> rethrowIO original
 
-decodePaneText :: PaneCaptureOptions -> Command.PaneCaptureReply -> IO Text.Text
+decodePaneText :: PaneCaptureOptions -> Command.ControlDataReply -> IO Text.Text
 decodePaneText options = \case
-  Command.CaptureExceedsLimit -> throwIO (PaneTextTooLarge options.byteLimit)
-  Command.CaptureHookFailed diagnostic -> throwIO (PaneCaptureHookFailed diagnostic)
-  Command.CaptureRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
-  Command.CapturedPaneText bytes ->
+  Command.ControlDataExceedsLimit -> throwIO (PaneTextTooLarge options.byteLimit)
+  Command.ControlDataHookFailed diagnostic -> throwIO (PaneCaptureHookFailed diagnostic)
+  Command.ControlDataRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
+  Command.ControlData bytes ->
     either (const (throwIO (InvalidObservation "pane text is not valid UTF-8")))
       pure (Utf8.decodeUtf8' bytes)
 
