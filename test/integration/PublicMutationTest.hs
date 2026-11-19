@@ -223,10 +223,11 @@ tests = testGroup "public mutation API"
               _ -> assertFailure "expected a pane text match"
         baseline <- readText
         let transition action = do
-              run ["set-hook", "-g", "after-capture-pane", "wait-for -S text-wait-read"]
+              let captured = "text-wait-read-" <> Text.unpack action
+              run ["set-hook", "-g", "after-capture-pane", "wait-for -S " <> captured]
               flip finally (run ["set-hook", "-gu", "after-capture-pane"]) $
                 withAsync (waitText fresh) $ \worker -> do
-                  await "text-wait-read"
+                  await captured
                   update action
                   bounded (wait worker)
             fresh = Tmux.defaultPaneWait {Tmux.waitMatch = Tmux.FreshSince baseline}
