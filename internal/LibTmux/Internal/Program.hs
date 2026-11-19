@@ -220,7 +220,7 @@ withOwnedProgram source executable available options action = mask $ \restore ->
   atomically (readTVar (R.serverPool source).closing) >>= flip when (throwIO ProgramClosed)
   support <- N.groupSignalSupport
   when (support /= 0) (throwIO (ProgramHostUnsupported (fromIntegral support)))
-  runtime <- R.newRuntime P.normalFork
+  runtime <- R.newRuntimeFromPool (R.serverPool source)
   token <- hexToken <$> Entropy.freshToken32
   backend <- newIORef Nothing
   directory <- newIORef Nothing

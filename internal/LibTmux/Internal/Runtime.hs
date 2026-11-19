@@ -9,10 +9,10 @@
 -- requests bind logical admission and deadlines to native ownership.
 -- "LibTmux.Server" exposes the Server and shared Runtime scopes.
 module LibTmux.Internal.Runtime
-  ( Runtime, ServerHandle, ServerOwner, Report (..), newRuntime, adopt, adoptWith
+  ( Runtime, ServerHandle, ServerOwner, Report (..), newRuntime, newRuntimeUsing, newRuntimeFromPool, adopt, adoptWith
   , newServerOwner, adoptServerOwnerWith, inspectServerOwner, shutdownServerOwner
   , awaitServerOwnerCleanup, detachServerOwnerOperation
-  , serverPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
+  , serverPool, serverOwnerPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
   , inspectServerHandle, shutdownServerHandle
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
@@ -68,7 +68,8 @@ import System.Timeout (timeout)
 data Runtime = Runtime
   { identity :: !Unique
   , budget :: !B.Budget, entries :: !(TVar (Map.IntMap ServerOwner)), nextKey :: !(TVar Int)
-  , forker :: P.Fork
+  , forker :: P.Fork, backend :: !(Maybe P.Backend)
+  , admission :: !(TVar Bool), ownsBudget :: !Bool
   , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
   , scheduler :: !S.Scheduler, owners :: !(TVar [NativeOwner])
   }
@@ -218,15 +219,28 @@ data NativeOwner where
     } -> NativeOwner
 
 newRuntime :: P.Fork -> IO Runtime
-newRuntime forker = do
+newRuntime forker = B.newBudget P.inspectionBytes >>= \budget ->
+  newRuntimeUsing budget forker Nothing True
+
+-- Shared domains keep child and byte credits in their original context. Each
+-- related Runtime closes its own admission; only the root closes the budget.
+newRuntimeUsing :: B.Budget -> P.Fork -> Maybe P.Backend -> Bool -> IO Runtime
+newRuntimeUsing budget forker backend ownsBudget = do
   identity <- newUnique
-  budget <- B.newBudget P.inspectionBytes
   entries <- newTVarIO Map.empty
   nextKey <- newTVarIO 0
   shutdownRun <- newTVarIO Nothing
   scheduler <- S.newScheduler
   owners <- newTVarIO []
-  pure Runtime {identity, budget, entries, nextKey, forker, shutdownRun, scheduler, owners}
+  admission <- newTVarIO True
+  pure Runtime {identity, budget, entries, nextKey, forker, shutdownRun, scheduler, owners,backend,admission,ownsBudget}
+
+-- Borrowed Programs retain the normal independent runtime. A private Program
+-- explicitly inherits its source's execution domain and physical budget.
+newRuntimeFromPool :: P.Pool -> IO Runtime
+newRuntimeFromPool pool = readTVarIO pool.backend >>= \case
+  Nothing -> newRuntime P.normalFork
+  selected -> newRuntimeUsing pool.budget P.normalFork selected False
 
 -- | Adopt one endpoint through a private socket pin. Reserve a client credit
 -- before filesystem acquisition. Cancellation preserves its original exception
@@ -249,9 +263,12 @@ newServerOwner runtime@Runtime {forker} = mask_ $ do
   group <- S.newGroup
   atomically $ do
     _ <- inspect runtime
+    open <- readTVar runtime.admission
+    unless open (throwSTM P.PoolClosed)
     key <- readTVar runtime.nextKey
     when (key == maxBound) (throwSTM P.ResourceLimit)
     pool <- P.newPoolSTM runtime.budget forker owner 16
+    mapM_ (P.bindBackend pool) runtime.backend
     closeFailure <- newTVar Nothing
     shutdownRun <- newTVar Nothing
     let entry = ServerOwner {key, group, pool, closeFailure, shutdownRun}
@@ -277,6 +294,9 @@ adoptServerOwnerWith checkpoint runtime entry source parent = mask $ \restore ->
   requireOpen
   pure (ServerHandle entry pin)
 
+serverOwnerPool :: ServerOwner -> P.Pool
+serverOwnerPool = (.pool)
+
 serverPool :: ServerHandle -> P.Pool
 serverPool (ServerHandle entry _) = entry.pool
 
@@ -284,7 +304,10 @@ serverPin :: ServerHandle -> SocketPin
 serverPin (ServerHandle _ pin) = pin
 
 usage :: Runtime -> STM B.Usage
-usage runtime = B.usage runtime.budget
+usage runtime = do
+  observed <- B.usage runtime.budget
+  open <- readTVar runtime.admission
+  pure observed {B.accepting = observed.accepting && open}
 
 -- | Observe bounded cleanup debt, removing only entries whose pool reports
 -- 'P.CleanupComplete'. Open and provisional clients count as pending ownership.
@@ -413,7 +436,8 @@ closeEntry entry = mask_ $ do
 requestClose :: Runtime -> IO Report
 requestClose runtime = mask_ $ do
   entries <- atomically $ do
-    B.closeAdmission runtime.budget
+    writeTVar runtime.admission False
+    when runtime.ownsBudget (B.closeAdmission runtime.budget)
     _ <- S.closeAdmission runtime.scheduler
     owners <- readTVar runtime.owners
     forM_ owners $ \owner -> do
