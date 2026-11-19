@@ -294,10 +294,17 @@ tests = testGroup "public mutation API"
 
         update "edit"
         waitText (fresh {Tmux.waitTimeout = 0.16}) >>= \case
-          Tmux.PaneTextTimedOut (Just latest) Nothing ->
+          Tmux.PaneTextTimedOut (Just latest) recovery -> do
             assertBool "deadline did not retain the moved old occurrence"
               ("changed\nREADY\n" `Text.isPrefixOf` Tmux.paneText latest)
-          _ -> assertFailure "an unrelated edit or moved old text ended the wait"
+            forM_ recovery $ \owner -> do
+              Tmux.recoveryGeneration owner @?= Tmux.serverGeneration server
+              bounded (Tmux.resumeCaptureRecovery owner)
+              _ <- Tmux.detachCaptureRecovery owner
+              pure ()
+          Tmux.PaneTextTimedOut Nothing _ -> assertFailure "deadline lost the last capture"
+          Tmux.PaneTextMatched _ -> assertFailure "moving old text satisfied freshness"
+          Tmux.PaneTextExited _ -> assertFailure "the pane exited during the moved-text wait"
 
         transition "add" >>= checkMatched 2
         update "clear"
