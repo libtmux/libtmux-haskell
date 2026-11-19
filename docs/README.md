@@ -19,6 +19,7 @@ and the [API guide](api.md).
 | Rename captured targets and handle interrupted commands | [Mutations and recovery](mutations.md) |
 | Share resources across independent Server scopes | [Shared Runtime](shared-runtime.md) |
 | Test application predicates without tmux | [Validated offline fixtures](fixtures.md) |
+| Inspect a Haskell application’s tmux daemon from an agent | [MCP setup and discovery](agents.md) |
 | Reproduce capture measurements | [Performance](performance.md) |
 | Parse IDs, validate geometry and admit a release | [Typed values](values.md) |
 | Browse modules, declarations and source | [API documentation](api.md) |

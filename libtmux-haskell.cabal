@@ -27,6 +27,7 @@ bug-reports: https://github.com/libtmux/libtmux-haskell/issues
 build-type: Simple
 tested-with: GHC ==9.14.1
 extra-doc-files:
+  docs/agents.md
   docs/capture.md
   docs/shared-runtime.md
   docs/query.md

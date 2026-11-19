@@ -407,6 +407,7 @@ connection resources and leaves the daemon running.
 | Share ownership across independent Server scopes | [Shared Runtime](https://libtmux.org/en/haskell/latest/guides/shared-runtime/) |
 | Understand IDs, indices and validation errors | [Typed values](https://libtmux.org/en/haskell/latest/guides/typed-values/) |
 | Test graph predicates without tmux | [Validated offline fixtures](https://libtmux.org/en/haskell/latest/guides/offline-fixtures/) |
+| Inspect a Haskell application’s tmux daemon from an agent | [MCP setup and discovery](docs/agents.md) |
 | Reproduce capture measurements | [Performance](https://libtmux.org/en/haskell/latest/guides/performance/) |
 | Browse connection and mutation operations | [`LibTmux.Server`](https://libtmux.org/en/haskell/latest/reference/libtmux-server/) |
 | Browse declarations and module documentation | [API reference](https://libtmux.org/en/haskell/latest/reference/) |
