@@ -160,4 +160,4 @@ An uncertain outcome does not trigger an automatic retry. See
 Absolute width and height are implemented. Directional adjustments, pane
 percentages, largest/smallest-client fitting, zoom toggles, history trimming,
 mouse actions and floating-specific modes remain separate work in the
-[pane and window contract](contracts/pane-commands.md).
+[pane and window contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/pane-commands.md).

@@ -95,4 +95,4 @@ The native backend needs:
 
 A missing host operation fails before launch. Pure scalar construction and
 lookup do not need them. See the
-[process host contract](contracts/process.md#launch-and-host-requirements).
+[process host contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#launch-and-host-requirements).

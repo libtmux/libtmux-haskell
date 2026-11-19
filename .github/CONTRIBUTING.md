@@ -292,7 +292,7 @@ API contract.
   owner left.
 - Requirements: the exit watch needs `pidfd_open` support (Linux 5.3 or newer).
   The private process suite additionally requires the
-  [atomic-launch host operations](../docs/contracts/process.md#launch-and-host-requirements).
+  [atomic-launch host operations](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#launch-and-host-requirements).
 
 Callback success, failure and cancellation are covered. Startup checkpoints
 also cover cancellation before session dispatch and after its response but

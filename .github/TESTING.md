@@ -240,7 +240,7 @@ by inspection. They also check total byte exhaustion, constructor
 handoff under actual pending cancellation, retryable pin cleanup and a consumer
 envelope retained after unawaited result publication. Pure budget tests cover
 exact limits, overflow refusal, atomic reservation and repeated release. These
-are [private ownership contracts](../docs/contracts/process.md#streams-and-bounds),
+are [private ownership contracts](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#streams-and-bounds),
 not evidence for a complete public Runtime or total-process memory cap.
 
 The provisional Runtime cases check that eight client credits prevent a ninth
@@ -259,7 +259,7 @@ finish normally during grace, while pin-only cleanup needs no fixed delay.
 Refusing the supervisor allocation closes admission and permits a later retry
 without stranding its completion latch. Each case verifies physical cleanup;
 an independent command checks that the owned tmux daemon remains usable.
-These cases qualify [private physical ownership](../docs/contracts/process.md#provisional-runtime-ownership),
+These cases qualify [private physical ownership](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#provisional-runtime-ownership),
 not logical dispatch integration, operation deadlines or daemon-job completion.
 
 The [Runtime read cases](../test/integration/RuntimeReadTest.hs) bind fixed
@@ -273,7 +273,7 @@ allows graceful reads and preserves unresolved metadata after physical cleanup.
 Version values agree with the selected fixture binary's independent release
 receipt and survive cleanup. Mixed PID/version requests share queued cancellation
 and expiry checks. The result type is preserved through the owned registry.
-These are [private read contracts](../docs/contracts/process.md#framed-server-read-ownership),
+These are [private read contracts](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#framed-server-read-ownership),
 not qualification of other commands, capture or the public Server.
 
 A deliberately held signal has a 250 ms watchdog to detect premature pidfd
@@ -282,5 +282,5 @@ checks synchronize through STM, descriptors and RTS status; they do not
 schedule races with sleeps. They belong in the outer tier because they
 launch helpers and real tmux daemons. Run the full suite with both one and
 two RTS capabilities before promoting ownership changes. The
-[process contract](../docs/contracts/process.md) records the required host
+[process contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md) records the required host
 operations and remaining runtime limits.

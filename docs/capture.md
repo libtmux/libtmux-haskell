@@ -97,7 +97,7 @@ that context. For each owner you can:
 - Detach the uncertainty. This stops no native resource and proves nothing
   about the daemon.
 
-Details: [process contract](contracts/process.md).
+Details: [process contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md).
 
 ## See also
 

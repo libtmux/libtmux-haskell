@@ -178,7 +178,7 @@ Prioritize reducing read boundaries over parallel per-field hydration.
 Backslash preservation and release-specific output decoding are required on
 tmux 3.4, 3.5 and 3.5a. Keep context receipts, response bounds, decoded limits,
 entity limits, deadlines and inspection reserves. Extra hook output fails.
-See [framing](../contracts/framing.md) and [acquisition](../contracts/acquisition.md).
+See [framing](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/framing.md) and [acquisition](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/acquisition.md).
 
 A single expansion can improve consistency of tmux-owned state, but Snapshot
 promises an observation interval, not global atomicity. OS-derived callbacks
@@ -191,7 +191,7 @@ Measure native capture latency and server pauses before qualifying defaults.
 ### Preserve failure, cancellation and reachable recovery
 
 Closing admission, physical cleanup and logical completion are distinct.
-The [lifecycle outcomes](../contracts/process.md#public-scope-outcomes) are
+The [lifecycle outcomes](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#public-scope-outcomes) are
 normative for both Server scopes. Preserve the callback exception, including
 asynchronous cancellation, when cleanup also fails. Retain secondary cleanup
 diagnostics and a reachable recovery owner. Successful callbacks with failed
@@ -245,7 +245,7 @@ commands. In exchange, captured values survive closure and repeated local
 queries perform no hidden reads. Native process ownership carries a Linux
 maintenance cost. Document glibc 2.39 and required kernel operations for the
 initial backend; any alternative launch path needs separate qualification.
-[Host contract](../contracts/process.md#launch-and-host-requirements)
+[Host contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#launch-and-host-requirements)
 
 Use the package's modern Haskell feature floor and compatible dependency bounds;
 CI pins record tested configurations rather than an exact compiler requirement.

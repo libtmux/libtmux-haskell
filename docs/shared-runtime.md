@@ -143,5 +143,5 @@ Recovery:
 - Detaching releases no native resource and proves no daemon-side completion.
 
 More: [capture recovery](capture.md#errors-and-recovery) and the
-[process contract](contracts/process.md#public-scope-outcomes) for the error and
+[process contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#public-scope-outcomes) for the error and
 cancellation policy.
