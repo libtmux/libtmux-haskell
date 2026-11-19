@@ -7,9 +7,11 @@ module Main (main) where
 import Control.Exception (ExceptionWithContext (..), rethrowIO)
 import Control.Monad (unless)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
 import LibTmux.Creation qualified as Creation
+import LibTmux.Recovery qualified as Recovery
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.OsPath.Posix qualified as Path
@@ -80,7 +82,10 @@ main = getArgs >>= \case
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
-        Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure True
+        Left (ExceptionWithContext context (Tmux.MutationRejected _)) -> do
+          receipts <- traverse Recovery.creationReceipt (Recovery.creationRecoveries context)
+          unless (all isNothing receipts) (die "Duplicate creation returned another session")
+          pure True
         Left problem -> rethrowIO problem
         Right _ -> die "Duplicate creation unexpectedly succeeded"
       Tmux.killSession server created.session

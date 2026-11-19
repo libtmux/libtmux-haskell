@@ -90,7 +90,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: e5675b360590ebacf99131afb3dacd0361c9f7db
+  tag: 36ead77c3c782f0a2e564656aace339c6543986e
 ```
 
 <!-- example-package: shared-runtime -->
@@ -134,7 +134,8 @@ Limits belong to the Runtime:
 Recovery:
 
 - Catch with [`tryTmux`](../src/LibTmux/Server.hs) to keep the exception
-  context. `cleanupRecoveries` returns the remaining cleanup owners.
+  context. Import [`LibTmux.Recovery`](../src/LibTmux/Recovery.hs) for
+  `cleanupRecoveries`, which returns the remaining owners.
 - Inspect, retry, wait and detach act on the one responsibility you select.
 - A failed adoption can hold an owner before it returns a Server. Recovering it
   does not close neighboring handles.
