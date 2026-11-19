@@ -400,6 +400,56 @@ tests = testGroup "public mutation API"
           Left (ExceptionWithContext _ (Tmux.EnvironmentReadRejected _)) -> pure ()
           _ -> assertFailure "missing session was reported as absent variable"
 
+  , testCase "round-trips binary named buffers and pastes with an explicit newline policy" $
+      Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+        let run = configured fixture
+            await event = bounded (run ["wait-for", event])
+            name = "libtmux-exact-binary"
+            payload = "raw\NUL" <> Bytes.singleton '\255' <> "\n"
+            application = unlines
+              [ "set -eu"
+              , "stty raw -echo"
+              , "signal() { \"$1\" -N -S \"$2\" wait-for -S \"$3\"; }"
+              , "signal \"$1\" \"$2\" buffer-paste-ready"
+              , "dd bs=1 count=6 status=none of=\"$3/paste-lf\""
+              , "signal \"$1\" \"$2\" buffer-paste-lf"
+              , "dd bs=1 count=6 status=none of=\"$3/paste-cr\""
+              , "signal \"$1\" \"$2\" buffer-paste-cr"
+              , "exec /bin/cat -"
+              ]
+        snapshot <- Tmux.capture server
+        bystander <- one (Tmux.panes snapshot)
+        run ["split-window", "-d", "/bin/sh", "-c", application, "sh",
+          fixture.executable, fixture.socket, fixture.directory]
+        await "buffer-paste-ready"
+        observed <- Tmux.capture server
+        target <- one [pane | pane <- Tmux.panes observed, pane.ref /= bystander.ref]
+
+        run ["set-hook", "-g", "after-load-buffer", "display-message -p buffer-load-hook"]
+        run ["set-hook", "-g", "after-save-buffer", "display-message -p buffer-save-hook"]
+        Tmux.loadBuffer server name payload
+        Tmux.readBuffer server name >>= (@?= payload)
+        Tmux.pasteBuffer server target.ref name Tmux.PreserveLineFeeds
+        await "buffer-paste-lf"
+        Bytes.readFile (fixture.directory </> "paste-lf") >>= (@?= payload)
+        Tmux.pasteBuffer server target.ref name Tmux.LineFeedsToCarriageReturns
+        await "buffer-paste-cr"
+        Bytes.readFile (fixture.directory </> "paste-cr") >>= (@?= Bytes.init payload <> "\r")
+        unchanged <- Tmux.capturePane server bystander.ref Tmux.defaultPaneCapture
+        assertBool "buffer paste changed a different pane" (Text.all (== '\n') (Tmux.paneText unchanged))
+
+        let largeFile = fixture.directory </> "large-native-buffer"
+        Bytes.writeFile largeFile (Bytes.replicate 65537 'x')
+        run ["set-hook", "-gu", "after-load-buffer"]
+        run ["load-buffer", "-b", "libtmux-large-binary", largeFile]
+        Tmux.tryTmux (Tmux.readBuffer server "libtmux-large-binary") >>= \case
+          Left (ExceptionWithContext _ (Tmux.BufferTooLarge 65536)) -> pure ()
+          _ -> assertFailure "oversized native buffer did not give a bounded refusal"
+        Tmux.tryTmux (Tmux.readBuffer server "libtmux-absent-binary") >>= \case
+          Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+          _ -> assertFailure "missing exact buffer was accepted"
+        Tmux.readBuffer server name >>= (@?= payload)
+
   , testCase "refuses foreign and offline references before changing the daemon" $
       Fixture.withFixture $ \fixture -> do
         configured fixture ["rename-window", "-t", "@0", "original-window"]

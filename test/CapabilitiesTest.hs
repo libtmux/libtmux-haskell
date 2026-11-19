@@ -9,11 +9,11 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
 tests :: TestTree
-tests = testGroup "application capabilities"
+tests = testGroup "daemon capabilities"
   [ testCase "the released event-wait boundary rejects candidates and older patches" $
       forM_ ["3.3a", "3.7", "3.7z", "next-3.8", "3.8-rc", "3.8-rc10"] $ \raw -> do
         version <- release raw
-        forM_ capabilityRegistry $ \info -> do
+        forM_ (filter ((== Refuse) . (.handling)) capabilityRegistry) $ \info -> do
           supports (capabilitiesFor version) info.capability @?= False
           requireCapability (capabilitiesFor version) info.capability @?=
             Left (CapabilityUnavailable info.capability version)
@@ -22,6 +22,14 @@ tests = testGroup "application capabilities"
         version <- release raw
         forM_ capabilityRegistry $ \info ->
           requireCapability (capabilitiesFor version) info.capability @?= Right ()
+  , testCase "raw paste flags exist from tmux 3.7 while older daemons use their native raw path" $ do
+      forM_ ["3.3a", "3.6b", "3.7-rc"] $ \raw -> do
+        version <- release raw
+        supports (capabilitiesFor version) RawBufferPasteFlag @?= False
+      forM_ ["3.7", "3.8"] $ \raw -> do
+        version <- release raw
+        supports (capabilitiesFor version) RawBufferPasteFlag @?= True
+      (capabilityInfo RawBufferPasteFlag).handling @?= Fallback
   , testCase "packaged capability metadata matches the runtime registry" $
       Text.readFile "capabilities.json" >>= (@?= capabilityManifest)
   ]

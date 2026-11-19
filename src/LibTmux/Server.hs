@@ -41,6 +41,8 @@ module LibTmux.Server
   , NamedLayout (..), selectLayout, selectLayoutWith
     -- * Remove a target
   , killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
+    -- * Named paste buffers
+  , loadBuffer, loadBufferWith, readBuffer, pasteBuffer, pasteBufferWith
     -- * Pane input
   , PaneInput (..), sendKeys, sendKeysWith
     -- * Pane text
@@ -85,6 +87,7 @@ import Data.Type.Coercion (coerceWith, sym)
 import LibTmux.Environment (EnvironmentEntry (..), EnvironmentScope (..), EnvironmentVisibility)
 import LibTmux.Id (SessionId)
 import LibTmux.Internal.Budget qualified as B
+import LibTmux.Internal.Buffer qualified as Buffer
 import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
 import LibTmux.Creation qualified as Creation
@@ -110,7 +113,7 @@ import LibTmux.Internal.Scope
   )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
-import LibTmux.Pane (PaneCaptureOptions (..), defaultPaneCapture)
+import LibTmux.Pane (PaneCaptureOptions (..), PasteNewlines, defaultPaneCapture)
 import LibTmux.Version qualified as Version
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
@@ -529,6 +532,50 @@ killPane = killPaneWith defaultMutationOptions
 killPaneWith :: MutationOptions -> Server -> PaneRef -> IO ()
 killPaneWith options server (G.PaneRef generation ident) =
   mutate options server generation (Command.KillPane ident)
+
+-- | Load up to 64 KiB of raw bytes into an exact named tmux buffer. NUL
+-- and invalid UTF-8 are data. Empty input leaves the existing buffer alone.
+loadBuffer :: Server -> ByteString -> ByteString -> IO ()
+loadBuffer = loadBufferWith defaultMutationOptions
+
+-- | 'loadBuffer' with an explicit deadline.
+loadBufferWith :: MutationOptions -> Server -> ByteString -> ByteString -> IO ()
+loadBufferWith options server@(Server runtime handle executable _ _) name bytes = operational $ do
+  checkTarget server (serverGeneration server)
+  when (Bytes.length bytes > Buffer.byteLimit) (throwIO (BufferTooLarge Buffer.byteLimit))
+  duration <- mutationDuration options
+  M.performRequests duration runtime handle $ \remaining await ->
+    Buffer.withInput bytes $ \file -> do
+      left <- remaining
+      await (R.mutateWith P.defaultHooks left runtime handle executable (Command.LoadBuffer name file))
+        >>= M.checkMutationReply
+
+-- | Read up to 64 KiB of the exact named buffer, preserving trailing line
+-- feeds and arbitrary bytes. An oversized buffer raises 'BufferTooLarge'.
+-- A missing buffer raises 'MutationRejected'. Hooks do not supply buffer data.
+readBuffer :: Server -> ByteString -> IO ByteString
+readBuffer server@(Server runtime handle executable duration _) name = operational $ do
+  checkTarget server (serverGeneration server)
+  M.performRequests duration runtime handle $ \remaining await ->
+    R.withReadBudget runtime (fromIntegral (2 * Buffer.byteLimit + 8192)) $ do
+      result <- Buffer.readOutput $ \pipe -> do
+        left <- remaining
+        await (R.mutateWith P.defaultHooks left runtime handle executable (Command.SaveBuffer name pipe))
+          >>= M.checkMutationReply
+      maybe (throwIO (BufferTooLarge Buffer.byteLimit)) pure result
+
+-- | Paste the current bytes of a named buffer into the exact pane. The
+-- newline policy controls line feeds. Observe the pane separately for proof
+-- of application input or output.
+pasteBuffer :: Server -> PaneRef -> ByteString -> PasteNewlines -> IO ()
+pasteBuffer = pasteBufferWith defaultMutationOptions
+
+-- | 'pasteBuffer' with an explicit deadline. Availability of the native raw
+-- byte flag comes from the pinned daemon's capabilities.
+pasteBufferWith :: MutationOptions -> Server -> PaneRef -> ByteString -> PasteNewlines -> IO ()
+pasteBufferWith options server (G.PaneRef generation pane) name newlines =
+  let rawFlag = Capabilities.supports (serverCapabilities server) Capabilities.RawBufferPasteFlag
+  in mutate options server generation (Command.PasteBuffer pane name newlines rawFlag)
 
 -- | Input to an exact pane. Literal text bypasses key-name lookup.
 -- 'NamedKeys' accepts tmux key names such as @Enter@ or @C-c@ in order.

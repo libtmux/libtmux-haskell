@@ -28,6 +28,7 @@ data TmuxException
   | PaneCaptureRejected !ByteString -- ^ tmux rejected the selected pane or range.
   | PaneCaptureHookFailed !ByteString -- ^ An after-hook failed following a successful capture.
   | PaneTextTooLarge !Int -- ^ Capture exceeded the requested byte limit.
+  | BufferTooLarge !Int -- ^ Named buffer data exceeded the byte limit.
   | EnvironmentReadRejected !ByteString -- ^ tmux refused the exact environment query.
   | EnvironmentReadHookFailed !ByteString -- ^ A hook failed after a completed environment query.
   | InvalidTarget !Text -- ^ Target belongs to a different connection or an offline fixture.
