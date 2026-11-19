@@ -10,6 +10,7 @@
       "stdout": "examples/typed-values/expected.stdout",
       "executable": "typed-values",
       "capability": null,
+      "minimum_tmux": null,
       "command": [
         "cabal",
         "run",
@@ -43,6 +44,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "capture-graph",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py"
@@ -73,6 +75,7 @@
       "stdout": "examples/offline-graph/expected.stdout",
       "executable": "offline-graph",
       "capability": null,
+      "minimum_tmux": null,
       "command": [
         "cabal",
         "run",
@@ -106,6 +109,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "shared-runtime",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -141,6 +145,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "query-graph",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -176,6 +181,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "mutate-graph",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -211,6 +217,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "create-session",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -249,6 +256,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "managed-program",
       "capability": "tmux 3.8, Linux 6.9 process-group pidfds and Bash timed reads",
+      "minimum_tmux": "3.8",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -284,6 +292,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "paste-buffer",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -322,6 +331,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "resize-geometry",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -360,6 +370,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "configure-session",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",
@@ -398,6 +409,7 @@
       "runner": "examples/capture-graph/run.py",
       "executable": "watch-window",
       "capability": "tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
       "command": [
         "python3",
         "examples/capture-graph/run.py",

@@ -198,9 +198,9 @@ def test_batched_consumers_still_check_each_distinct_output(
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         assert kwargs == {
             "cwd": workspace,
-            "check": True,
             "capture_output": True,
             "timeout": check_sdist.DEFAULT_TIMEOUT,
+            "env": None,
         }
         name = Path(args[0]).name
         executed.append(name)
@@ -225,6 +225,48 @@ def test_batched_consumers_still_check_each_distinct_output(
     project = (workspace / "cabal.project").read_text()
     assert project.startswith("packages: ../core.tar.gz first second\n")
     assert all((workspace / entry["id"] / "Main.hs").read_bytes() == b"source" for entry in entries)
+
+
+def test_installed_consumers_run_on_their_qualified_endpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each floor example must use both releases without a second Cabal build."""
+    monkeypatch.setenv("LIBTMUX_TEST_TMUX", "tmux-new")
+    monkeypatch.setenv("LIBTMUX_TEST_FLOOR_TMUX", "tmux-floor")
+    builds: list[list[str]] = []
+    executed: set[tuple[str, str]] = set()
+
+    def run(
+        args: list[str], *, env: dict[str, str] | None = None, **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        endpoint = env["LIBTMUX_TEST_TMUX"] if env else "tmux-new"
+        executed.add((args[0], endpoint))
+        return subprocess.CompletedProcess(args, 0, b"ok\n", b"")
+
+    monkeypatch.setattr(check_sdist, "run", lambda args, cwd, timeout: builds.append(args))
+    monkeypatch.setattr(check_sdist, "output", lambda args, **kwargs: args[2].removeprefix("exe:"))
+    monkeypatch.setattr(check_sdist, "bounded_run", run)
+    entries = [
+        {
+            "id": name,
+            "executable": name,
+            "source": "Main.hs",
+            "package": f"{name}.cabal",
+            "stdout": "expected.stdout",
+            "minimum_tmux": minimum,
+        }
+        for name, minimum in [("offline", None), ("floor", "3.3a"), ("program", "3.8")]
+    ]
+    check_sdist.check_example_consumers(
+        entries, tmp_path / "consumers", "../core.tar.gz", lambda _: b"ok\n"
+    )
+    assert len(builds) == 1
+    assert executed == {
+        ("offline", "tmux-new"),
+        ("floor", "tmux-new"),
+        ("floor", "tmux-floor"),
+        ("program", "tmux-new"),
+    }
 
 
 @pytest.fixture

@@ -55,6 +55,12 @@ jobs:
         with:
           ref: '3.8'
           configure-args: --disable-utf8proc
+      - name: Build the example support floor
+        id: floor
+        uses: libtmux/.github/actions/build-tmux@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          ref: '3.3a'
+          configure-args: --disable-utf8proc
       - name: Fetch pinned option-table history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -99,6 +105,7 @@ jobs:
       - name: Documented example command
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
+          LIBTMUX_TEST_FLOOR_TMUX: ${{ steps.floor.outputs.binary }}
         run: uv run scripts/check_docs/check_docs.py --run
       - name: Public type contracts
         run: uv run scripts/check_types/check_types.py
@@ -122,6 +129,7 @@ jobs:
       - name: Isolated source-archive consumer
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
+          LIBTMUX_TEST_FLOOR_TMUX: ${{ steps.floor.outputs.binary }}
         run: uv run scripts/check_sdist/check_sdist.py
       - name: Prepare checked Hackage archives
         run: uv run scripts/release/release.py prepare

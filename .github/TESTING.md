@@ -139,11 +139,12 @@ rejects unregistered programs and Haskell fences, including nested guides.
 Its regression cases introduce missing examples, stale snippets and invalid
 catalogue entries in disposable copies.
 
-CI runs each literal checkout command and then builds every declared public program
-from the source archive in an independent application. Both check exit
-status, exact stdout and empty stderr. The archive consumer also executes
-the `>>>` examples from the public module documentation. Keep all these
-routes passing when changing an example, manifest or public signature.
+CI runs each literal checkout command and builds every public program from
+the source archive and the documented installation pin. Each run checks exit
+status, exact stdout and empty stderr. Programs that need tmux declare their
+minimum release in the catalogue. CI runs them on 3.8 and repeats the eligible
+programs on 3.3a with the same archive builds. The archive check also runs the
+public Haddock examples and the installed mutation and recovery tests.
 
 The shared Runtime program reuses the capture fixture with its declared
 executable and expected output. The catalogue checks both bindings, and the

@@ -6,6 +6,7 @@
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -29,6 +30,16 @@ DEFAULT_TIMEOUT = 120
 MAX_TIMEOUT = 900
 
 type Entry = dict[str, Any]
+type Endpoint = tuple[str, dict[str, str] | None]
+
+
+def example_endpoints(minimum_tmux: str | None) -> tuple[Endpoint, ...]:
+    """Add the configured 3.3a fixture for programs that support it."""
+    default: Endpoint = ("configured endpoint", None)
+    floor = os.environ.get("LIBTMUX_TEST_FLOOR_TMUX")
+    if floor and minimum_tmux == "3.3a":
+        return (default, ("tmux 3.3a", dict(os.environ, LIBTMUX_TEST_TMUX=floor)))
+    return (default,)
 
 
 def check_workflow(proof: dict[str, Any], root: Path = ROOT) -> None:
@@ -60,7 +71,7 @@ def check_catalogue(root: Path) -> dict[str, Entry]:
         raise ValueError("No declared examples")
     examples: dict[str, Entry] = {}
     paths = {"source", "package", "project", "vcs_project", "stdout"}
-    fields = paths | {"id", "executable", "capability", "command", "verification"}
+    fields = paths | {"id", "executable", "capability", "minimum_tmux", "command", "verification"}
     optional = {"runner", "fixture_panes", "timeout"}
     for entry in entries:
         keys = set(entry)
@@ -70,6 +81,9 @@ def check_catalogue(root: Path) -> dict[str, Entry]:
             or entry["id"] in examples
         ):
             raise ValueError("Invalid or duplicate example entry")
+        minimum_tmux = entry["minimum_tmux"]
+        if minimum_tmux not in (None, "3.3a", "3.8") or (minimum_tmux is None and "runner" in keys):
+            raise ValueError(f"Invalid minimum tmux version for {entry['id']}")
         timeout = entry.get("timeout", DEFAULT_TIMEOUT)
         if type(timeout) is not int or not 1 <= timeout <= MAX_TIMEOUT:
             raise ValueError(f"Invalid example timeout for {entry['id']}")
@@ -188,24 +202,27 @@ def check(root: Path = ROOT) -> list[Entry]:
     return list(examples.values())
 
 
-def run_entry(entry: Entry, root: Path = ROOT) -> None:
-    """Run one documented command and compare its exit status, stdout and stderr.
+def run_entry(entry: Entry, root: Path = ROOT) -> int:
+    """Check the command on its endpoints and return the number of floor runs.
 
     The command is stopped after the entry's ``timeout`` seconds, or ``DEFAULT_TIMEOUT``.
     """
     timeout = entry.get("timeout", DEFAULT_TIMEOUT)
-    try:
-        result = run(entry["command"], cwd=root, capture_output=True, timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        raise ValueError(
-            f"Documented command timed out after {timeout} s: {entry['id']}"
-        ) from error
     expected = (root / entry["stdout"]).read_bytes()
-    if result.returncode or result.stdout != expected or result.stderr:
-        raise ValueError(
-            f"Documented command failed: {entry['id']}; exit={result.returncode}; "
-            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
-        )
+    endpoints = example_endpoints(entry.get("minimum_tmux"))
+    for label, env in endpoints:
+        try:
+            result = run(entry["command"], cwd=root, capture_output=True, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired as error:
+            raise ValueError(
+                f"Documented command timed out after {timeout} s: {entry['id']} ({label})"
+            ) from error
+        if result.returncode or result.stdout != expected or result.stderr:
+            raise ValueError(
+                f"Documented command failed: {entry['id']} ({label}); exit={result.returncode}; "
+                f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+            )
+    return len(endpoints) - 1
 
 
 def main() -> None:
@@ -217,8 +234,9 @@ def main() -> None:
     args = parser.parse_args()
     entries = check()
     if args.run:
-        for entry in entries:
-            run_entry(entry)
+        floor_runs = sum(run_entry(entry) for entry in entries)
+        if floor_runs:
+            print(f"PASS: {floor_runs} documented commands on tmux 3.3a")
     print(f"PASS: {len(entries)} declared example, displayed assets and local guide links")
 
 

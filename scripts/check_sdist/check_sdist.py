@@ -22,7 +22,7 @@ for sibling in ("bounded", "check_docs", "prepare_haddock"):
 
 from bounded import BUILD, QUICK, output
 from bounded import run as bounded_run
-from check_docs import DEFAULT_TIMEOUT, Entry
+from check_docs import DEFAULT_TIMEOUT, Entry, example_endpoints
 from check_docs import check as check_docs
 from prepare_haddock import cabal_modules
 
@@ -173,6 +173,7 @@ def check_example_consumers(
         f"packages: {library} {packages}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n"
     )
     run(["cabal", "build", "all", "--offline", "--jobs=2"], workspace, BUILD)
+    floor_runs = 0
     for entry in examples:
         consumer = workspace / entry["id"]
         target = "exe:" + entry["executable"]
@@ -186,15 +187,24 @@ def check_example_consumers(
         )
         if "fixture_panes" in entry:
             command += ["--expected-panes", str(entry["fixture_panes"])]
-        result = bounded_run(
-            command,
-            cwd=workspace,
-            check=True,
-            capture_output=True,
-            timeout=entry.get("timeout", DEFAULT_TIMEOUT),
-        )
-        if result.stdout != read_source(entry["stdout"]) or result.stderr:
-            raise ValueError(f"Installed example {entry['id']} produced unexpected output")
+        expected = read_source(entry["stdout"])
+        endpoints = example_endpoints(entry.get("minimum_tmux"))
+        for label, env in endpoints:
+            result = bounded_run(
+                command,
+                cwd=workspace,
+                capture_output=True,
+                timeout=entry.get("timeout", DEFAULT_TIMEOUT),
+                env=env,
+            )
+            if result.returncode or result.stdout != expected or result.stderr:
+                raise ValueError(
+                    f"Installed example {entry['id']} produced unexpected output ({label}); "
+                    f"exit={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
+                )
+        floor_runs += len(endpoints) - 1
+    if floor_runs:
+        print(f"PASS: {floor_runs} installed examples on tmux 3.3a ({workspace.name})")
 
 
 def check_public_commands(
@@ -249,22 +259,25 @@ def check_public_commands(
     executable = output(
         ["cabal", "list-bin", target, "--offline"], cwd=consumer, timeout=QUICK
     ).strip()
-    result = bounded_run(
-        [executable, "--hide-successes"],
-        cwd=directory,
-        check=False,
-        capture_output=True,
-        timeout=BUILD,
-    )
-    stderr = result.stderr.decode(errors="replace")
-    if result.returncode:
-        stdout = result.stdout.decode(errors="replace")[-2000:]
-        raise ValueError(
-            f"Installed public consumer exited {result.returncode}: {stderr}\n{stdout}"
+    for label, env in example_endpoints("3.3a"):
+        result = bounded_run(
+            [executable, "--hide-successes"],
+            cwd=directory,
+            capture_output=True,
+            timeout=BUILD,
+            env=env,
         )
-    if result.stderr:
-        raise ValueError(f"Installed public mutation consumer emitted stderr: {stderr}")
-    print("PASS: installed public command behavior and recovery")
+        stderr = result.stderr.decode(errors="replace")
+        if result.returncode:
+            stdout = result.stdout.decode(errors="replace")[-2000:]
+            raise ValueError(
+                f"Installed public consumer ({label}) exited {result.returncode}: {stderr}\n{stdout}"
+            )
+        if result.stderr:
+            raise ValueError(
+                f"Installed public mutation consumer ({label}) emitted stderr: {stderr}"
+            )
+        print(f"PASS: installed public command behavior and recovery ({label})")
 
 
 def haddock_command(plan: dict[str, Any], modules: list[str], examples: list[Example]) -> list[str]:

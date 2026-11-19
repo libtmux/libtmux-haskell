@@ -204,6 +204,7 @@ def shared_runner(root: Path, catalogue: Catalogue) -> dict[str, Any]:
     document = catalogue.load()
     entry = catalogue.entry(document, "offline-graph")
     entry["runner"] = "examples/capture-graph/run.py"
+    entry["minimum_tmux"] = "3.3a"
     entry["command"] = [
         "python3",
         entry["runner"],
@@ -282,6 +283,7 @@ def test_a_hung_documented_command_names_its_example(
     def hang(command: list[str], **kwargs: object) -> None:
         raise subprocess.TimeoutExpired(command, 1)
 
+    (root / "out").write_bytes(b"ok\n")
     monkeypatch.setattr(check_docs, "run", hang)
     with pytest.raises(ValueError, match="timed out after 120 s: typed-values"):
         check_docs.run_entry({"id": "typed-values", "command": ["x"], "stdout": "out"}, root)
