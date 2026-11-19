@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: e5675b360590ebacf99131afb3dacd0361c9f7db
+  tag: 43332c314d0e07ce453839564f855e0299250bb8
 ```
 
 Update the package index:
