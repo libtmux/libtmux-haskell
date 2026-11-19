@@ -86,7 +86,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: ee50571971b67a2e078887acc793aa823bb2ceed
+  tag: 04fbeb04e4179f7f8c499dbd47e0234df1a28a47
 ```
 
 ## Native backend host requirements
