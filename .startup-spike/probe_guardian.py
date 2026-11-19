@@ -6,9 +6,11 @@ import argparse
 import array
 import ctypes
 import errno
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import select
 import selectors
 import shlex
@@ -19,6 +21,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 from collections.abc import Callable
@@ -55,6 +58,38 @@ def identity(path: Path) -> tuple[int, int]:
     return status.st_dev, status.st_ino
 
 
+def audit_helper(library: Path) -> dict[str, Any]:
+    disassembly = subprocess.check_output(["objdump", "-d", str(library)], text=True)
+    function = ""
+    helpers: set[str] = set()
+    calls: set[str] = set()
+    rejected: list[str] = []
+    for line in disassembly.splitlines():
+        symbol = re.match(r"^[0-9a-f]+ <([^>]+)>:$", line)
+        if symbol:
+            function = symbol.group(1)
+            if function.startswith("h_"):
+                helpers.add(function)
+        if not function.startswith("h_"):
+            continue
+        branch = re.search(r"\b(?:call|jmp)\s+(.+)", line)
+        if branch:
+            target = re.search(r"<([^>]+)>", branch.group(1))
+            if target and target.group(1).startswith("h_"):
+                calls.add(target.group(1).split("+")[0])
+            else:
+                rejected.append(f"{function}: {line.strip()}")
+        if "%fs:" in line or "%gs:" in line:
+            rejected.append(f"helper TLS access {function}: {line.strip()}")
+    bases = {name.split(".")[0] for name in helpers}
+    require("h_start" in bases and "h_clone" in bases, "native helper entry symbols missing from audit")
+    require(not rejected, f"native helper escaped raw syscall discipline: {rejected}")
+    return {"status": "PASS", "helpers": sorted(helpers), "helper_call_targets": sorted(calls),
+            "external_or_indirect_calls": [], "tls_access": [],
+            "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+            "source_sha256": hashlib.sha256((HERE / "guardian_native.c").read_bytes()).hexdigest()}
+
+
 class World:
     def __init__(self, helper: Path, tmux: Path) -> None:
         # Isolated fixture containment. Its reaping never discharges candidate
@@ -63,6 +98,13 @@ class World:
         self.root = Path(tempfile.mkdtemp(prefix="hsg-"))
         self.selector = selectors.DefaultSelector()
         self.helper = helper
+        self.native = ctypes.CDLL(str(helper))
+        self.native.guardian_new.argtypes = [ctypes.POINTER(ctypes.c_int)]
+        self.native.guardian_new.restype = ctypes.c_int
+        self.workers_done = threading.Event()
+        self.workers = [threading.Thread(target=self.workers_done.wait, daemon=True) for _ in range(2)]
+        for worker in self.workers:
+            worker.start()
         self.tmux = tmux
         self.guardians: list[Guardian] = []
         self.witnesses: dict[str, tuple[int, socket.socket]] = {}
@@ -122,6 +164,7 @@ class World:
         guardian = Guardian(self)
         self.guardians.append(guardian)
         self.until(lambda: guardian.ready, "subreaper guardian ready before any workload")
+        require(not exited(guardian.pidfd), "guardian died with its creating OS thread")
         return guardian
 
     def names(self, label: str, directory: Path | None = None) -> Names:
@@ -174,6 +217,10 @@ class World:
                 os.close(fd)
             except OSError as problem:
                 require(problem.errno == errno.EBADF, "unexpected fixture descriptor close failure")
+        self.workers_done.set()
+        for worker in self.workers:
+            worker.join(WAIT_SECONDS)
+            require(not worker.is_alive(), "host background thread did not join")
         shutil.rmtree(self.root)
 
 
@@ -245,6 +292,21 @@ class Names:
         return True
 
 
+class NativeProcess:
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self.stderr = None
+
+    def wait(self, timeout: int) -> int:
+        require(timeout == 0, "native fixture only collects after a physical exit event")
+        if self.returncode is None:
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            require(pid == self.pid, "native helper exit event was not collectible")
+            self.returncode = os.waitstatus_to_exitcode(status)
+        return self.returncode
+
+
 class Guardian:
     def __init__(self, world: World) -> None:
         self.world = world
@@ -260,14 +322,27 @@ class Guardian:
         self.streams: dict[int, tuple[int, int]] = {}
         self.key = 0
         self.collected = 0
-        self.control, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        self.process = subprocess.Popen([str(world.helper), str(child.fileno())],
-                                        pass_fds=[child.fileno()], stdin=subprocess.DEVNULL,
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        child.close()
-        # This model host is single-threaded and has not waited/reaped. Even an
-        # already-dead guardian remains our unreaped child until pidfd acquisition.
-        self.pidfd = os.pidfd_open(self.process.pid)
+        self.native_result = (ctypes.c_int * 3)(-1, -1, -1)
+        self.native_error = -1
+        self.creator_tid = -1
+        self.birth_host_threads = -1
+
+        def create() -> None:
+            self.creator_tid = threading.get_native_id()
+            self.birth_host_threads = len(list(Path("/proc/self/task").iterdir()))
+            self.native_error = world.native.guardian_new(self.native_result)
+
+        creator = threading.Thread(target=create, daemon=True)
+        creator.start()
+        creator.join(WAIT_SECONDS)
+        require(not creator.is_alive(), "native guardian acquisition exceeded its event bound")
+        require(self.native_error == 0, f"native guardian acquisition refused {self.native_error}")
+        require(self.creator_tid != os.getpid() and self.birth_host_threads >= 4,
+                "native proof lacked a nonleader creator and concurrent host threads")
+        channel, self.pidfd, pid = self.native_result
+        self.control = socket.socket(fileno=channel)
+        self.process = NativeProcess(pid)
+        self.creator_exited_before_ready = True
         world.all_fds.add(self.pidfd)
         world.selector.register(self.pidfd, selectors.EVENT_READ, self.observe_exit)
         world.selector.register(self.control, selectors.EVENT_READ, self.receive)
@@ -608,6 +683,10 @@ def main() -> None:
         start = time.monotonic()
         try:
             facts = CASES[args.case](world)
+            facts["threaded_host"] = all(guardian.birth_host_threads >= 4 for guardian in world.guardians)
+            facts["nonleader_creator_joined_before_admission"] = all(
+                guardian.creator_tid != os.getpid() and guardian.creator_exited_before_ready
+                for guardian in world.guardians)
             result = {"case": args.case, "status": "PASS", "facts": facts}
         finally:
             world.close()
@@ -616,10 +695,12 @@ def main() -> None:
         return
     output = args.output or Path(tempfile.mkdtemp(prefix="guardian-model-"))
     output.mkdir(exist_ok=True, parents=True)
-    helper = output / "guardian"
     start = time.monotonic()
+    helper = output / "guardian-native.so"
     subprocess.run(["gcc", "-std=gnu11", "-O2", "-g", "-Wall", "-Wextra", "-Werror",
-                    "-o", str(helper), str(HERE / "guardian.c")], check=True)
+                    "-fPIC", "-shared", "-Wl,-z,now", "-o", str(helper), str(HERE / "guardian_native.c")], check=True)
+    audit = audit_helper(helper)
+    (output / "native-code-audit.json").write_text(json.dumps(audit, indent=2) + "\n")
     results = []
     for case in CASES:
         command = [sys.executable, str(Path(__file__).resolve()), "--tmux", str(args.tmux.resolve()),
@@ -630,7 +711,7 @@ def main() -> None:
             "case": case, "status": "FAIL", "returncode": process.returncode}
         results.append(result)
         print(json.dumps(result), flush=True)
-    receipt = {"scope": "isolated kernel model; Haskell scope not executed",
+    receipt = {"scope": "raw native guardian from a threaded host; Haskell scope not executed",
                "tmux": str(args.tmux), "wall_seconds": time.monotonic() - start, "results": results,
                "status": "PASS" if all(result["status"] == "PASS" for result in results) else "FAIL"}
     (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")

@@ -1,73 +1,86 @@
-# Private lifetime guardian model
+# Threaded native guardian proof
 
-This disposable model tests Linux descendant ownership. It does not execute a
-Haskell scope or qualify a production implementation. Its parent fixture is an
-isolated subreaper solely to collect its own fault-test orphans. That fixture
-information never changes a candidate verdict after guardian loss.
+This disposable Linux x86_64 model replaces the freshly exec'd guardian with a
+raw-syscall helper acquired through atomic `CLONE_PIDFD`. It does not execute a
+Haskell scope or establish production readiness. The isolated parent fixture
+temporarily acts as a subreaper to collect its own fault-test orphans; that
+information never clears candidate debt after guardian loss.
 
-Run one endpoint through the required resource wrapper:
+Run the native ownership and host-state cases through the resource wrapper:
 
 ```console
 $ /home/d/tmp-wave/heavy.sh -- \
-    python3 .startup-spike/probe_guardian.py \
+    python3 .startup-spike/probe_native_host.py \
     --tmux "$LIBTMUX_TEST_TMUX" \
     --output "$LIBTMUX_GUARDIAN_EVIDENCE"
 ```
 
-The runner compiles a fresh single-threaded helper and isolates every case in a
-separate fixture process. Every wait uses descriptor readiness, inotify,
-signalfd, pipe EOF or a collected status; there are no sleeps. A phase exceeding
-900 ms fails and the isolated fixture retires only its own kernel children.
+The command compiles a shared library with `-Wall -Wextra -Werror`, audits its
+disassembly and runs 19 isolated cases. The audit rejects helper calls outside
+the `h_` symbol set, indirect calls and TLS accesses, including libc calls or
+stack-protector paths. Compiler suffixes such as `.constprop.0` retain the same
+helper classification. Source and native-library SHA256 digests accompany the
+audit. Each event phase has the same 900 ms deadline; there are no sleeps.
 
-The helper sets `PR_SET_CHILD_SUBREAPER` and a waitable SIGCHLD policy before any
-configured executable runs. It remains the sole reaper. A command birth uses
-`CLONE_PIDFD`; the host journals its pending request before sending it. The
-helper also accepts only listeners that match its own unreaped kernel children.
-Its `/proc/self/task/<tid>/children` reads provide signal authority only for
-those actual children. No global PID, argv, UID or socket-prefix search occurs.
+Each guardian is created by a nonleader OS thread while at least four host
+threads exist. The creating thread joins before admission; the guardian must
+remain alive. Signals are blocked across raw clone, the helper isolates its
+session and resets inherited dispositions, and the host restores its exact
+previous mask. The helper closes inherited host descriptors before readiness.
+No helper `PDEATHSIG` ties its lifetime to the creating host thread.
 
-At closure, the single-threaded helper closes birth admission, signals child
-pidfds, reaps and repeats for newly adopted descendants. It publishes a terminal
-proof only after a live `waitpid(-1, __WALL | WNOHANG)` returns `ECHILD`, then exits
-without another fork. The host requires that proof, the helper's physical exit,
-and physical exit through every held published child pidfd. Helper loss without
-the proof leaves debt even after every known witness later exits.
+The helper sets `PR_SET_CHILD_SUBREAPER` before any configured executable runs
+and remains the exclusive reaper. It proxies all test version, startup and
+ordinary command clients. Each command uses `CLONE_PIDFD` and the host records
+its pending request before sending it. Listener adoption accepts only a current
+unreaped direct child, authenticated against the guardian's own kernel child
+list and pidfd. Listing never overlaps reaping. The final proof does not rely
+on that list being a complete birth journal.
 
-The model covers both independently demonstrated launcher counterexamples,
-adoption after parent exit, nonleader thread exec, unreported child birth,
-cancel and helper kill at that gap, daemon and helper kill after admission,
-version and ordinary client launcher children, an original pane, concurrent
-contexts and refusal of foreign adoption, configuration isolation, and socket
-or directory replacement while physical ownership ends. Independent child-self
-pidfds arrive over a separate SCM_RIGHTS channel. Replacement names retain
-namespace debt until the exact original identities are restored.
+At closure the single-threaded guardian closes birth admission, signals current
+child pidfds, reaps and repeats for newly adopted children. It publishes a
+terminal proof only after live `wait4(-1, __WALL | WNOHANG)` returns `ECHILD`,
+then exits without another fork. The host requires that proof, the helper's
+physical exit, every published child pidfd's physical exit and all client pipe
+EOFs. Guardian loss without the proof remains debt even after every known
+witness later exits.
 
-Source rationale: Linux `PR_SET_CHILD_SUBREAPER` reparents orphan descendants to
-the nearest living ancestor subreaper. The exclusive-reaper policy prevents a
-listed direct child's PID from recycling before pidfd acquisition. Kernel
-`eligible_child` treats `__WALL` as all child kinds; `__do_wait` preserves
-`ECHILD` only when no eligible child can later match. With birth admission
-closed and no surviving direct child, there is no surviving ordinary descendant
-chain that can create another child. This is an ownership argument based on the
-live kernel hierarchy, rather than a claim that every physical birth was
-journaled. It assumes an ordinary OS descendant tree: spawning through an
-independent external service manager or injection into unrelated processes is
-outside this model.
+The ownership cases cover native empty-daemon readiness, both independently
+demonstrated launcher counterexamples, adoption after launcher exit, nonleader
+thread exec, unpublished child birth, cancellation and helper loss at that gap,
+daemon and helper kill after admission, version/client launcher descendants and
+an original pane, concurrent contexts and foreign-adoption refusal, plus socket
+or directory replacement during physical retirement and exact-name recovery.
+Independent child-self pidfds arrive over a separate SCM_RIGHTS channel.
 
-Inspected source: Linux checkout `ddd664bbff63e09e7a7f9acae9c43605d4cf185f`,
-`kernel/exit.c` (`find_new_reaper`, `eligible_child`, `__do_wait`) and
-`fs/proc/array.c` (`get_children_pid`, `children_seq_show`). The proc iterator
-explicitly warns about concurrent child removal. This helper never reaps while
-reading or authenticating that list and never enables automatic reaping;
-newly adopted entries can be found in subsequent closure waves. The final
-verdict comes from `waitpid`, not from a possibly incomplete proc listing.
-The public manual documents the subreaper behavior:
-[PR_SET_CHILD_SUBREAPER](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html).
+Host cases also cover SIGCHLD `SIG_IGN` and `SA_NOCLDWAIT` refusal before birth,
+host mask restoration and child signal state, unchanged host subreaper policy,
+an unrelated host child remaining live and collectible only by its fixture,
+closure of inherited host descriptors, and closed standard descriptors. The
+closed-descriptor fixture explicitly retires or duplicates its own low pidfd
+before restoring standard descriptors, so restoration cannot recycle a held
+capability.
 
-Production obligations still open: raw post-clone safety when invoked from
-threaded Haskell (this model is a freshly exec'd helper), safe atomic host
-acquisition and cancellation publication, bounded nonblocking transport and
-status forwarding, TERM/grace/KILL policy (the model uses immediate SIGKILL),
-integration with every owned Process pool including Program's separate Runtime,
-and full Haskell exception/recovery/released-endpoint CI proof. No support-floor
-increase from pidfd exit-status ioctls is assumed.
+Source rationale: Linux `find_new_reaper` reparents ordinary orphan descendants
+to a living ancestor subreaper. `eligible_child` includes all child kinds under
+`__WALL`; `__do_wait` retains `ECHILD` only when no eligible child could later
+match. With birth admission closed and no surviving direct child, there is no
+surviving ordinary descendant chain that can create another child. Inspected
+Linux source is pinned at `ddd664bbff63e09e7a7f9acae9c43605d4cf185f`,
+`kernel/exit.c` and `fs/proc/array.c`. The proc iterator's concurrent-removal
+warning is why enumeration never overlaps reaping and the final verdict comes
+from `wait4`. The raw x86_64 syscall convention follows the preserved R3 helper
+layer; the new terminal ownership argument does not use R3 journal balance.
+See also the public
+[subreaper manual](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html).
+
+Production obligations remain open: Haskell acquisition publication and
+exception/cancellation preservation, pending remote births retaining ticket and
+budget credits, guardian-forwarded status collection through retry paths, all
+owned Process pools including Program inheriting the execution domain, bounded
+nonblocking transport, TERM/grace/KILL policy (the model uses immediate
+SIGKILL), complete native vector/cwd/refusal semantics and released-endpoint
+Haskell CI. The model uses fixed bounds and blocking private transport; it is
+an ownership experiment. No pidfd exit-status ioctl support-floor increase is
+assumed. Independent external service-manager births and injection into
+unrelated processes remain outside its ordinary descendant-tree model.
