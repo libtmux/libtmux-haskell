@@ -92,6 +92,12 @@ tests = testGroup "typed mutation arguments"
       C.decodePaneCapture 64 (Just 0) (begin <> payload <> ended) ""
         @?= Left C.UnexpectedReply
 
+  , testCase "a failed capture hook leaves a known native outcome" $ do
+      let primary = "%begin 1794000000 27 0\nREADY\n%end 1794000000 27 0\n"
+          failedHook = "%begin 1794000000 28 0\ndelay invalid\n%error 1794000000 28 0\n"
+      C.decodePaneCapture 64 (Just 1) (primary <> failedHook <> "%exit\n") ""
+        @?= Right (C.CaptureHookFailed failedHook)
+      C.decodePaneCapture 64 (Just 1) (primary <> "%exit\n") "" @?= Left C.UnexpectedReply
   , testCase "closed control replies separate primary and following failures" $ do
       let begin = "%begin 1794000000 27 0\n"
           ended = "%end 1794000000 27 0\n"

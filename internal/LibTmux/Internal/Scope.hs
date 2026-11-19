@@ -26,6 +26,7 @@ data TmuxException
   | InvalidConfiguration !Text -- ^ Configuration failed before acquisition.
   | InvalidObservation !Text -- ^ Acquired metadata failed final validation.
   | PaneCaptureRejected !ByteString -- ^ tmux rejected the selected pane or range.
+  | PaneCaptureHookFailed !ByteString -- ^ An after-hook failed following a successful capture.
   | PaneTextTooLarge !Int -- ^ Capture exceeded the requested byte limit.
   | InvalidTarget !Text -- ^ Target belongs to a different connection or an offline fixture.
   | UnsupportedTmuxVersion !Version.VersionError -- ^ Daemon release is older than the supported minimum.
