@@ -14,5 +14,14 @@ int libtmux_process_write(int fd, const void *buffer, size_t size);
 int libtmux_process_wait(int pidfd, int *result);
 /* Signal returns errno, with zero for success. */
 int libtmux_process_signal(int pidfd, int signal);
+/* Group operations use a retained kernel identity, never a numeric killpg. */
+int libtmux_process_group_probe(void);
+int libtmux_process_group_open(int pid);
+int libtmux_process_group_signal(int pidfd, int signal);
+int libtmux_process_pidfd_open(int pid);
+int libtmux_process_pidfd_ready(int pidfd);
+int libtmux_program_watch(const char *directory);
+int libtmux_program_watch_read(int fd);
+int libtmux_program_daemon_watch(const char *socket, int expected_pid);
 
 #endif

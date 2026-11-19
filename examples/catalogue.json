@@ -238,6 +238,41 @@
         ]
       },
       "fixture_panes": 2
+    },
+    {
+      "id": "managed-program",
+      "source": "examples/managed-program/Main.hs",
+      "package": "examples/managed-program/libtmux-managed-program.cabal",
+      "project": "examples/managed-program/cabal.project",
+      "vcs_project": "examples/managed-program/cabal.project.vcs",
+      "stdout": "examples/managed-program/expected.stdout",
+      "runner": "examples/capture-graph/run.py",
+      "executable": "managed-program",
+      "capability": "tmux 3.8, Linux 6.9 process-group pidfds and Bash timed reads",
+      "command": [
+        "python3",
+        "examples/capture-graph/run.py",
+        "--executable",
+        "managed-program",
+        "--expected-output",
+        "examples/managed-program/expected.stdout"
+      ],
+      "verification": {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "checks",
+        "step": "Isolated source-archive consumer",
+        "command": [
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
+        ],
+        "checks": [
+          "exit-status",
+          "stdout",
+          "stderr-empty",
+          "archive-consumer"
+        ]
+      }
     }
   ]
 }

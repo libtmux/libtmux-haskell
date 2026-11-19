@@ -9,9 +9,9 @@ description:
   Typed queries inspect captured values with explicit cardinality and ordering.
   Create detached sessions, rename sessions and physical windows, and set
   pane titles with checked references, bounded deadlines and correlated
-  recovery. Additional window and pane commands and events remain under
-  development.
-  .
+  recovery. Scoped terminal programs provide literal input, leader exit,
+  bounded rendered output and cleanup on the qualified Linux host.
+  Additional window and pane commands and streams remain under development.
   See the <https://libtmux.org/en/haskell/ documentation> for installation
   and examples, and the
   <https://libtmux.org/en/haskell/latest/reference/ API reference> for public
@@ -31,6 +31,7 @@ extra-doc-files:
   docs/shared-runtime.md
   docs/query.md
   docs/creation.md
+  docs/programs.md
   docs/mutations.md
   docs/fixtures.md
   docs/performance.md
@@ -70,6 +71,13 @@ extra-doc-files:
   docs/contracts/acquisition.md
   docs/contracts/pane-commands.md
 extra-source-files:
+  capabilities.json
+  examples/managed-program/Main.hs
+  examples/managed-program/README.md
+  examples/managed-program/expected.stdout
+  examples/managed-program/libtmux-managed-program.cabal
+  examples/managed-program/cabal.project
+  examples/managed-program/cabal.project.vcs
   .tool-versions
   cbits/process.h
   test-support/process-child.c
@@ -182,11 +190,11 @@ benchmark capture
 library
   import: modern
   hs-source-dirs: src internal
-  exposed-modules: LibTmux LibTmux.Creation LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
+  exposed-modules: LibTmux LibTmux.Capabilities LibTmux.Creation LibTmux.Program LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
     LibTmux.Query LibTmux.Query.Pane LibTmux.Query.Session LibTmux.Query.Window
     LibTmux.Query.Link LibTmux.Query.Occurrence LibTmux.Query.Client
     LibTmux.Query.ClientAttachment LibTmux.Query.ServerInfo
-  other-modules: LibTmux.Internal.Creation LibTmux.Internal.Mutation LibTmux.Internal.Command LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: LibTmux.Internal.Program LibTmux.Internal.Creation LibTmux.Internal.Mutation LibTmux.Internal.Command LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -225,7 +233,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: VersionProbeTest LibTmux.Internal.VersionProbe CreationTest CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
+  other-modules: CapabilitiesTest VersionProbeTest LibTmux.Internal.VersionProbe CreationTest CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
@@ -247,7 +255,7 @@ test-suite integration
   type: exitcode-stdio-1.0
   hs-source-dirs: test/integration test-support internal
   main-is: Main.hs
-  other-modules: LibTmux.Internal.Creation PublicCreationTest RuntimeCreationTest PublicMutationTest RuntimeMutationTest CommandIntegrationTest LibTmux.Internal.Mutation LibTmux.Internal.Command PublicServerTest ScopeTest LibTmux.Internal.Scope EntityCaptureTest LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: PublicProgramTest LibTmux.Internal.Creation PublicCreationTest RuntimeCreationTest PublicMutationTest RuntimeMutationTest CommandIntegrationTest LibTmux.Internal.Mutation LibTmux.Internal.Command PublicServerTest ScopeTest LibTmux.Internal.Scope EntityCaptureTest LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: test-support/fixture-watch.c test-support/process-gate.c cbits/process.c
   include-dirs: cbits
   extra-libraries: dl

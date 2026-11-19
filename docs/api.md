@@ -6,6 +6,8 @@ The public modules are:
 | --- | --- |
 | [LibTmux](../src/LibTmux.hs) | Common observation, Server and scalar entry point |
 | [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, creation, rename/title commands, deadlines and recovery |
+| [LibTmux.Program](../src/LibTmux/Program.hs) | Scoped application execution, input, exit, rendered output and cleanup |
+| [LibTmux.Capabilities](../src/LibTmux/Capabilities.hs) | Per-operation requirements from the connected daemon release |
 | [LibTmux.Creation](../src/LibTmux/Creation.hs) | Session options, process modes and historical created references |
 | [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
 | [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
@@ -25,6 +27,8 @@ The public modules are:
 Import query sources and field modules qualified, as the [query program](query.md)
 does. The common `LibTmux` module keeps snapshot collection access separate
 from query descriptions.
+The [program guide](programs.md) runs a terminal application, cancels and retries
+an observation, and distinguishes owning deadlines from observation timeouts.
 The [creation program](creation.md) uses actual returned references and reads
 them from a new capture. The [mutation program](mutations.md) selects physical targets before issuing
 commands and compares their detached observations afterward.

@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 7907db1f8f34feedf9f3ec2ca572eab1e5ed3431
+  tag: aafa58f8c61f162f9c96d7ebbd893d69e25f8d04
 ```
 
 Update the package index:
@@ -313,6 +313,32 @@ $ cabal run --verbose=0 create-session -- \
 
 It also checks duplicate-name rejection. The new session stays running until
 the demo server is stopped. More: [creation and recovery](docs/creation.md).
+
+## Run a terminal application
+
+### [`runProgram`](src/LibTmux/Server.hs): run, observe and clean up owned work
+
+The [program example](examples/managed-program/Main.hs) runs literal argv,
+cancels and retries an interactive wait, and bounds an owning scope. It requires
+tmux 3.8, Linux 6.9 process-group pidfds and Bash timed reads:
+
+```console
+$ cabal run --verbose=0 managed-program -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
+```
+
+<!-- example-output: managed-program -->
+```text
+exit: ProgramExited 7
+literal argv: True
+cancelled observation: True
+interactive retry: True
+owning deadline: True
+borrowed resources preserved: True
+```
+
+More: [program ownership, bounds and recovery](docs/programs.md).
 
 ## Clean up
 

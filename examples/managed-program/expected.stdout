@@ -1,0 +1,6 @@
+exit: ProgramExited 7
+literal argv: True
+cancelled observation: True
+interactive retry: True
+owning deadline: True
+borrowed resources preserved: True

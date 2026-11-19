@@ -105,17 +105,14 @@ def main() -> None:
                 if found:
                     doctest_modules.append(module)
                     doctests.extend(found)
-            for index, entry in enumerate(examples):
-                consumer = directory / entry["id"]
-                consumer.mkdir()
-                check_example_consumer(
-                    entry,
-                    consumer,
-                    f"../archives/libtmux-haskell-{version}.tar.gz",
-                    lambda path: archived(source, prefix + path),
-                )
-                if index == 0:
-                    check_haddock_examples(consumer, doctest_modules, doctests)
+            consumers = directory / "archive-examples"
+            check_example_consumers(
+                examples,
+                consumers,
+                f"../archives/libtmux-haskell-{version}.tar.gz",
+                lambda path: archived(source, prefix + path),
+            )
+            check_haddock_examples(consumers, doctest_modules, doctests)
             check_installation_pin(directory, examples)
             check_public_commands(source, prefix, directory, version)
         print("PASS: archive members, documented public example and Haddock examples")
@@ -152,45 +149,52 @@ def check_installation_pin(directory: Path, examples: list[Entry]) -> None:
         timeout=QUICK,
     )
     archive.write_bytes(tarball.stdout)
-    for entry in examples:
-        consumer = directory / ("installation-" + entry["id"])
-        consumer.mkdir()
-        check_example_consumer(
-            entry, consumer, "../" + archive.name, lambda path: (ROOT / path).read_bytes()
-        )
+    check_example_consumers(
+        examples,
+        directory / "installation-examples",
+        "../" + archive.name,
+        lambda path: (ROOT / path).read_bytes(),
+    )
     print("PASS: documented installation pin supports the current public examples")
 
 
-def check_example_consumer(
-    entry: Entry, consumer: Path, library: str, read_source: Callable[[str], bytes]
+def check_example_consumers(
+    examples: list[Entry], workspace: Path, library: str, read_source: Callable[[str], bytes]
 ) -> None:
-    """Build one example against ``library`` and compare its output with the catalogue."""
-    for field in ["source", "package", *(["runner", "stdout"] if "runner" in entry else [])]:
-        (consumer / Path(entry[field]).name).write_bytes(read_source(entry[field]))
-    (consumer / "cabal.project").write_text(
-        f"packages: . {library}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n"
+    """Build one archive's separate packages together, then check every output."""
+    workspace.mkdir()
+    for entry in examples:
+        consumer = workspace / entry["id"]
+        consumer.mkdir()
+        for field in ["source", "package", *(["runner", "stdout"] if "runner" in entry else [])]:
+            (consumer / Path(entry[field]).name).write_bytes(read_source(entry[field]))
+    packages = " ".join(entry["id"] for entry in examples)
+    (workspace / "cabal.project").write_text(
+        f"packages: {library} {packages}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n"
     )
-    target = "exe:" + entry["executable"]
-    run(["cabal", "build", target, "--offline"], consumer, BUILD)
-    executable = output(
-        ["cabal", "list-bin", target, "--offline"], cwd=consumer, timeout=QUICK
-    ).strip()
-    command = (
-        [sys.executable, str(consumer / Path(entry["runner"]).name), "--program", executable]
-        if "runner" in entry
-        else [executable]
-    )
-    if "fixture_panes" in entry:
-        command += ["--expected-panes", str(entry["fixture_panes"])]
-    result = bounded_run(
-        command,
-        cwd=consumer.parent,
-        check=True,
-        capture_output=True,
-        timeout=entry.get("timeout", DEFAULT_TIMEOUT),
-    )
-    if result.stdout != read_source(entry["stdout"]) or result.stderr:
-        raise ValueError("Installed example produced unexpected output")
+    run(["cabal", "build", "all", "--offline", "--jobs=2"], workspace, BUILD)
+    for entry in examples:
+        consumer = workspace / entry["id"]
+        target = "exe:" + entry["executable"]
+        executable = output(
+            ["cabal", "list-bin", target, "--offline"], cwd=workspace, timeout=QUICK
+        ).strip()
+        command = (
+            [sys.executable, str(consumer / Path(entry["runner"]).name), "--program", executable]
+            if "runner" in entry
+            else [executable]
+        )
+        if "fixture_panes" in entry:
+            command += ["--expected-panes", str(entry["fixture_panes"])]
+        result = bounded_run(
+            command,
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            timeout=entry.get("timeout", DEFAULT_TIMEOUT),
+        )
+        if result.stdout != read_source(entry["stdout"]) or result.stderr:
+            raise ValueError(f"Installed example {entry['id']} produced unexpected output")
 
 
 def check_public_commands(

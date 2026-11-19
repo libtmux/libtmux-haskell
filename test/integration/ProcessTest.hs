@@ -25,7 +25,7 @@ import LibTmux.Internal.SocketPin
 import LibTmux.Internal.Process.Native qualified as N
 import ProcessGate qualified as G
 import LibTmux.Internal.Process qualified as O
-import System.Directory (removePathForcibly)
+import System.Directory (doesFileExist, removePathForcibly)
 import System.Posix.Temp (mkdtemp)
 import System.Process.Typed (proc, readProcess)
 import System.Exit (ExitCode (..))
@@ -48,7 +48,11 @@ foreign import ccall safe "libtmux_test_stolen_wait" stolenWait :: N.WaitCall
 -- Compile once in the outer tier; bracket owns the test-runner handoff.
 withTests :: (TestTree -> IO a) -> IO a
 withTests action = bracket buildChild (removePathForcibly . fst) $ \helpers ->
-  action (tests (pure helpers))
+  action (tests (do
+    let (_, (child, policy)) = helpers
+    available <- (&&) <$> doesFileExist (Ascii.unpack child) <*> doesFileExist policy
+    unless available (assertFailure "compiled process fixture disappeared before dispatch")
+    pure helpers))
 
 tests :: IO (FilePath, (Bytes.ByteString, FilePath)) -> TestTree
 tests getChild = testGroup "private process owner"
