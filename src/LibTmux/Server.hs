@@ -380,7 +380,8 @@ data PaneText = PaneText !PaneRef !PaneCaptureOptions !Text.Text
 -- Blank rows and line endings are retained. ANSI rendering uses tmux's
 -- escape sequences. The Server capture deadline covers the request.
 -- Oversized text raises 'PaneTextTooLarge'. A missing target raises
--- 'PaneCaptureRejected'. Earlier captures stay readable.
+-- 'PaneCaptureRejected'. A failed after-hook raises 'PaneCaptureHookFailed'.
+-- Earlier captures stay readable.
 capturePane :: Server -> PaneRef -> PaneCaptureOptions -> IO PaneText
 capturePane server@(Server runtime handle executable duration _) pane@(G.PaneRef generation ident) options =
   operational $ do
@@ -395,6 +396,7 @@ capturePane server@(Server runtime handle executable duration _) pane@(G.PaneRef
         _ -> rethrowIO original
     case reply of
       Command.CaptureExceedsLimit -> throwIO (PaneTextTooLarge options.byteLimit)
+      Command.CaptureHookFailed diagnostic -> throwIO (PaneCaptureHookFailed diagnostic)
       Command.CaptureRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
       Command.CapturedPaneText bytes ->
         either (const (throwIO (InvalidObservation "pane text is not valid UTF-8")))

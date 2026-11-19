@@ -173,6 +173,12 @@ tests = testGroup "public mutation API"
         previous <- Tmux.paneText <$> Tmux.capturePane server target.ref history
         length (Text.lines previous) @?= 3
         assertBool "history rows did not come from the pane" (all (Text.isPrefixOf "row ") (Text.lines previous))
+        configured fixture ["set-hook", "-g", "after-capture-pane", "display-message -p -d invalid-duration"]
+        flip finally (configured fixture ["set-hook", "-gu", "after-capture-pane"]) $
+          Tmux.tryTmux (Tmux.capturePane server target.ref Tmux.defaultPaneCapture) >>= \case
+            Left (ExceptionWithContext _ (Tmux.PaneCaptureHookFailed diagnostic)) ->
+              assertBool "hook diagnostic lost" ("delay invalid" `Bytes.isInfixOf` diagnostic)
+            _ -> assertFailure "capture hook failure lost its outcome"
         Tmux.killPane server target.ref
         Tmux.tryTmux (Tmux.capturePane server target.ref Tmux.defaultPaneCapture) >>= \case
           Left (ExceptionWithContext _ (Tmux.PaneCaptureRejected _)) -> pure ()

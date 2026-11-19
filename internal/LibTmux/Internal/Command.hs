@@ -272,12 +272,14 @@ decodeControlReply exit output errors
 data PaneCaptureReply
   = CapturedPaneText !ByteString
   | CaptureExceedsLimit
+  | CaptureHookFailed !ByteString
   | CaptureRejected !ByteString
   deriving stock (Eq, Show)
 
 instance NFData PaneCaptureReply where
   rnf (CapturedPaneText bytes) = rnf bytes
   rnf CaptureExceedsLimit = ()
+  rnf (CaptureHookFailed diagnostic) = rnf diagnostic
   rnf (CaptureRejected diagnostic) = rnf diagnostic
 
 compilePaneCapture :: Id.PaneId -> PaneCaptureOptions -> Either ArgumentError [ByteString]
@@ -309,6 +311,9 @@ decodePaneCapture limit exit output errors
         (True, Just 0)
           | count > limit -> Right CaptureExceedsLimit
           | otherwise -> Right (CapturedPaneText (Bytes.copy (Bytes.take count body)))
+        (True, Just 1)
+          | let following = Bytes.drop (count + Bytes.length stamp + Bytes.length "%end \n") body
+          , not (Bytes.null following) -> Right (CaptureHookFailed (Bytes.copy following))
         (False, Just 1) -> Right (CaptureRejected (Bytes.copy (Bytes.take count body)))
         _ -> Left UnexpectedReply
 
