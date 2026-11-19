@@ -1,5 +1,5 @@
 history-limit kind: NumberKind
-after-new-session scopes: [SessionScope]
+after-rename-window scopes: [SessionScope]
 created session: created-workspace
 session environment: empty, removed, absent
 initial window: api

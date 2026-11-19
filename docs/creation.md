@@ -59,10 +59,10 @@ main = do
     let capabilities = Tmux.serverCapabilities server
     history <- maybe (die "Missing history-limit option") pure
       (Tmux.lookupOption capabilities "history-limit")
-    createdHook <- maybe (die "Missing after-new-session hook") pure
-      (Tmux.lookupHook capabilities "after-new-session")
+    renameHook <- maybe (die "Missing after-rename-window hook") pure
+      (Tmux.lookupHook capabilities "after-rename-window")
     putStrLn $ "history-limit kind: " <> show history.optionKind
-    putStrLn $ "after-new-session scopes: " <> show createdHook.hookScopes
+    putStrLn $ "after-rename-window scopes: " <> show renameHook.hookScopes
     before <- Tmux.capture server
     created <- Tmux.createSession server options
     let environment = Tmux.SessionEnvironment created.session
@@ -167,7 +167,7 @@ Program output:
 <!-- example-output: create-session -->
 ```text
 history-limit kind: NumberKind
-after-new-session scopes: [SessionScope]
+after-rename-window scopes: [SessionScope]
 created session: created-workspace
 session environment: empty, removed, absent
 initial window: api
