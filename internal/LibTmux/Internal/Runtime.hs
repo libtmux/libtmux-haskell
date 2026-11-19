@@ -436,8 +436,7 @@ closeEntry entry = mask_ $ do
 requestClose :: Runtime -> IO Report
 requestClose runtime = mask_ $ do
   entries <- atomically $ do
-    writeTVar runtime.admission False
-    when runtime.ownsBudget (B.closeAdmission runtime.budget)
+    closeRuntimeAdmission runtime
     _ <- S.closeAdmission runtime.scheduler
     owners <- readTVar runtime.owners
     forM_ owners $ \owner -> do
@@ -479,7 +478,12 @@ awaitCleanup runtime = do
 -- its registered owners. Cleanup-request failures remain in 'closeFailures'.
 shutdown :: Runtime -> IO Report
 shutdown runtime@Runtime {forker} = runShutdown forker runtime.shutdownRun
-  (B.closeAdmission runtime.budget) (inspect runtime) (shutdownPhases runtime)
+  (closeRuntimeAdmission runtime) (inspect runtime) (shutdownPhases runtime)
+
+closeRuntimeAdmission :: Runtime -> STM ()
+closeRuntimeAdmission runtime = do
+  writeTVar runtime.admission False
+  when runtime.ownsBudget (B.closeAdmission runtime.budget)
 
 runShutdown
   :: P.Fork -> TVar (Maybe (TMVar (Either SomeException ())))
