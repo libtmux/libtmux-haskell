@@ -8,6 +8,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text qualified as Text
 import Fixture qualified
 import LibTmux qualified as Tmux
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Creation qualified as Creation
 import System.Exit (ExitCode (..))
 import System.OsString.Posix qualified as Os
@@ -117,7 +118,7 @@ tests = testGroup "public window and pane creation"
           before <- Tmux.capture server
           Tmux.tryTmux (Tmux.createWindow server (Creation.After (slot upper)) windowOptions) >>= \case
             Left (ExceptionWithContext context (Tmux.InvalidMutationArgument _)) ->
-              assertBool "maximum-slot refusal retained creation" (null (Tmux.creationRecoveries context))
+              assertBool "maximum-slot refusal retained creation" (null (Recovery.creationRecoveries context))
             _ -> assertFailure "maximum-slot insertion reached the daemon"
           after <- Tmux.capture server
           map (.ref) (Tmux.windows after) @?= map (.ref) (Tmux.windows before)
@@ -134,7 +135,7 @@ tests = testGroup "public window and pane creation"
                  Tmux.splitPane otherServer (Creation.WindowSlot session.ref base.windowIndex) base.pane splitOptions] $ \request ->
             Tmux.tryTmux request >>= \case
               Left (ExceptionWithContext context (Tmux.InvalidTarget _)) ->
-                assertBool "foreign target retained creation" (null (Tmux.creationRecoveries context))
+                assertBool "foreign target retained creation" (null (Recovery.creationRecoveries context))
               _ -> assertFailure "foreign generation was admitted"
           after <- Tmux.capture otherServer
           map (.ref) (Tmux.panes after) @?= map (.ref) (Tmux.panes before)
@@ -143,7 +144,7 @@ tests = testGroup "public window and pane creation"
                Tmux.splitPane server (slot base) base.pane splitOptions {Creation.size = Creation.SplitPercent 0}] $ \request ->
           Tmux.tryTmux request >>= \case
             Left (ExceptionWithContext context (Tmux.InvalidMutationArgument _)) ->
-              assertBool "invalid operands retained creation" (null (Tmux.creationRecoveries context))
+              assertBool "invalid operands retained creation" (null (Recovery.creationRecoveries context))
             _ -> assertFailure "invalid creation operands were admitted"
         stale <- Tmux.createWindow server (Creation.NextFree base.session) windowOptions
         withPane fixture stale.pane $ do
@@ -176,13 +177,13 @@ tests = testGroup "public window and pane creation"
                   bounded (wait worker) >>= \case
                     Left (ExceptionWithContext context problem) -> do
                       fromException @AsyncException problem @?= Just ThreadKilled
-                      recovery <- one (Tmux.creationRecoveries context)
-                      created <- Tmux.creationReceipt recovery >>= maybe (fail "cancellation lost observed IDs") pure
+                      recovery <- one (Recovery.creationRecoveries context)
+                      created <- Recovery.creationReceipt recovery >>= maybe (fail "cancellation lost observed IDs") pure
                       created.pane @?= added.ref
                       assertLink fresh created
-                      status <- bounded (Tmux.awaitCreationRecovery recovery)
-                      status.logical.outcome @?= Just Tmux.OutcomeUnknown
-                      Tmux.detachCreationRecovery recovery >>= (@?= True)
+                      status <- bounded (Recovery.awaitCreationRecovery recovery)
+                      status.logical.outcome @?= Just Recovery.OutcomeUnknown
+                      Recovery.detachCreationRecovery recovery >>= (@?= True)
                     Right _ -> assertFailure "cancelled creation returned success"
 
   , testCase "destructive after-hooks leave reachable historical IDs" $
