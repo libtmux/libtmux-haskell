@@ -83,10 +83,9 @@ The prepared copy repairs Haddock's navigation:
 - Source text and identifier targets keep their native contents. No private API
   page is added.
 
-`navigation.json` records raw and prepared file digests and edit counts. The
-check rejects missing local targets, browser assets and unexpected duplicate
-IDs, including index and search links. It does not verify external dependency
-URLs, prove that a raw directory is fresh, or publish anything.
+The preparer will write its manifest as `navigation.json` after checking local
+targets, browser assets and duplicate IDs. The manifest records raw and
+prepared file digests and edit counts.
 
 The complete [capture example](../examples/capture-graph/Main.hs),
 [shared Runtime example](../examples/shared-runtime/Main.hs),
