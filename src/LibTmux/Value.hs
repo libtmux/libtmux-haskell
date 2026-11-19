@@ -16,6 +16,8 @@ module LibTmux.Value
     Dimension
   , WindowIndex
   , PaneIndex
+    -- * Absolute resize requests
+  , Resize (..)
     -- * Validate input
   , ValueError (..)
   , mkDimension
@@ -35,6 +37,17 @@ import Control.DeepSeq (NFData)
 newtype Dimension = Dimension Integer
   deriving stock (Eq, Ord, Show)
   deriving newtype (NFData)
+
+-- | Request a positive absolute width, height, or both in cells. Every request
+-- contains at least one checked 'Dimension'; there is no empty/native-default
+-- request. 'LibTmux.Server.resizePane' and 'LibTmux.Server.resizeWindow' check
+-- every supplied axis against their 10000-cell limit before dispatch.
+-- Native layout constraints can clamp the eventual geometry.
+data Resize
+  = ResizeWidth !Dimension -- ^ Request width; retain the native height.
+  | ResizeHeight !Dimension -- ^ Request height; retain the native width.
+  | ResizeBoth !Dimension !Dimension -- ^ Request width followed by height.
+  deriving stock (Eq, Show)
 
 -- | Nonnegative index of a window link within a session, not a physical window ID.
 -- Construct with 'mkWindowIndex'; read with 'windowIndexValue'.
