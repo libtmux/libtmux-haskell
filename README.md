@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: c575ed478264fb70bbee3ee9c31fb69f2b2d7e02
+  tag: cc2d94ae7257d05c638016ca556ae918e4de00e0
 ```
 
 Update the package index:
@@ -298,7 +298,7 @@ $ cabal run --verbose=0 mutate-graph -- \
 A new capture shows the changes; the old snapshot keeps its values. Each
 rename is its own command, and a later failure undoes nothing.
 
-## Create a session
+## Create sessions, windows and panes
 
 ### [`createSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-createsession/): create and use its targets
 
@@ -317,6 +317,19 @@ created and checks that the original sessions survive. See the
 
 Use [`sendKeys`](docs/mutations.md#send-input-to-a-pane) to type text or send
 named keys to the new pane.
+
+### [`createWindow`](src/LibTmux/Server.hs): add a window at an explicit placement
+
+The same program adds a window to the created session. Choose its next free
+index, an exact slot, or insertion before or after a slot. Occupied slots
+require an explicit replacement policy.
+
+### [`splitPane`](src/LibTmux/Server.hs): split one pane through an exact link
+
+The program splits that window's initial pane, sends input to the new pane and
+cleans up its session. A `WindowSlot` retains the session and index; a `PaneRef`
+chooses the pane even when another pane is active. Capture again for actual
+dimensions and pane count.
 
 ## Run a terminal application
 
@@ -366,7 +379,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Install in an application | [Cabal installation](https://libtmux.org/en/haskell/latest/guides/installation/) |
 | Capture, filter and navigate linked windows | [Observations and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) |
 | Compose typed predicates, traverse relations and require one match | [Typed queries](https://libtmux.org/en/haskell/latest/guides/query/) |
-| Create a session and recover its actual targets | [Session creation](https://libtmux.org/en/haskell/latest/guides/creation/) |
+| Create sessions, windows and panes with recoverable targets | [Creation](https://libtmux.org/en/haskell/latest/guides/creation/) |
 | Rename sessions/windows, set pane titles and recover interrupted commands | [Mutations](https://libtmux.org/en/haskell/latest/guides/mutations/) |
 | Share ownership across independent Server scopes | [Shared Runtime](https://libtmux.org/en/haskell/latest/guides/shared-runtime/) |
 | Understand IDs, indices and validation errors | [Typed values](https://libtmux.org/en/haskell/latest/guides/typed-values/) |
@@ -379,7 +392,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 ## Support and status
 
 - **Experimental.** The API may change.
-- **Works today.** Captures, typed queries, session creation, renames and pane titles.
+- **Works today.** Captures, typed queries, session/window creation, pane splits, renames and pane titles.
 - **In development.** Window/pane creation, pane input and event streams.
 - **Platform.** Linux x86_64. [Host requirements](docs/installation.md).
 - **More.** [Status](https://libtmux.org/en/haskell/latest/guides/status/) · [source guides](docs/README.md).

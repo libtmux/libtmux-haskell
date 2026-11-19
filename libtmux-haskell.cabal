@@ -7,11 +7,11 @@ description:
   physical windows, panes and contextual links with ordinary Haskell values.
   Scoped handles retain cleanup ownership after cancellation and failure.
   Typed queries inspect captured values with explicit cardinality and ordering.
-  Create detached sessions, rename sessions and physical windows, and set
+  Create sessions, windows and panes, rename sessions and physical windows, and set
   pane titles with checked references, bounded deadlines and correlated
   recovery. Scoped terminal programs provide literal input, leader exit,
   bounded rendered output and cleanup on the qualified Linux host.
-  Additional window and pane commands and streams remain under development.
+  Additional contextual commands and streams remain under development.
   See the <https://libtmux.org/en/haskell/ documentation> for installation
   and examples, and the
   <https://libtmux.org/en/haskell/latest/reference/ API reference> for public

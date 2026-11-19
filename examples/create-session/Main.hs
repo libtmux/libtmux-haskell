@@ -32,8 +32,14 @@ main = getArgs >>= \case
       created <- Tmux.createSession server options
       Tmux.renameWindow server created.window "api"
       Tmux.setPaneTitle server created.pane "editor-ready"
-      Tmux.sendKeys server created.pane (Tmux.LiteralText "Enter")
-      Tmux.sendKeys server created.pane (Tmux.NamedKeys ("Enter" :| []))
+      added <- Tmux.createWindow server (Creation.NextFree created.session)
+        Creation.defaultWindowOptions {Creation.windowLabel = Just "worker", Creation.windowProcess = options.process}
+      split <- Tmux.splitPane server
+        (Creation.WindowSlot added.session added.windowIndex) added.pane
+        Creation.defaultSplitOptions {Creation.direction = Creation.LeftRight,
+          Creation.size = Creation.SplitPercent 25, Creation.splitProcess = options.process}
+      Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
+      Tmux.sendKeys server split.pane (Tmux.NamedKeys ("Enter" :| []))
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -47,21 +53,28 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, before, after, rejected, remaining)
+      pure (created, added, split, before, after, rejected, remaining)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, before, after, rejected, remaining) -> do
+      Right (created, added, split, before, after, rejected, remaining) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
+        worker <- require "New window" (Tmux.lookupWindow after added.window)
+        panes <- require "New window panes" (Tmux.panesForWindow after added.window)
+        splitPane <- require "Split pane" (Tmux.lookupPane after split.pane)
         links <- require "Created session links" (Tmux.linksForSession after created.session)
         label <- require "Window label" (Tmux.labelText window.name)
+        workerLabel <- require "New window label" (Tmux.labelText worker.name)
         putStrLn $ "created session: " <> Text.unpack session.name
         putStrLn $ "initial window: " <> Text.unpack label
         putStrLn $ "pane title: " <> Text.unpack pane.title
         putStrLn $ "same created targets: " <> show (session.ref == created.session && window.ref == created.window && pane.ref == created.pane)
         putStrLn $ "captured sessions: " <> show (length (Tmux.sessions before)) <> " -> " <> show (length (Tmux.sessions after))
-        putStrLn $ "created window links: " <> show (length links)
+        putStrLn $ "created session links: " <> show (length links)
+        putStrLn $ "new window: " <> Text.unpack workerLabel
+        putStrLn $ "new window panes: " <> show (length panes)
+        putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
         putStrLn $ "duplicate name rejected: " <> show rejected
         putStrLn $ "original sessions after removal: " <> show
           (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))

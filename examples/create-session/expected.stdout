@@ -3,6 +3,9 @@ initial window: api
 pane title: editor-ready
 same created targets: True
 captured sessions: 1 -> 2
-created window links: 1
+created session links: 2
+new window: worker
+new window panes: 2
+split exact target: True
 duplicate name rejected: True
 original sessions after removal: True
