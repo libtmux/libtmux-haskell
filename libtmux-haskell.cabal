@@ -143,9 +143,6 @@ extra-source-files:
   examples/capture-graph/libtmux-capture-graph.cabal
   examples/capture-graph/cabal.project
   examples/capture-graph/cabal.project.vcs
-  examples/capture-graph/run.py
-  examples/capture-graph/test_run.py
-  examples/capture-graph/conftest.py
   examples/offline-graph/Main.hs
   examples/offline-graph/README.md
   examples/offline-graph/expected.stdout
@@ -211,7 +208,8 @@ benchmark capture
   ghc-options: -threaded -rtsopts
   build-depends:
     filepath >=1.5.4 && <1.6,
-    libtmux-haskell
+    libtmux-haskell,
+    os-string >=2.0.8 && <2.1
 
 library
   import: modern

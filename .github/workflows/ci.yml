@@ -36,11 +36,11 @@ jobs:
       - name: Install script tools from the lock file
         run: uv sync --locked
       - name: Script format check (ruff format)
-        run: uv run --locked ruff format --check scripts examples/capture-graph
+        run: uv run --locked ruff format --check scripts
       - name: Script lint (ruff check)
-        run: uv run --locked ruff check scripts examples/capture-graph
+        run: uv run --locked ruff check scripts
       - name: Script type check (ty check)
-        run: uv run --locked ty check scripts examples/capture-graph
+        run: uv run --locked ty check scripts
       - name: Haddock popover script syntax check (node --check)
         run: node --check scripts/prepare_haddock/assets/source-popover.js
       - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
@@ -98,10 +98,6 @@ jobs:
         run: cabal test specs --offline --test-show-details=direct --test-options='--strict --fail-on=empty'
       - name: Unit tests
         run: cabal test unit --offline --test-show-details=direct
-      - name: Capture benchmark fixture tests
-        env:
-          LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
-        run: uv run --locked pytest -q examples/capture-graph/test_run.py
       - name: Documented example command
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}

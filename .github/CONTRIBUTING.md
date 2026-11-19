@@ -105,15 +105,15 @@ Check formatting, lint rules and types for every script and for the example
 runner in `examples/capture-graph`:
 
 ```console
-$ uv run --locked ruff format --check scripts examples/capture-graph
+$ uv run --locked ruff format --check scripts
 ```
 
 ```console
-$ uv run --locked ruff check scripts examples/capture-graph
+$ uv run --locked ruff check scripts
 ```
 
 ```console
-$ uv run --locked ty check scripts examples/capture-graph
+$ uv run --locked ty check scripts
 ```
 
 Run every script's fixture-based tests and doctests without network access:

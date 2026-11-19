@@ -8,14 +8,9 @@ The benchmark times the public `capture` operation.
   teardown.
 - Each sample uses the default two-second capture timeout.
 
-Build the benchmark from a provisioned checkout:
-
-```console
-$ cabal build bench:capture --offline
-```
-
-Run the three workloads against a tmux binary. The output directory must not
-exist yet; it receives raw CSV samples, host context and a JSON summary:
+Run from a provisioned checkout. The driver builds the benchmark and runs
+three workloads. It writes raw CSV samples, host context and a JSON summary
+to a new output directory.
 
 ```console
 $ uv run scripts/capture_benchmark/capture_benchmark.py \
@@ -27,10 +22,9 @@ Repeat `--tmux` to compare binaries in one sweep. The reference run uses the
 minimum supported tmux, 3.3a, and the newest release tested, 3.8. Benchmarks
 stay out of routine tests.
 
-- The [Haskell harness](../bench/Capture.hs) uses the public API.
-- The [fixture driver](../scripts/capture_benchmark/capture_benchmark.py) owns
-  a foreground daemon, tracks each pane with a pidfd, and checks graph sizes and
-  exits before accepting a result.
+- The [Haskell harness](../bench/Capture.hs) builds the graph using the public
+  API inside `withOwnedServer`. The [driver](../scripts/capture_benchmark/capture_benchmark.py)
+  checks each sample and records a case after the scope returns.
 - Medium and large cases link three physical windows across sessions. Every
   case keeps two appearances of the initial window.
 

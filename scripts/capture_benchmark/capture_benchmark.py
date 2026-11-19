@@ -7,7 +7,6 @@
 import argparse
 import csv
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -16,71 +15,21 @@ import shutil
 import statistics
 import sys
 import time
-from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Protocol
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(Path(__file__).resolve().parents[1] / "bounded"))
 
 import bounded
-from bounded import QUICK
-
-SOURCE = ROOT / "examples/capture-graph/run.py"
+from bounded import BUILD, QUICK
 
 type Size = tuple[str, int, int, int]
 type Sample = dict[str, int]
 
-# Seconds. A case's fixture commands share one budget; README.md records what it
-# sits above. The short commands use ``QUICK`` and the workload has its own limit.
 CASE_BUDGET = 120
-CREATED = "#{window_id} #{pane_id} #{pane_pid}"
-
-
-class Fixture(Protocol):
-    """The two names the benchmark uses from the capture-graph example's ``run.py``."""
-
-    def fixture(self, binary: str) -> AbstractContextManager[tuple[str, dict[str, str]]]:
-        """Own a daemon; yield its socket path and the environment to run clients in."""
-
-    def exited(self, descriptors: list[int]) -> None:
-        """Wait until every process behind the pidfds has exited."""
-
-
 SIZES: list[Size] = [("small", 1, 3, 6), ("medium", 5, 25, 75), ("large", 15, 80, 250)]
-HARNESS = [
-    "bench/Capture.hs",
-    "scripts/capture_benchmark/capture_benchmark.py",
-    "examples/capture-graph/run.py",
-]
-
-
-class RunnerFixture:
-    """The two functions the benchmark takes from a loaded runner module.
-
-    Reading both at load time fails at once if the runner renames either.
-    """
-
-    def __init__(self, module: ModuleType) -> None:
-        self._fixture = module.fixture
-        self._exited = module.exited
-
-    def fixture(self, binary: str) -> AbstractContextManager[tuple[str, dict[str, str]]]:
-        return self._fixture(binary)
-
-    def exited(self, descriptors: list[int]) -> None:
-        self._exited(descriptors)
-
-
-def load_fixture(source: Path = SOURCE) -> Fixture:
-    """Import the capture-graph example's daemon fixture by path."""
-    spec = importlib.util.spec_from_file_location("capture_fixture", source)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load the benchmark fixture from {source}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return RunnerFixture(module)
+HARNESS = ["bench/Capture.hs", "scripts/capture_benchmark/capture_benchmark.py"]
 
 
 def spread(total: int, parts: int) -> list[int]:
@@ -129,9 +78,11 @@ def parse_samples(stdout: bytes, samples: int) -> list[Sample]:
     return rows
 
 
-def check_samples(rows: list[Sample], size: Size, pane_counts: list[int], extra_links: int) -> None:
+def check_samples(rows: list[Sample], size: Size) -> None:
     """Require every sample to observe the graph the fixture built, with sane timings."""
     _, session_count, window_count, pane_count = size
+    pane_counts = spread(pane_count, window_count)
+    extra_links = min(window_count, 3) if session_count > 1 else 0
     for index, row in enumerate(rows, 1):
         occurrences = pane_count + pane_counts[0] + (sum(pane_counts[:3]) if extra_links else 0)
         observed = (
@@ -152,132 +103,33 @@ def check_samples(rows: list[Sample], size: Size, pane_counts: list[int], extra_
         )
         if observed != expected:
             raise RuntimeError(f"capture benchmark observed a different graph: {row}")
-        if row["capture_ns"] > row["elapsed_ns"] or row["elapsed_ns"] <= 0:
+        if (
+            not 0 < row["capture_ns"] <= row["elapsed_ns"]
+            or row["haskell_cpu_ps"] < 0
+            or not 0 < row["setup_ns"] == rows[0]["setup_ns"]
+        ):
             raise RuntimeError("capture benchmark returned inconsistent timing")
 
 
-class Graph:
-    """The sessions, windows and panes one case builds through the fixture's tmux.
-
-    Every pane it creates is tracked by pidfd, so leaving the owning ``ExitStack``
-    confirms that each one exited.
-    """
-
-    def __init__(
-        self,
-        fixture: Fixture,
-        binary: str,
-        socket: str,
-        environment: dict[str, str],
-        panes: ExitStack,
-        started: float,
-    ) -> None:
-        self.fixture = fixture
-        self.binary = binary
-        self.socket = socket
-        self.environment = environment
-        self.panes = panes
-        self.started = started
-
-    def tmux(self, *arguments: str) -> list[str]:
-        """Run one tmux command against the fixture's socket and split its output."""
-        if time.monotonic() - self.started > CASE_BUDGET:
-            raise RuntimeError(f"benchmark fixture exceeded its {CASE_BUDGET} s case budget")
-        result = bounded.run(
-            [self.binary, "-u", "-N", "-S", self.socket, *arguments],
-            env=self.environment,
-            capture_output=True,
-            check=True,
-            timeout=1,
-        )
-        if result.stderr:
-            raise RuntimeError(f"fixture command wrote stderr: {result.stderr!r}")
-        return result.stdout.decode("ascii").strip().split()
-
-    def created(self, *arguments: str) -> tuple[str, str]:
-        """Run a command that creates a pane; return its window and pane ids."""
-        fields = self.tmux(*arguments)
-        if len(fields) != 3 or not fields[0].startswith("@") or not fields[1].startswith("%"):
-            raise RuntimeError("invalid benchmark window/pane receipt")
-        descriptor = os.pidfd_open(int(fields[2]))
-        self.panes.callback(os.close, descriptor)
-        self.panes.callback(self.fixture.exited, [descriptor])
-        return fields[0], fields[1]
-
-    def sessions_and_windows(self, size: Size) -> tuple[list[str], list[tuple[str, str]]]:
-        """Create the sessions and windows; return the session names and each window's first pane."""
-        _, session_count, window_count, _ = size
-        first = self.tmux("display-message", "-p", "-t", "demo:0", "-F", "#{window_id} #{pane_id}")
-        if len(first) != 2:
-            raise RuntimeError("missing initial benchmark window")
-        windows = [(first[0], first[1])]
-        sessions = ["demo"]
-        for index, count in enumerate(spread(window_count, session_count)):
-            if index:
-                session = "bench-" + str(index)
-                sessions.append(session)
-                windows.append(
-                    self.created(
-                        *["new-session", "-d", "-P", "-F", CREATED, "-s", session],
-                        *["-x", "200", "-y", "60", "/bin/cat", "-"],
-                    )
-                )
-            else:
-                session = "demo"
-            for _ in range(count - 1):
-                windows.append(
-                    self.created(
-                        *["new-window", "-d", "-P", "-F", CREATED, "-t", session + ":"],
-                        *["/bin/cat", "-"],
-                    )
-                )
-        return sessions, windows
-
-    def split_panes(self, size: Size, windows: list[tuple[str, str]]) -> list[int]:
-        """Split each window to its pane count; return the counts."""
-        _, _, window_count, pane_count = size
-        pane_counts = spread(pane_count, window_count)
-        for (_, pane), count in zip(windows, pane_counts, strict=True):
-            for _ in range(count - 1):
-                self.created(
-                    *["split-window", "-h", "-d", "-P", "-F", CREATED, "-t", pane],
-                    *["/bin/cat", "-"],
-                )
-        return pane_counts
-
-    def link_windows(self, size: Size, sessions: list[str], windows: list[tuple[str, str]]) -> int:
-        """Link the first three windows into the next session; return how many links exist."""
-        _, session_count, _, _ = size
-        if session_count < 2:
-            return 0
-        for index, (window, _) in enumerate(windows[:3]):
-            target = sessions[(index + 1) % session_count] + ":" + str(100 + index)
-            self.tmux("link-window", "-d", "-s", window, "-t", target)
-        return len(windows[:3])
-
-    def build(self, size: Size) -> tuple[list[int], int]:
-        """Build the graph; return the pane count of each window and the number of extra links."""
-        sessions, windows = self.sessions_and_windows(size)
-        pane_counts = self.split_panes(size, windows)
-        return pane_counts, self.link_windows(size, sessions, windows)
-
-
 def run_workload(
-    program: str,
-    binary: str,
-    socket: str,
-    environment: dict[str, str],
-    samples: int,
-    key: str,
-    output: Path,
+    program: str, binary: str, size: Size, samples: int, key: str, output: Path
 ) -> list[Sample]:
-    """Run the Haskell benchmark against the built graph and keep its raw output."""
+    """Run one Haskell-owned graph and keep its raw output."""
+    _, sessions, windows, panes = size
     result = bounded.run(
-        [program, socket, binary, str(samples), "+RTS", "-N1", "-RTS"],
-        env=environment,
+        [
+            program,
+            binary,
+            str(sessions),
+            str(windows),
+            str(panes),
+            str(samples),
+            "+RTS",
+            "-N1",
+            "-RTS",
+        ],
         capture_output=True,
-        check=False,
-        timeout=min(120, 3 * samples + 5),
+        timeout=CASE_BUDGET,
     )
     (output / f"{key}.stdout").write_bytes(result.stdout)
     (output / f"{key}.stderr").write_bytes(result.stderr)
@@ -288,7 +140,6 @@ def run_workload(
 
 
 def measure(
-    fixture: Fixture,
     binary: str,
     binary_index: int,
     binary_hash: str,
@@ -303,14 +154,8 @@ def measure(
     key = f"{version.replace(' ', '-')}-{binary_index}-{binary_hash[:12]}-{name}"
     started = time.monotonic()
     before = host_state()
-    with ExitStack() as panes, fixture.fixture(binary) as (socket, environment):
-        graph = Graph(fixture, binary, socket, environment, panes, started)
-        pane_counts, extra_links = graph.build(size)
-        setup_seconds = time.monotonic() - started
-        rows = run_workload(program, binary, socket, environment, samples, key, output)
-        check_samples(rows, size, pane_counts, extra_links)
-    # The fixture daemon and initial pane have exited before the remaining
-    # pane pidfds are observed by the outer ownership scope.
+    rows = run_workload(program, binary, size, samples, key, output)
+    check_samples(rows, size)
     elapsed = [row["elapsed_ns"] / 1_000_000 for row in rows]
     report = {
         "status": "PASS",
@@ -322,7 +167,7 @@ def measure(
         "sessions": session_count,
         "windows": window_count,
         "panes": pane_count,
-        "setupSeconds": round(setup_seconds, 3),
+        "setupSeconds": round(rows[0]["setup_ns"] / 1_000_000_000, 3),
         "caseSeconds": round(time.monotonic() - started, 3),
         "captureMilliseconds": {
             "min": min(elapsed),
@@ -330,7 +175,7 @@ def measure(
             "max": max(elapsed),
         },
         "defaultTimeoutSeconds": 2,
-        "ownedDaemonAndAllTrackedPanesExitObserved": True,
+        "ownedScopeClosed": True,
         "hostBefore": before,
         "hostAfter": host_state(),
     }
@@ -426,6 +271,9 @@ def main() -> None:
     if not 1 <= args.samples <= 50:
         parser.error("samples must be between 1 and 50")
     args.output.mkdir(parents=True, exist_ok=False)
+    bounded.run(
+        ["cabal", "build", "bench:capture", "--offline"], cwd=ROOT, check=True, timeout=BUILD
+    )
     program = bounded.output(
         ["cabal", "list-bin", "bench:capture", "--offline", "-v0"],
         cwd=ROOT,
@@ -433,8 +281,7 @@ def main() -> None:
     ).strip()
     if not Path(program).is_file():
         args.output.rmdir()
-        parser.exit(1, "Build the benchmark first: cabal build bench:capture --offline\n")
-    fixture = load_fixture()
+        parser.exit(1, "Cabal returned no capture benchmark executable\n")
     reports = []
     for binary_index, candidate in enumerate(args.tmux, 1):
         binary = shutil.which(candidate)
@@ -444,7 +291,6 @@ def main() -> None:
         for size in SIZES:
             reports.append(
                 measure(
-                    fixture,
                     binary,
                     binary_index,
                     binary_hash,

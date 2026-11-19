@@ -2,8 +2,6 @@
 
 import json
 import sys
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -19,6 +17,8 @@ def sample(**changes: int) -> bench.Sample:
         "iteration": 1,
         "elapsed_ns": 2_000,
         "capture_ns": 1_000,
+        "haskell_cpu_ps": 80_000,
+        "setup_ns": 90_000_000,
         "sessions": 5,
         "windows": 25,
         "panes": 75,
@@ -40,16 +40,9 @@ def test_the_harness_names_files_that_exist() -> None:
     assert [path for path in bench.HARNESS if not (bench.ROOT / path).is_file()] == []
 
 
-def test_the_capture_graph_fixture_provides_the_daemon_and_exit_watch() -> None:
-    """The driver relies on two names from the example runner's fixture."""
-    fixture = bench.load_fixture()
-    assert callable(fixture.fixture)
-    assert callable(fixture.exited)
-
-
 def test_samples_that_match_the_built_graph_are_accepted() -> None:
     """Medium graph: 3 panes per window, 3 extra links and 3 repeated appearances."""
-    bench.check_samples([sample()], MEDIUM, bench.spread(75, 25), extra_links=3)
+    bench.check_samples([sample()], MEDIUM)
 
 
 @pytest.mark.parametrize(
@@ -68,7 +61,7 @@ def test_samples_from_a_different_graph_or_with_bad_timing_are_rejected(
 ) -> None:
     """A sample that does not describe the built graph, or whose timing is impossible, fails."""
     with pytest.raises(RuntimeError, match=message):
-        bench.check_samples([sample(**changes)], MEDIUM, bench.spread(75, 25), extra_links=3)
+        bench.check_samples([sample(**changes)], MEDIUM)
 
 
 @pytest.mark.parametrize("samples", ["0", "51"])
@@ -100,42 +93,20 @@ def test_an_existing_output_directory_is_refused(
 
 
 FAKE_TMUX = """#!{python}
-import os, sys
-arguments = sys.argv[1:]
-if arguments == ["-V"]:
-    print("tmux 9.9")
-    sys.exit(0)
-verb = arguments[4]
-with open(os.environ["FAKE_TMUX_LOG"], "a") as log:
-    log.write(verb + "\\n")
-if verb == "display-message":
-    print("@0 %0")
-elif verb != "link-window":
-    print("@1 %1", os.getppid())
+import sys
+assert sys.argv[1:] == ["-V"], sys.argv
+print("tmux 9.9")
 """
 FAKE_PROGRAM = """#!{python}
+from pathlib import Path
 import sys
-print("iteration,elapsed_ns,capture_ns,sessions,windows,panes,window_links,pane_occurrences")
-for index in range(1, int(sys.argv[3]) + 1):
-    print(index, 2000, 1000, 2, 3, 4, 7, 10, sep=",")
+assert Path(sys.argv[1]).name == "tmux", sys.argv
+sessions, windows, panes, samples = map(int, sys.argv[2:6])
+assert sys.argv[6:] == ["+RTS", "-N1", "-RTS"], sys.argv
+print("iteration,elapsed_ns,haskell_cpu_ps,capture_ns,sessions,windows,panes,window_links,pane_occurrences,setup_ns")
+for index in range(1, samples + 1):
+    print(index, 2000, 80000, 1000, sessions, windows, panes, 7, 10, 90000000, sep=",")
 """
-
-
-class FakeFixture:
-    """Stands in for the capture-graph fixture: one socket path and no daemon."""
-
-    def __init__(self, tmp_path: Path) -> None:
-        self.tmp_path = tmp_path
-        self.exits: list[list[int]] = []
-
-    @contextmanager
-    def fixture(self, binary: str) -> Generator[tuple[str, dict[str, str]]]:
-        """Yield a socket path and an environment that names the call log."""
-        yield str(self.tmp_path / "socket"), {"FAKE_TMUX_LOG": str(self.tmp_path / "calls.log")}
-
-    def exited(self, descriptors: list[int]) -> None:
-        """Record the descriptors the driver asked to observe."""
-        self.exits.append(descriptors)
 
 
 def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_path: Path) -> None:
@@ -148,10 +119,7 @@ def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_pat
     program.chmod(0o700)
     output = tmp_path / "out"
     output.mkdir()
-    fixture = FakeFixture(tmp_path)
-
     report = bench.measure(
-        fixture,
         str(binary),
         1,
         "ab" * 32,
@@ -161,12 +129,6 @@ def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_pat
         output,
     )
 
-    verbs = (tmp_path / "calls.log").read_text().split()
-    assert verbs == [
-        *["display-message", "new-window", "new-session", "split-window"],
-        *["link-window"] * 3,
-    ]
-    assert len(fixture.exits) == 3
     key = "tmux-9.9-1-" + "ab" * 6 + "-tiny"
     assert report["artifactKey"] == key
     assert (report["status"], report["sessions"], report["windows"], report["panes"]) == (
@@ -176,7 +138,8 @@ def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_pat
         4,
     )
     assert report["captureMilliseconds"] == {"min": 0.002, "median": 0.002, "max": 0.002}
-    assert report["ownedDaemonAndAllTrackedPanesExitObserved"] is True
+    assert report["setupSeconds"] == 0.09
+    assert report["ownedScopeClosed"] is True
     assert sorted(path.name for path in output.iterdir()) == [
         f"{key}.json",
         f"{key}.stderr",
@@ -185,11 +148,13 @@ def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_pat
     assert json.loads((output / f"{key}.json").read_text())["artifactKey"] == key
 
 
-def test_a_missing_benchmark_build_says_how_to_make_it(
+def test_the_driver_prepares_the_benchmark_before_looking_for_its_executable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Without ``bench:capture`` built, the driver names the build command and leaves no output."""
+    """The driver builds once and fails cleanly if Cabal supplies no executable."""
     output = tmp_path / "results"
+    commands = []
+    monkeypatch.setattr(bench.bounded, "run", lambda args, **kwargs: commands.append(args))
     monkeypatch.setattr(bench.bounded, "output", lambda *_, **__: str(tmp_path / "none"))
     monkeypatch.setattr(
         sys, "argv", ["capture_benchmark", "--tmux", "tmux", "--output", str(output)]
@@ -197,5 +162,6 @@ def test_a_missing_benchmark_build_says_how_to_make_it(
     with pytest.raises(SystemExit) as exit_status:
         bench.main()
     assert exit_status.value.code == 1
-    assert "cabal build bench:capture --offline" in capsys.readouterr().err
+    assert commands == [["cabal", "build", "bench:capture", "--offline"]]
+    assert "Cabal returned no capture benchmark executable" in capsys.readouterr().err
     assert not output.exists()
