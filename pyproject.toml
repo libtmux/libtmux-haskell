@@ -1,9 +1,10 @@
-# Tooling for the maintainer scripts under scripts/. The Haskell package has no
-# Python dependency and does not build or install this project.
+# Tooling for the maintainer scripts under scripts/ and the example runner in
+# examples/capture-graph/. The Haskell package has no Python dependency and does
+# not build or install this project.
 [project]
 name = "libtmux-haskell-scripts"
 version = "0.0.0"
-description = "Format, lint, type and test configuration for scripts/"
+description = "Format, lint, type and test configuration for the support scripts"
 requires-python = ">=3.12"
 
 [dependency-groups]
@@ -24,6 +25,7 @@ exclude-newer = "3 days"
 # Each script is a plain module in its own directory, so tests import it, and
 # the scripts that call a sibling import it, by directory.
 pythonpath = [
+  "scripts/bounded",
   "scripts/capture_benchmark",
   "scripts/check_docs",
   "scripts/check_sdist",
@@ -44,6 +46,8 @@ addopts = [
 target-version = "py312"
 line-length = 100
 src = [
+  "examples/capture-graph",
+  "scripts/bounded",
   "scripts/capture_benchmark",
   "scripts/check_docs",
   "scripts/check_sdist",
@@ -58,6 +62,8 @@ extend-select = ["ANN", "B", "C4", "I", "PT", "PTH", "RUF", "SIM", "UP"]
 [tool.ty.environment]
 python-version = "3.12"
 extra-paths = [
+  "examples/capture-graph",
+  "scripts/bounded",
   "scripts/capture_benchmark",
   "scripts/check_docs",
   "scripts/check_sdist",
@@ -67,4 +73,4 @@ extra-paths = [
 ]
 
 [tool.ty.src]
-include = ["scripts"]
+include = ["examples/capture-graph", "scripts"]

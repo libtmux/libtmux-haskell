@@ -84,6 +84,9 @@ extra-source-files:
   test-support/process-policy.c
   pyproject.toml
   uv.lock
+  scripts/bounded/README.md
+  scripts/bounded/bounded.py
+  scripts/bounded/tests/test_bounded.py
   scripts/check_types/README.md
   scripts/check_types/check_types.py
   scripts/check_types/tests/test_check_types.py
@@ -97,6 +100,9 @@ extra-source-files:
   scripts/check_docs/check_docs.py
   scripts/check_docs/tests/test_check_docs.py
   scripts/prepare_haddock/README.md
+  scripts/prepare_haddock/assets/responsive.css
+  scripts/prepare_haddock/assets/source-popover.js
+  scripts/prepare_haddock/assets/source-responsive.css
   scripts/prepare_haddock/prepare_haddock.py
   scripts/prepare_haddock/tests/test_prepare_haddock.py
   scripts/capture_benchmark/README.md

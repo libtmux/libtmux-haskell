@@ -7,10 +7,11 @@ import signal
 import subprocess
 import threading
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 
 import pytest
+
 from run import exited, fixture
 
 
@@ -21,7 +22,7 @@ def verify_failure(tmux_binary: str) -> Callable[[str, BaseException], None]:
         with ExitStack() as owners:
             observed = []
 
-            def checkpoint(current, descriptors, _socket):
+            def checkpoint(current: str, descriptors: tuple[int, ...], _socket: str) -> None:
                 if current == stage:
                     for descriptor in descriptors:
                         duplicate = os.dup(descriptor)
@@ -74,12 +75,12 @@ def test_additional_panes_are_owned_on_success_failure_and_cancellation(
     with ExitStack() as owners:
         observed = []
 
-        def observe(descriptors):
+        def observe(descriptors: Sequence[int]) -> None:
             observed.append(len(descriptors))
             assert len(descriptors) == 3, "daemon and both pane processes must be owned"
             exited(descriptors)
 
-        def body():
+        def body() -> int:
             with fixture(tmux_binary) as (socket, environment):
                 created = subprocess.run(
                     [
@@ -131,7 +132,7 @@ def test_creation_cancellation_reports_the_untracked_pane(tmux_binary: str) -> N
         problems = []
         monitor = None
 
-        def checkpoint(stage, descriptors, socket=None):
+        def checkpoint(stage: str, descriptors: tuple[int, ...], socket: str | None = None) -> None:
             nonlocal monitor
             stages.append(stage)
             if stage != "daemon-ready":
@@ -141,12 +142,10 @@ def test_creation_cancellation_reports_the_untracked_pane(tmux_binary: str) -> N
             owners.callback(os.close, daemon)
             observed.append(daemon)
             environment = {
-                key: value
-                for key, value in os.environ.items()
-                if key not in {"TMUX", "TMUX_PANE"}
+                key: value for key, value in os.environ.items() if key not in {"TMUX", "TMUX_PANE"}
             }
 
-            def command(*arguments):
+            def command(*arguments: str) -> subprocess.CompletedProcess[bytes]:
                 return subprocess.run(
                     [tmux_binary, "-u", "-N", "-S", socket, *arguments],
                     env=environment,
@@ -162,7 +161,7 @@ def test_creation_cancellation_reports_the_untracked_pane(tmux_binary: str) -> N
                 "wait-for -S example-created ; wait-for example-held",
             )
 
-            def interrupt_creation():
+            def interrupt_creation() -> None:
                 try:
                     command("wait-for", "example-created")
                     receipt = command("list-panes", "-a", "-F", "#{pane_pid}")
@@ -201,9 +200,7 @@ def test_creation_cancellation_reports_the_untracked_pane(tmux_binary: str) -> N
         assert {descriptor for descriptor, _ in ready.poll(0)} == set(observed)
         gc.collect()
         assert [
-            str(warning.message)
-            for warning in emitted
-            if warning.category is ResourceWarning
+            str(warning.message) for warning in emitted if warning.category is ResourceWarning
         ] == []
 
 
@@ -215,19 +212,24 @@ def test_failed_command_retirement_does_not_enter_an_unbounded_wait(
     original = subprocess.Popen
 
     class FailedRead(original):
-        def communicate(self, *arguments, **keywords):
-            if "new-session" in self.args:
+        def creates_session(self) -> bool:
+            return isinstance(self.args, list) and "new-session" in self.args
+
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None
+        ) -> tuple[bytes, bytes]:
+            if self.creates_session():
                 clients.append(self)
                 raise primary
-            return super().communicate(*arguments, **keywords)
+            return super().communicate(input, timeout)
 
-        def kill(self):
-            if "new-session" in self.args:
+        def kill(self) -> None:
+            if self.creates_session():
                 raise OSError("command retirement failed")
             return super().kill()
 
-        def wait(self, timeout=None):
-            if "new-session" in self.args and timeout is None:
+        def wait(self, timeout: float | None = None) -> int:
+            if self.creates_session() and timeout is None:
                 raise AssertionError("command cleanup entered an unbounded wait")
             return super().wait(timeout=timeout)
 

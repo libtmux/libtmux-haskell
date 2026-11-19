@@ -177,7 +177,7 @@ def test_prepare_selects_the_whole_core_package(
             ]
 
     consumer = Mock()
-    monkeypatch.setattr(subprocess, "run", cabal)
+    monkeypatch.setattr(release, "run", cabal)
     monkeypatch.setattr(release, "consumer", consumer)
     release.prepare(release_directory, release_root)
     assert release.verify(release_directory, release_root) == (
@@ -312,11 +312,55 @@ def test_cabal_failure_uses_https_and_redacts_tokens(
         )
 
     monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "secret-token")
-    monkeypatch.setattr(subprocess, "run", fail)
+    monkeypatch.setattr(release, "run", fail)
     with pytest.raises(ValueError, match=guidance) as error:
         release.cabal_upload(release_directory / DOCS, True, True)
     assert "secret-token" not in str(error.value)
     assert other_guidance not in str(error.value)
+
+
+def test_a_timed_out_upload_names_no_token(
+    release_directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``TimeoutExpired`` prints the argv, which carries ``--token=``; the error must not."""
+
+    def hang(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, 120)
+
+    monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "secret-token")
+    monkeypatch.setattr(release, "run", hang)
+    with pytest.raises(ValueError, match="cabal upload timed out") as error:
+        release.cabal_upload(release_directory / DOCS, True, True)
+    assert "secret-token" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ValueError("Hackage said secret-token"),
+        subprocess.TimeoutExpired(["cabal", "--token=secret-token"], 120),
+        subprocess.CalledProcessError(1, ["cabal", "--token=secret-token"]),
+    ],
+    ids=["value", "timeout", "called"],
+)
+def test_the_script_redacts_the_token_from_every_failure(
+    failure: Exception,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Whatever a step raises, ``main`` prints the message with the token replaced."""
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "secret-token")
+    monkeypatch.setattr(release, "upload", fail)
+    with pytest.raises(SystemExit):
+        release.main(["upload", "--directory", str(tmp_path)])
+    error = capsys.readouterr().err
+    assert "secret-token" not in error
+    assert "[redacted]" in error
 
 
 @pytest.fixture
@@ -446,7 +490,7 @@ def test_every_external_command_is_bounded(
         timeouts.append(kwargs.get("timeout"))
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(release, "run", run)
     monkeypatch.setattr(release, "consumer", Mock())
     release.prepare(release_directory, release_root)
     monkeypatch.setenv("HACKAGE_AUTH_TOKEN", "test-token")
@@ -470,8 +514,8 @@ def test_the_public_consumer_bounds_cabal_and_the_program(
         timeouts.append(kwargs.get("timeout"))
         return "program"
 
-    monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(subprocess, "check_output", output)
+    monkeypatch.setattr(release, "run", run)
+    monkeypatch.setattr(release, "output", output)
     release.consumer(b"public source archive", release_root)
     assert len(timeouts) == 4
     assert all(isinstance(timeout, int | float) and timeout > 0 for timeout in timeouts)
@@ -485,7 +529,7 @@ def test_a_timed_out_command_is_reported_by_the_script(
     def hang(command: list[str], **kwargs: object) -> None:
         raise subprocess.TimeoutExpired(command, 1)
 
-    monkeypatch.setattr(subprocess, "run", hang)
+    monkeypatch.setattr(release, "run", hang)
     with pytest.raises(SystemExit) as status:
         release.main(["prepare", "--directory", str(tmp_path / "release")])
     assert status.value.code == 1
