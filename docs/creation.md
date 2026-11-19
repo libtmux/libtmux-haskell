@@ -14,8 +14,9 @@ $ cabal run --verbose=0 create-session -- \
     "$(command -v tmux)"
 ```
 
-The program starts `/bin/cat -`, renames the window, sets the pane title and
-checks duplicate-name rejection. It removes the targets it created and
+The program starts `/bin/cat -`, sets a title and uses
+[`sendKeys`](mutations.md#send-input-to-a-pane) to send literal text followed
+by a named Enter. It checks duplicate-name rejection, removes its targets and
 checks that the original sessions survive. Captures remain readable after
 the handle closes. Follow the [README's teardown](../README.md#clean-up)
 for the borrowed demonstration server.
@@ -56,6 +57,8 @@ main = getArgs >>= \case
       created <- Tmux.createSession server options
       Tmux.renameWindow server created.window "api"
       Tmux.setPaneTitle server created.pane "editor-ready"
+      Tmux.sendKeys server created.pane (Tmux.LiteralText "Enter")
+      Tmux.sendKeys server created.pane (Tmux.NamedKeys ("Enter" :| []))
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
