@@ -133,8 +133,8 @@ Use `paneText` to read the captured text. The
 [creation example](creation.md) captures its own pane.
 
 Set `rows` to `RowsBetween (-10) (-1)` for ten rows before the first
-visible row. The endpoints are inclusive and tmux clamps them to the rows
-it retained. Set `rendering` to `AnsiStyled` to keep tmux's color and
+visible row. Offsets are inclusive and accepted from -2147483647 through
+32767. tmux clamps them to the rows it retained. Set `rendering` to `AnsiStyled` to keep tmux's color and
 style escapes. Empty rows remain in either format.
 
 The byte limit applies before UTF-8 decoding. An oversized capture raises
