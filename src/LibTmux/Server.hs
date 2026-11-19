@@ -36,6 +36,8 @@ module LibTmux.Server
   , linkWindow, linkWindowWith, unlinkWindow, unlinkWindowWith
   , selectWindowLink, selectWindowLinkWith, selectExactPane, selectExactPaneWith
   , NamedLayout (..), selectLayout, selectLayoutWith
+    -- * Absolute geometry
+  , resizePane, resizePaneWith, resizeWindow, resizeWindowWith
     -- * Remove a target
   , killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
     -- * Pane input
@@ -107,6 +109,7 @@ import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
 import LibTmux.Pane (PaneCaptureOptions (..), defaultPaneCapture)
 import LibTmux.Version qualified as Version
+import LibTmux.Value (Resize)
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
 import System.OsPath.Posix (PosixPath)
@@ -424,6 +427,40 @@ selectLayout = selectLayoutWith defaultMutationOptions
 selectLayoutWith :: MutationOptions -> Server -> Creation.WindowSlot -> NamedLayout -> IO ()
 selectLayoutWith options server (Creation.WindowSlot (G.SessionRef generation session) index) layout =
   mutate options server generation (Command.SelectLayout session index layout)
+
+-- | Request an absolute width, height, or both for this exact physical pane.
+-- Build a 'Resize' from checked dimensions. The native layout can clamp sizes
+-- or change neighboring panes, and resizing can unzoom its window. The result
+-- confirms command processing; use 'capture' for actual geometry. Existing
+-- snapshots stay detached. No active-pane lookup or implicit selection occurs.
+resizePane :: Server -> PaneRef -> Resize -> IO ()
+resizePane = resizePaneWith defaultMutationOptions
+
+-- | 'resizePane' with an explicit 'timeout'. Every axis must be at most 10000
+-- cells; the full request is checked before admission, including combined
+-- dimensions. Invalid sizes raise 'InvalidMutationArgument' without unzooming
+-- or partially resizing. Native errors, cancellation and uncertain completion
+-- retain the ordinary 'MutationRecovery' and never cause automatic replay.
+resizePaneWith :: MutationOptions -> Server -> PaneRef -> Resize -> IO ()
+resizePaneWith options server (G.PaneRef generation ident) size =
+  mutate options server generation (Command.ResizePane ident size)
+
+-- | Request an absolute width, height, or both for one physical window across
+-- all its links. This sets tmux's window-size option to manual. An omitted
+-- axis retains its native extent; layout constraints determine actual cells.
+-- 'capture' observes the result separately. No session or active-window lookup
+-- chooses a different target.
+resizeWindow :: Server -> WindowRef -> Resize -> IO ()
+resizeWindow = resizeWindowWith defaultMutationOptions
+
+-- | 'resizeWindow' with one deadline and generation checks before dispatch.
+-- All supplied dimensions must fit 1 through 10000 cells. Validation precedes
+-- any native effects or manual-size option changes. Missing targets raise
+-- 'MutationRejected'; a following hook error can retain an applied resize.
+-- Cancellation keeps its exception class and correlated 'MutationRecovery'.
+resizeWindowWith :: MutationOptions -> Server -> WindowRef -> Resize -> IO ()
+resizeWindowWith options server (G.WindowRef generation ident) size =
+  mutate options server generation (Command.ResizeWindow ident size)
 
 -- | Remove a session from this Server generation. A window linked from
 -- another session survives. Use 'killSessionWith' to choose a deadline.
