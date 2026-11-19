@@ -97,6 +97,111 @@ instance NFData CreatedEntities where
 type CreatedSession = CreatedEntities
 
 -- | Detached physical session. Navigate its appearances through t'WindowLink'.
+--
+-- == What is on here
+--
+-- Calls that find, read or change a session, by job. The calls that take a
+-- @Server@ contact tmux; the rest read values you already hold.
+--
+-- __Get the sessions in a snapshot.__ Capture a snapshot through a Server,
+-- then list its sessions in ID order or start a query from them.
+--
+-- * From a Server: 'LibTmux.Server.capture'
+-- * From a snapshot: 'LibTmux.Snapshot.sessions'
+-- * As a query source: 'LibTmux.Query.sessions'
+--
+-- __Find a session by reference or ID.__ A lookup reads the snapshot you pass
+-- and returns a lookup error for a missing or foreign reference. An ID selects
+-- whichever session holds it in that snapshot, with no continuity with an
+-- earlier Server.
+--
+-- 'LibTmux.Snapshot.lookupSession', 'LibTmux.Snapshot.lookupSessionId',
+-- t'SessionRef', t'LookupError'
+--
+-- __Parse and print session IDs.__ Parsing and rendering are pure. An ID
+-- carries no endpoint or liveness evidence.
+--
+-- 'LibTmux.Id.parseSessionId', 'LibTmux.Id.renderSessionId',
+-- 'LibTmux.Id.sessionIdValue', 'LibTmux.Snapshot.sessionId', t'SessionId'
+--
+-- __Read a session's fields.__ Use record dot on the value, or a field token
+-- in a query. Field tokens describe captured values and never contact tmux.
+--
+-- 'LibTmux.Query.Session.id', 'LibTmux.Query.Session.name',
+-- 'LibTmux.Query.Session.attached'
+--
+-- __Follow a session to its windows and clients, or back.__ A session reaches
+-- its windows through links, and one window can be linked more than once. A
+-- window link and a client attachment each name a session; resolve it in a
+-- query.
+--
+-- * From a snapshot: 'LibTmux.Snapshot.linksForSession'
+-- * From a session in a query: 'LibTmux.Query.Session.windowLinks',
+--   'LibTmux.Query.Session.clients'
+-- * Test its links or clients: 'LibTmux.Query.some', 'LibTmux.Query.every',
+--   'LibTmux.Query.none'
+-- * From a window link: 'LibTmux.Query.Link.sessionId',
+--   'LibTmux.Query.Link.session'
+-- * From a client attachment: 'LibTmux.Query.ClientAttachment.sessionId',
+--   'LibTmux.Query.ClientAttachment.session'
+-- * Resolve the session: 'LibTmux.Query.related'
+--
+-- __Select sessions with a query.__ Match the name by equality or an exact
+-- substring and the attached count by a threshold, then run the query on a
+-- snapshot you hold or fetch a fresh one. @exactlyOne@ turns a result into one
+-- session or an error.
+--
+-- 'LibTmux.Query.sessions', 'LibTmux.Query.matching', 'LibTmux.Query.eq',
+-- 'LibTmux.Query.contains', 'LibTmux.Query.ge', 'LibTmux.Query.runQuery',
+-- 'LibTmux.Query.fetch', 'LibTmux.Query.exactlyOne'
+--
+-- __Create a session.__ Creation returns the references tmux printed, not an
+-- observed session. Capture again to see the new session. A failed creation
+-- can leave a receipt in its recovery, and a missing receipt does not mean no
+-- session exists.
+--
+-- * Create: 'LibTmux.Server.createSession', 'LibTmux.Server.createSessionWith'
+-- * Describe: 'LibTmux.Creation.defaultSessionOptions',
+--   t'LibTmux.Creation.SessionOptions', t'LibTmux.Creation.CreatedSession'
+-- * After a failure: 'LibTmux.Server.creationReceipt'
+--
+-- __Rename a session.__ The name is literal text, and snapshots you already
+-- hold keep the old name. A reference from another Server or an offline
+-- fixture is refused before the command runs. The @With@ variant takes a
+-- deadline.
+--
+-- 'LibTmux.Server.renameSession', 'LibTmux.Server.renameSessionWith'
+--
+-- __Add a window to a session.__ A placement names the session and where the
+-- window goes: the next free index or a slot. The result holds the references
+-- tmux printed, so capture again to observe the window.
+--
+-- * Create: 'LibTmux.Server.createWindow', 'LibTmux.Server.createWindowWith'
+-- * Place: t'LibTmux.Creation.WindowPlacement', t'LibTmux.Creation.WindowSlot'
+--
+-- __Remove a session.__ A window that another session links survives. tmux may
+-- exit when its last session closes, so observe the daemon separately.
+--
+-- 'LibTmux.Server.killSession', 'LibTmux.Server.killSessionWith'
+--
+-- __Change which windows a session links.__ A slot names the session and the
+-- index of one link. Select a link, link a window into a vacant slot, or remove
+-- one link; tmux refuses to remove a window's last link, and session groups can
+-- propagate links.
+--
+-- * Select: 'LibTmux.Server.selectWindowLink',
+--   'LibTmux.Server.selectWindowLinkWith'
+-- * Link: 'LibTmux.Server.linkWindow', 'LibTmux.Server.linkWindowWith'
+-- * Unlink: 'LibTmux.Server.unlinkWindow', 'LibTmux.Server.unlinkWindowWith'
+-- * Slot: t'LibTmux.Creation.WindowSlot'
+--
+-- __Build a session offline.__ Fixture references belong to a named offline
+-- origin, never to a live Server. Validation checks a fixture before it
+-- becomes a snapshot.
+--
+-- 'LibTmux.Snapshot.Fixture.sessionRef',
+-- 'LibTmux.Snapshot.Fixture.validateFixture',
+-- t'LibTmux.Snapshot.Fixture.Fixture'
 data Session = Session
   { ref :: !SessionRef -- ^ Target identity in the observation's generation.
   , name :: !Text -- ^ Session name as reported and decoded by tmux.
