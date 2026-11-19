@@ -8,6 +8,7 @@ The public modules are:
 | [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, creation, mutations, geometry and deadlines |
 | [LibTmux.Recovery](../src/LibTmux/Recovery.hs) | Inspect and resume cleanup of retained scopes and operations |
 | [LibTmux.Options](../src/LibTmux/Options.hs) | Daemon-specific catalogues, option stores and scalar values |
+| [LibTmux.Control](../src/LibTmux/Control.hs) | Control events, bounded queues and terminal results |
 | [LibTmux.Program](../src/LibTmux/Program.hs) | Scoped application execution, input, exit, rendered output and cleanup |
 | [LibTmux.Capabilities](../src/LibTmux/Capabilities.hs) | Per-operation requirements from the connected daemon release |
 | [LibTmux.Creation](../src/LibTmux/Creation.hs) | Session options, process modes and historical created references |
