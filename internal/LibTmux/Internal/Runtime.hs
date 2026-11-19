@@ -12,7 +12,7 @@ module LibTmux.Internal.Runtime
   ( Runtime, ServerHandle, ServerOwner, Report (..), newRuntime, newRuntimeUsing, newRuntimeFromPool, adopt, adoptWith
   , newServerOwner, adoptServerOwnerWith, inspectServerOwner, shutdownServerOwner
   , awaitServerOwnerCleanup, detachServerOwnerOperation
-  , serverPool, serverOwnerPool, serverPin, usage, inspect, closeServerHandle, requestClose, awaitCleanup, shutdown
+  , serverPool, serverOwnerPool, serverPin, usage, inspect, closeServerHandle, closeServerHandleAdmission, requestClose, awaitCleanup, shutdown
   , inspectServerHandle, shutdownServerHandle
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
@@ -376,6 +376,9 @@ closeServerAdmission runtime entry = do
   forM_ owners $ \owner -> do
     cancelled <- S.cancelQueued runtime.scheduler owner.operation
     when cancelled (publishUnavailable owner (toException ReadClosing))
+
+closeServerHandleAdmission :: Runtime -> ServerHandle -> STM ()
+closeServerHandleAdmission runtime (ServerHandle owner _) = closeServerAdmission runtime owner
 
 requestServerClose :: Runtime -> ServerOwner -> IO Report
 requestServerClose runtime entry = mask_ $ do

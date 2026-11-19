@@ -214,8 +214,8 @@ replacement = Fixture.withFixture $ \fixture -> do
       recovery:_ -> do
         let owner=OS.recoveryOwner recovery
         OS.observeOwned owner >>= \status -> status.complete @?= False
-        readTVarIO owner.domain.full >>= (@?= True)
-        G.isReleased owner.domain >>= (@?= False)
+        OS.requireDomain owner >>= \domain -> readTVarIO domain.full >>= (@?= True)
+        OS.requireDomain owner >>= G.isReleased >>= (@?= False)
         names <- readIORef placed >>= maybe (fail "private names lost") pure
         same <- OS.statusIfPresent names.socket
         fmap OS.identity same @?= fmap OS.identity before
@@ -291,7 +291,7 @@ startupCancellation = do
           forM_ (OS.ownedRecoveries context) $ \recovery -> do
             let owner=OS.recoveryOwner recovery
             OS.observeOwned owner >>= \status -> status.complete @?= False
-            readTVarIO owner.domain.full >>= (@?= True)
+            OS.requireDomain owner >>= \domain -> readTVarIO domain.full >>= (@?= True)
             -- Cancellation before listener observation can leave an unproved
             -- socket name. Only this fixture removes that controlled test name;
             -- the candidate retains its owner until recovery observes absence.

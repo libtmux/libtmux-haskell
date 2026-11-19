@@ -24,7 +24,7 @@ module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration, serverCapabilities
   , withControl
-  , OwnedServerConfig (..), defaultOwnedServerConfig, withOwnedServer
+  , OwnedServerConfig (..), defaultOwnedServerConfig, withOwnedServer, killServer
     -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
     -- * Session, window and pane creation
@@ -69,7 +69,7 @@ import Control.Exception
   ( ExceptionWithContext (..)
   , catchNoPropagate, evaluate, fromException, mask, onException, rethrowIO, SomeAsyncException, throwIO, toException, tryWithContext
   )
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Data.IORef
 import Data.Maybe (isJust)
 import Data.ByteString (ByteString)
@@ -127,7 +127,7 @@ import System.OsString.Posix qualified as Os
 
 -- | One pinned endpoint and connection generation.
 -- Retaining this value after 'withServer' or 'withServerIn' keeps no admission open.
-data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int !Capabilities.Capabilities
+data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int !Capabilities.Capabilities !(IO ())
 
 -- | Shared resource limits and cleanup ownership for Server handles. Create
 -- one with 'withRuntime', then adopt endpoints through 'withServerIn'.
@@ -171,7 +171,8 @@ withServerIn (Runtime runtime) config action = mask $ \restore -> do
     handle <- operational (R.adoptServerOwnerWith (\_ _ -> pure ()) runtime owner
       (posixBytes config.socketPath) (posixBytes config.pinDirectory))
     version <- operational (qualifyVersion runtime handle executable duration)
-    action (Server runtime handle executable duration (Capabilities.capabilitiesFor version))
+    withAdoptedRetirement runtime handle executable duration $ \retire ->
+      action (Server runtime handle executable duration (Capabilities.capabilitiesFor version) retire)
 
 -- | Pure configuration, checked when 'withServer' or 'withServerIn' opens the handle.
 -- Paths retain POSIX bytes; no text decoding or shell interpretation occurs.
@@ -205,7 +206,8 @@ withServer config action = do
   Scope.runScope runtime $ do
     handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
     version <- operational (qualifyVersion runtime handle executable duration)
-    action (Server runtime handle executable duration (Capabilities.capabilitiesFor version))
+    withAdoptedRetirement runtime handle executable duration $ \retire ->
+      action (Server runtime handle executable duration (Capabilities.capabilitiesFor version) retire)
 
 -- | Start an empty daemon in a fresh private directory. The executable is
 -- resolved once; the scope chooses and owns its endpoint.
@@ -230,7 +232,9 @@ withOwnedServer config action = do
   lifecycle $ \tracked ->
     Owned.withOwnedServerWith Owned.defaultProbe {Owned.versionMicros=duration} executable $ \owned ->
       tracked (action (Server owned.runtime owned.handle executable duration
-        (Capabilities.capabilitiesFor owned.version)))
+        (Capabilities.capabilitiesFor owned.version) (do
+          _ <- Owned.killOwnerIf (Owned.admissionOpen owned.handle) owned.owner
+          Owned.settle owned.owner)))
 
 data Callback = NotEntered | Returned | Raised
 
@@ -266,11 +270,40 @@ checkedConfiguration config = do
   executable <- operational (resolveExecutable config.executable)
   pure (executable, duration)
 
+-- A verified process capability belongs to this adoption and remains held
+-- until its callback closes admission. Failure to obtain one does not prevent
+-- observation; an explicit kill reports the recorded failure.
+withAdoptedRetirement :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> (IO () -> IO a) -> IO a
+withAdoptedRetirement runtime handle executable duration action =
+  lifecycle $ \tracked ->
+    Owned.withKillCapability Owned.defaultProbe {Owned.versionMicros=duration} executable runtime handle $ \admitted ->
+      tracked (action (either throwIO retire admitted))
+  where
+    retire capability = do
+      _ <- Owned.killAdoptedIf (Owned.admissionOpen handle) capability
+      report <- R.shutdownServerHandle runtime handle
+      unless (null report.pending && null report.readWorkers && null report.closeFailures)
+        (throwIO (Owned.CleanupPending (show report)))
+      remaining <- atomically $ do
+        forM_ report.unresolved (R.detachOperation runtime . fst)
+        (.unresolved) <$> R.inspectServerHandle runtime handle
+      unless (null remaining) (throwIO (Owned.OperationsUnresolved (length remaining)))
+
+-- | Retire this admitted daemon generation through its held process descriptor.
+-- Later calls through this Server fail with 'ServerClosed'. The private scope
+-- also retires descendants and endpoint names; an adopted scope keeps unrelated
+-- handles and filesystem names. Incomplete cleanup retains a recovery owner.
+killServer :: Server -> IO ()
+killServer (Server _ handle _ _ _ retire) = operational $ do
+  closed <- atomically (readTVar (R.serverPool handle).closing)
+  when closed (throwIO ServerClosed)
+  catchNoPropagate retire (\problem -> Owned.promoteRecoveries problem >>= rethrowIO)
+
 -- | Acquire the complete baseline graph, metadata and attached clients.
 -- Returned values own their data and remain usable after 'withServer' exits.
 -- Capacity and acquisition failure are errors; they never become empty lists.
 capture :: Server -> IO Snapshot
-capture (Server runtime handle executable duration _) = operational $ do
+capture (Server runtime handle executable duration _ _) = operational $ do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   (started, finished, decoded) <- C.captureSnapshot runtime handle executable duration
@@ -280,21 +313,21 @@ capture (Server runtime handle executable duration _) = operational $ do
 
 -- | The handle's opaque generation, available without contacting tmux.
 serverGeneration :: Server -> Generation
-serverGeneration (Server _ handle _ _ _) = Pin.pinGeneration (R.serverPin handle)
+serverGeneration (Server _ handle _ _ _ _) = Pin.pinGeneration (R.serverPin handle)
 
 -- | Capabilities evaluated against the daemon release observed during endpoint
 -- adoption. This pure lookup performs no operation and never substitutes
 -- the client executable's release. A dead pinned endpoint cannot enable a
 -- replacement daemon; subsequent operations fail through that same pin.
 serverCapabilities :: Server -> Capabilities.Capabilities
-serverCapabilities (Server _ _ _ _ available) = available
+serverCapabilities (Server _ _ _ _ available _) = available
 
 -- | Observe a session from this Server through an attached control client.
 -- Start the callback after tmux acknowledges the selected session. Read
 -- bounded notifications through "LibTmux.Control" and make changes through
 -- the Server operations. Closing the callback retires its own client.
 withControl :: Server -> SessionRef -> ControlOptions -> (Control -> IO a) -> IO a
-withControl server@(Server _ handle executable duration available) (G.SessionRef generation ident) options action = do
+withControl server@(Server _ handle executable duration available _) (G.SessionRef generation ident) options action = do
   checkTarget server generation
   either throwIO pure (Capabilities.requireCapability available Capabilities.ControlNotifications)
   let session = Utf8.encodeUtf8 (Id.renderSessionId ident)
@@ -316,7 +349,7 @@ withControl server@(Server _ handle executable duration available) (G.SessionRef
 -- borrowed daemon and its other sessions remain running. See "LibTmux.Program"
 -- for the initial contract and explicit limits.
 withProgram :: Server -> ProgramOptions -> (Program -> IO a) -> IO a
-withProgram (Server _ handle executable _ available) =
+withProgram (Server _ handle executable _ available _) =
   Program.withOwnedProgram handle executable available
 
 -- | Wait for a terminal application, capture its bounded final rendered output,
@@ -324,7 +357,7 @@ withProgram (Server _ handle executable _ available) =
 -- cleanup. Set 'LibTmux.Program.executionTimeout' for an owning setup/observation
 -- deadline; cleanup has a separate budget. Without it there is no total limit.
 runProgram :: Server -> ProgramOptions -> IO ProgramResult
-runProgram (Server _ handle executable _ available) =
+runProgram (Server _ handle executable _ available _) =
   Program.runOwnedProgram handle executable available
 
 -- | Per-command deadline, checked before admission. Start from
@@ -396,7 +429,7 @@ splitPaneWith options server (Creation.WindowSlot (G.SessionRef slotGeneration s
   create options server [slotGeneration, generation] (Command.SplitPane session index pane settings)
 
 create :: MutationOptions -> Server -> [Generation] -> Command.CreationCommand -> IO Creation.CreatedEntities
-create options server@(Server runtime handle executable _ _) generations command = operational $ do
+create options server@(Server runtime handle executable _ _ _) generations command = operational $ do
   duration <- mutationDuration options
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
@@ -447,7 +480,7 @@ setPaneTitleWith options server (G.PaneRef generation ident) label =
 -- missing session raises 'EnvironmentReadRejected'. Bytes stay literal.
 -- The Server capture deadline covers ordinary and hidden value observations.
 getEnvironment :: Server -> EnvironmentScope -> ByteString -> IO (Maybe EnvironmentEntry)
-getEnvironment server@(Server runtime handle executable duration _) scope name = operational $ do
+getEnvironment server@(Server runtime handle executable duration _ _) scope name = operational $ do
   let (generation, target) = environmentTarget server scope
   checkTarget server generation
   (_, _, (visibility, reply)) <- catchNoPropagate
@@ -636,7 +669,7 @@ settingCatalogue server = do
 
 readSetting :: Server -> Generation -> Command.OptionDestination -> Text.Text
   -> Command.SettingRead -> IO (Maybe ByteString)
-readSetting server@(Server runtime handle executable duration _) generation destination name request = operational $ do
+readSetting server@(Server runtime handle executable duration _ _) generation destination name request = operational $ do
   checkTarget server generation
   let nativeName = Utf8.encodeUtf8 name
   reply <- C.captureSettingWith runtime handle executable duration destination nativeName request
@@ -810,7 +843,7 @@ loadBuffer = loadBufferWith defaultMutationOptions
 
 -- | 'loadBuffer' with an explicit deadline.
 loadBufferWith :: MutationOptions -> Server -> ByteString -> ByteString -> IO ()
-loadBufferWith options server@(Server runtime handle executable _ _) name bytes = operational $ do
+loadBufferWith options server@(Server runtime handle executable _ _ _) name bytes = operational $ do
   checkTarget server (serverGeneration server)
   when (Bytes.length bytes > Buffer.byteLimit) (throwIO (BufferTooLarge Buffer.byteLimit))
   duration <- mutationDuration options
@@ -824,7 +857,7 @@ loadBufferWith options server@(Server runtime handle executable _ _) name bytes 
 -- feeds and arbitrary bytes. An oversized buffer raises 'BufferTooLarge'.
 -- A missing buffer raises 'MutationRejected'. Hooks do not supply buffer data.
 readBuffer :: Server -> ByteString -> IO ByteString
-readBuffer server@(Server runtime handle executable duration _) name = operational $ do
+readBuffer server@(Server runtime handle executable duration _ _) name = operational $ do
   checkTarget server (serverGeneration server)
   M.performRequests duration runtime handle $ \remaining await ->
     R.withReadBudget runtime (fromIntegral (2 * Buffer.byteLimit + 8192)) $ do
@@ -882,7 +915,7 @@ data PaneText = PaneText !PaneRef !PaneCaptureOptions !Text.Text
 -- 'PaneCaptureRejected'. A failed after-hook raises 'PaneCaptureHookFailed'.
 -- Earlier captures stay readable.
 capturePane :: Server -> PaneRef -> PaneCaptureOptions -> IO PaneText
-capturePane server@(Server runtime handle executable duration _) pane@(G.PaneRef generation ident) options =
+capturePane server@(Server runtime handle executable duration _ _) pane@(G.PaneRef generation ident) options =
   operational $ do
     checkTarget server generation
     (_, _, reply) <- paneCaptureErrors options
@@ -943,7 +976,7 @@ data PaneWaitResult
 -- evidence. A match can include terminal echo. Cancellation preserves its
 -- exception class and any in-flight 'CaptureRecovery'.
 waitForText :: Server -> PaneRef -> PaneWaitOptions -> Text.Text -> IO PaneWaitResult
-waitForText server@(Server runtime handle executable _ _) pane@(G.PaneRef generation ident) options needle =
+waitForText server@(Server runtime handle executable _ _ _) pane@(G.PaneRef generation ident) options needle =
   operational $ do
     checkTarget server generation
     when (Text.null needle) (throwIO (InvalidConfiguration EmptyPaneWaitText))
@@ -968,13 +1001,13 @@ mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server generation = mutateTargets options server [generation]
 
 mutateTargets :: MutationOptions -> Server -> [Generation] -> Command.Mutation -> IO ()
-mutateTargets options server@(Server runtime handle executable _ _) generations command = operational $ do
+mutateTargets options server@(Server runtime handle executable _ _ _) generations command = operational $ do
   duration <- mutationDuration options
   mapM_ (checkTarget server) generations
   M.performMutation P.defaultHooks duration runtime handle executable command
 
 checkTarget :: Server -> Generation -> IO ()
-checkTarget server@(Server _ handle _ _ _) generation = do
+checkTarget server@(Server _ handle _ _ _ _) generation = do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   unless (generation == serverGeneration server)

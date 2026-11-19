@@ -35,9 +35,10 @@ import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Process.Guardian qualified as Guardian
 import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Runtime qualified as R
-import LibTmux.Internal.Scope (CleanupStatus (..), TmuxException (UnsupportedTmuxVersion))
+import LibTmux.Internal.Scheduler (Status (..))
+import LibTmux.Internal.Scope (CleanupStatus (..), TmuxException (ServerClosed, UnsupportedTmuxVersion))
 import LibTmux.Internal.Scope qualified as Scope
-import LibTmux.Internal.SocketPin (PinCheckpoint)
+import LibTmux.Internal.SocketPin (PinCheckpoint, pinPath)
 import LibTmux.Version qualified as Version
 import System.IO.Error (isDoesNotExistError)
 import System.Posix.Directory.ByteString (removeDirectory)
@@ -189,7 +190,7 @@ emptyHeld = Held Nothing Nothing Nothing Nothing False Nothing Nothing Nothing N
 data Owner = Owner
   { probe :: !Probe, executable :: !ByteString
   , scope :: !(Maybe (R.Runtime, R.ServerOwner))
-  , domain :: !Guardian.Domain
+  , domain :: !(Maybe Guardian.Domain)
   , gate :: !(MVar ()), held :: !(IORef Held)
   }
 instance Show Owner where
@@ -228,7 +229,15 @@ newOwner probe executable = mask_ $ do
   domain <- Guardian.prepareDomain budget P.normalFork
   runtime <- R.newRuntimeUsing budget P.normalFork (Just (Guardian.backend domain)) True
   serverOwner <- R.newServerOwner runtime
-  Owner probe executable (Just (runtime,serverOwner)) domain <$> newMVar () <*> newIORef (emptyHeld Terminate)
+  Owner probe executable (Just (runtime,serverOwner)) (Just domain) <$> newMVar () <*> newIORef (emptyHeld Terminate)
+
+-- A borrowed generation holds only its verified pidfd and inode capability.
+-- It never creates a guardian or acquires authority over descendants.
+newCell :: Probe -> ByteString -> Maybe (R.Runtime,R.ServerOwner) -> Fate -> IO Owner
+newCell probe executable scope fate = Owner probe executable scope Nothing <$> newMVar () <*> newIORef (emptyHeld fate)
+
+requireDomain :: Owner -> IO Guardian.Domain
+requireDomain owner = maybe (throwIO (userError "owner has no private execution domain")) pure owner.domain
 
 journal :: Owner -> (Held -> Held) -> IO ()
 journal owner change = atomicModifyIORef' owner.held (\held -> (change held, ()))
@@ -260,7 +269,7 @@ withOwnedServerWith :: Probe -> ByteString -> (Owned -> IO a) -> IO a
 withOwnedServerWith probe executable action = mask $ \restore -> do
   requireHost probe True
   owner <- newOwner probe executable
-  primary <- tryWithContext @SomeException (restore (Guardian.startDomain owner.domain >> run owner action))
+  primary <- tryWithContext @SomeException (restore (mapM_ Guardian.startDomain owner.domain >> run owner action))
   closing <- tryWithContext @SomeException (settle owner)
   conclude owner primary closing
 
@@ -307,17 +316,18 @@ cleanup :: Owner -> IO ()
 cleanup owner = do
   forM_ owner.scope (void . R.requestClose . fst)
   daemonPhases owner
-  released <- Guardian.isReleased owner.domain
-  unless released $ do
-    Guardian.requestStop owner.domain
-    complete <- timeout (owner.probe.killMs * 1000) (Guardian.awaitStopped owner.domain)
-    when (isNothing complete) (uncertain owner "guardian has no complete physical exit proof")
+  forM_ owner.domain $ \domain -> do
+    released <- Guardian.isReleased domain
+    unless released $ do
+      Guardian.requestStop domain
+      complete <- timeout (owner.probe.killMs * 1000) (Guardian.awaitStopped domain)
+      when (isNothing complete) (uncertain owner "guardian has no complete physical exit proof")
   forM_ owner.scope $ \(runtime, serverOwner) -> do
     step owner PhaseClient (endClient owner serverOwner)
     step owner PhasePool (endPool runtime serverOwner)
     step owner PhaseOperations (endOperations runtime serverOwner)
   step owner PhaseNames (endNames owner)
-  Guardian.releaseDomain owner.domain
+  mapM_ Guardian.releaseDomain owner.domain
 
 -- | The phases that end the physical daemon: its start client, then the daemon itself.
 daemonPhases :: Owner -> IO ()
@@ -401,7 +411,7 @@ startForeground owner names serverOwner = bracket arm N.close $ \watch -> do
       if fd < 0 then N.raise (negate fd) else pure fd
     listener watch direct = mask_ $ anchoredPeer names.socket >>= \case
       Right (anchor, peer) -> do
-        admitted <- Guardian.authenticate owner.domain peer
+        admitted <- (requireDomain owner >>= \domain -> Guardian.authenticate domain peer)
           `onException` (N.close anchor >> N.close peer)
         if admitted
           then do
@@ -637,6 +647,102 @@ endNames owner = readIORef owner.held >>= \held -> mask_ $ do
     replaced what path = throwIO (CleanupPending
       (what <> " " <> show path <> " no longer names what this run created; it was left in place"))
 
+-- | A private capability to end an adopted daemon generation. It holds the
+-- daemon's pidfd and an O_PATH anchor on the pinned inode, both taken and verified
+-- at admission, so using it needs no tmux command, no Runtime lane and no open
+-- pin or pool.
+newtype Kill = Kill Owner
+
+-- | Run the callback with the capability for a pinned server, or with the failure that prevented
+-- it, so that plain adoption and capture stay possible where no kill can be verified (an
+-- unsupported host, a listener that is not the daemon, an identity read that failed). The
+-- listener is reached through the pin by kernel identity and must be the daemon that answers
+-- @#{pid}@ now. A non-asynchronous admission failure whose partial capability was released
+-- reaches the callback; a failed release, an asynchronous exception, or a failure of the callback
+-- itself never does: each keeps its owner.
+--
+-- When the callback leaves, this server's admission closes before any descriptor is released, so
+-- a kill that has not passed its check refuses. The descriptors are then released unless an
+-- explicit kill was requested and has not finished: that request stays journaled, so the release
+-- repeats the kill and a failure keeps the descriptors for a resume.
+withKillCapability :: Probe -> ByteString -> R.Runtime -> R.ServerHandle -> (Either SomeException Kill -> IO a) -> IO a
+withKillCapability probe executable runtime server action = mask $ \restore -> do
+  owner <- newCell probe executable Nothing Release
+  admission <- tryWithContext @SomeException (restore (requireHost probe False >> admit owner))
+  case admission of
+    Right () -> scoped owner restore (Right (Kill owner))
+    Left failure@(ExceptionWithContext context cause)
+      | isJust (fromException @SomeAsyncException cause) -> do
+          closing <- tryWithContext @SomeException (settle owner)
+          conclude owner (Left failure) closing
+      | otherwise -> do
+          -- The failure is stored, not rethrown, so nobody else can release what its read still retains.
+          forM_ (Context.getExceptionAnnotations context) (releaseRead probe)
+          closing <- tryWithContext @SomeException (settle owner)
+          either (conclude owner (Left failure) . Left) (const (scoped owner restore (Left cause))) closing
+  where
+    scoped owner restore capability = do
+      primary <- tryWithContext @SomeException (restore (action capability))
+      atomically (R.closeServerHandleAdmission runtime server)
+      closing <- tryWithContext @SomeException (settle owner)
+      conclude owner primary closing
+    admit owner = do
+      anchor <- mask_ $ openAnchor (pinPath (R.serverPin server)) >>= \case
+        Left problem -> N.raise problem
+        Right fd -> fd <$ journal owner (\held -> held {anchor = Just fd})
+      pidfd <- mask_ $ peerVia anchor >>= \case
+        Left problem | problem == N.errno eAGAIN -> throwIO ListenerBusy
+                     | otherwise -> N.raise problem
+        Right fd -> fd <$ journal owner (\held -> held {pidfd = Just fd})
+      void (verifyPinned probe runtime server executable pidfd)
+
+-- | A failed admission read changed nothing in the daemon. Once its worker has published an
+-- outcome its logical debt is dropped; its native owner stays with the pool. A worker that
+-- publishes nothing within the client bound keeps the debt, which then fails the scope's own
+-- cleanup with a recovery instead of disappearing.
+releaseRead :: Probe -> C.CaptureRecovery -> IO ()
+releaseRead probe recovery = void $ timeout (probe.clientMs * 1000) $ atomically $ do
+  state <- C.inspectRecovery recovery
+  check (isJust state.logical.outcome)
+  void (C.detachRecovery recovery)
+
+-- | End the adopted daemon through its held pidfd. 'StaleGeneration' refuses a
+-- rebound socket and leaves the daemon untouched; that refusal withdraws the kill, so the
+-- scope's release only drops the descriptors.
+killAdopted :: Kill -> IO Retirement
+killAdopted (Kill owner) = killOwner owner
+
+-- | Whether this handle still admits operations. Rechecked inside the owner gate.
+admissionOpen :: R.ServerHandle -> IO Bool
+admissionOpen server = not <$> atomically (readTVar (R.serverPool server).closing)
+
+-- | 'killAdopted' that refuses with 'ServerClosed' unless @admitted@ holds once this request
+-- owns the gate. The public Server passes its pool's admission, so a kill racing the callback's
+-- exit cannot turn the scope's release into a termination.
+killAdoptedIf :: IO Bool -> Kill -> IO Retirement
+killAdoptedIf admitted (Kill owner) = killOwnerIf admitted owner
+
+-- | Request the daemon's termination, retire it through the owner's pidfd and report how it
+-- left. Only the physical daemon is ended: the pool, its operations and the names stay for
+-- the scope's own release ('settle'). The request is journaled first, and a failure or
+-- cancellation carries the owner from the moment it is raised, so a callback that catches it
+-- can still recover.
+killOwner :: Owner -> IO Retirement
+killOwner = killOwnerIf (pure True)
+
+-- | 'killOwner' for a caller that may refuse. The check and the 'Terminate' request happen inside
+-- the owner's gate, so a refusal ('ServerClosed') leaves the journal as it was and a request that
+-- passed the check keeps its authority over any release attempt that follows it.
+killOwnerIf :: IO Bool -> Owner -> IO Retirement
+killOwnerIf admitted owner = do
+  attempt <- tryWithContext @SomeException $ serialized owner $ admitted >>= \case
+    False -> pure False
+    True -> True <$ (requestFate owner Terminate >> daemonPhases owner)
+  case attempt of
+    Left failure -> rethrowIO (annotated owner failure)
+    Right False -> throwIO ServerClosed
+    Right True -> readIORef owner.held >>= maybe (throwIO NoDaemon) pure . (.exit)
+
 statusIfPresent :: ByteString -> IO (Maybe Files.FileStatus)
 statusIfPresent path = (Just <$> Files.getSymbolicLinkStatus path) `catch` \(problem :: IOException) ->
   if isDoesNotExistError problem then pure Nothing else throwIO problem
@@ -690,7 +796,7 @@ observeOwned owner = do
   let pending = isJust held.created || isJust held.client || isJust held.pidfd || isJust held.anchor
         || isJust held.directoryAnchor || isJust held.socketAnchor
         || (held.launched && isNothing held.exit)
-  domainReleased <- Guardian.isReleased owner.domain
+  domainReleased <- maybe (pure True) Guardian.isReleased owner.domain
   pure status
     { complete = status.complete && not pending && domainReleased
     , pendingHandles = status.pendingHandles + if pending || not domainReleased then 1 else 0 }
