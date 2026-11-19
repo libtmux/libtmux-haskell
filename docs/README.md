@@ -11,6 +11,7 @@ and the [API guide](api.md).
 | Inspect typed selections and check physical or contextual uniqueness | [Typed queries](query.md) |
 | Create a session and operate on its returned references | [Session creation](creation.md) |
 | Run a terminal application, send input and clean up its scope | [Owned programs](programs.md) |
+| Transfer a named buffer and paste it to an explicit pane | [Paste buffers](buffers.md) |
 | Rename captured targets and handle interrupted commands | [Mutations and recovery](mutations.md) |
 | Share resources across independent Server scopes | [Shared Runtime](shared-runtime.md) |
 | Test application predicates without tmux | [Validated offline fixtures](fixtures.md) |

@@ -70,6 +70,7 @@ def test_registered_programs_are_valid(root: Path) -> None:
         "mutate-graph",
         "create-session",
         "managed-program",
+        "paste-buffer",
     }
 
 

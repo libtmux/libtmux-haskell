@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 8593bef1754e4048b40b753e446da0f90848191f
+  tag: 5c786e7d05165ff8fbe31dce5ae896607fb73619
 ```
 
 Update the package index:
@@ -356,6 +356,11 @@ new link, chooses a pane, applies `Tiled` and removes the extra link. See
 The example sets an empty value, marks it removed and unsets it in the new
 session. [Environment operations](docs/mutations.md#read-and-change-the-environment)
 explain scope, visibility and literal bytes.
+
+### [`pasteBuffer`](src/LibTmux/Server.hs) to paste to a specific pane
+
+The [paste buffer example](docs/buffers.md) verifies a binary round trip and
+observes the output of a pane after pasting text with preserved line feeds.
 
 ## Run a terminal application
 

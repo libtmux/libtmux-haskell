@@ -32,6 +32,7 @@ extra-doc-files:
   docs/query.md
   docs/creation.md
   docs/programs.md
+  docs/buffers.md
   docs/mutations.md
   docs/fixtures.md
   docs/performance.md
@@ -150,6 +151,12 @@ extra-source-files:
   examples/create-session/libtmux-create-session.cabal
   examples/create-session/cabal.project
   examples/create-session/cabal.project.vcs
+  examples/paste-buffer/Main.hs
+  examples/paste-buffer/README.md
+  examples/paste-buffer/expected.stdout
+  examples/paste-buffer/libtmux-paste-buffer.cabal
+  examples/paste-buffer/cabal.project
+  examples/paste-buffer/cabal.project.vcs
   examples/mutate-graph/Main.hs
   examples/mutate-graph/README.md
   examples/mutate-graph/expected.stdout
