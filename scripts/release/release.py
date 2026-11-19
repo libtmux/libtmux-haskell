@@ -20,12 +20,11 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGE = "libtmux-haskell"
+sys.path.append(str(Path(__file__).resolve().parents[1] / "bounded"))
 
-# Seconds. Every external command is bounded so a hang fails with the command's
-# name before the job's time limit stops it without one.
-QUICK = 120
-BUILD = 600
+from bounded import BUILD, QUICK, output, run
+
+PACKAGE = "libtmux-haskell"
 
 
 def metadata(root: Path, tag: str | None = None) -> str:
@@ -58,7 +57,7 @@ def check(
             raise ValueError(
                 "Publication requires a version tag; use publish=false for a candidate"
             )
-        merged = subprocess.run(
+        merged = run(
             ["git", "merge-base", "--is-ancestor", "HEAD", "origin/master"],
             cwd=root,
             check=False,
@@ -120,13 +119,13 @@ def verify(directory: Path, root: Path) -> tuple[Path, Path]:
 def prepare(directory: Path, root: Path) -> None:
     version = metadata(root)
     directory.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    run(
         ["cabal", "sdist", f"pkg:{PACKAGE}", f"--output-directory={directory}"],
         cwd=root,
         check=True,
         timeout=QUICK,
     )
-    subprocess.run(
+    run(
         ["cabal", "haddock", f"lib:{PACKAGE}", "--haddock-for-hackage", "--offline"],
         cwd=root,
         check=True,
@@ -173,7 +172,11 @@ def cabal_upload(path: Path, publish: bool, documentation: bool) -> None:
         if documentation:
             command.append("--documentation")
         command.append(str(path))
-        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=QUICK)
+        try:
+            result = run(command, check=False, capture_output=True, text=True, timeout=QUICK)
+        except subprocess.TimeoutExpired:
+            # The exception would print the argv, which carries the token.
+            raise ValueError(f"cabal upload timed out after {QUICK} s") from None
     output = (result.stdout + result.stderr).replace(secret, "[redacted]")
     if result.returncode:
         status = re.search(r"\bhttp code (401|403)\b", output, re.IGNORECASE)
@@ -189,6 +192,12 @@ def cabal_upload(path: Path, publish: bool, documentation: bool) -> None:
             )
         raise ValueError(f"Hackage upload failed (exit {result.returncode}): {output}")
     print(output, end="")
+
+
+def redacted(message: str) -> str:
+    """Return ``message`` with the Hackage token, if one is set, replaced."""
+    secret = os.environ.get("HACKAGE_AUTH_TOKEN")
+    return message.replace(secret, "[redacted]") if secret else message
 
 
 def upload(directory: Path, root: Path, publish: bool = False, tag: str | None = None) -> bytes:
@@ -237,23 +246,20 @@ def consumer(source: bytes, root: Path, offline: bool = False) -> None:
             project += index[0] + "\n"
         (directory / "cabal.project").write_text(project)
         if not offline:
-            subprocess.run(["cabal", "update"], cwd=directory, check=True, timeout=QUICK)
+            run(["cabal", "update"], cwd=directory, check=True, timeout=QUICK)
         flags = ["--offline"] if offline else []
-        subprocess.run(
+        run(
             ["cabal", "build", "exe:typed-values", *flags],
             cwd=directory,
             check=True,
             timeout=BUILD,
         )
-        executable = subprocess.check_output(
+        executable = output(
             ["cabal", "list-bin", "exe:typed-values", *flags],
             cwd=directory,
-            text=True,
             timeout=QUICK,
         ).strip()
-        result = subprocess.run(
-            [executable], cwd=directory, capture_output=True, check=True, timeout=QUICK
-        )
+        result = run([executable], cwd=directory, capture_output=True, check=True, timeout=QUICK)
         if result.stdout != (example / "expected.stdout").read_bytes() or result.stderr:
             raise ValueError("Public Hackage archive consumer produced unexpected output")
     print("PASS: release archive installed and executed outside the checkout")
@@ -308,7 +314,7 @@ def main(argv: list[str] | None = None) -> None:
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
     ) as error:
-        print(f"Release failed: {error}", file=sys.stderr)
+        print(f"Release failed: {redacted(str(error))}", file=sys.stderr)
         sys.exit(1)
 
 

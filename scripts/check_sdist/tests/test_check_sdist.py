@@ -3,7 +3,9 @@
 import io
 import json
 import subprocess
+import sys
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -126,8 +128,8 @@ def commands(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
         seen.append((command[0], kwargs.get("timeout")))
         return "program"
 
-    monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(subprocess, "check_output", output)
+    monkeypatch.setattr(check_sdist, "bounded_run", run)
+    monkeypatch.setattr(check_sdist, "output", output)
     return seen
 
 
@@ -189,7 +191,7 @@ def test_batched_consumers_still_check_each_distinct_output(
         return expected.get(path, b"source")
 
     def executable(args: list[str], **kwargs: object) -> str:
-        assert kwargs == {"cwd": workspace, "text": True, "timeout": check_sdist.QUICK}
+        assert kwargs == {"cwd": workspace, "timeout": check_sdist.QUICK}
         targets.append(args[2])
         return "/consumer/" + args[2].removeprefix("exe:")
 
@@ -208,8 +210,8 @@ def test_batched_consumers_still_check_each_distinct_output(
     monkeypatch.setattr(
         check_sdist, "run", lambda args, cwd, timeout: builds.append((args, cwd, timeout))
     )
-    monkeypatch.setattr(check_sdist.subprocess, "check_output", executable)
-    monkeypatch.setattr(check_sdist.subprocess, "run", run)
+    monkeypatch.setattr(check_sdist, "output", executable)
+    monkeypatch.setattr(check_sdist, "bounded_run", run)
     if corrupt:
         with pytest.raises(ValueError, match="second produced unexpected output"):
             check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
@@ -223,3 +225,61 @@ def test_batched_consumers_still_check_each_distinct_output(
     project = (workspace / "cabal.project").read_text()
     assert project.startswith("packages: ../core.tar.gz first second\n")
     assert all((workspace / entry["id"] / "Main.hs").read_bytes() == b"source" for entry in entries)
+
+
+@pytest.fixture
+def public_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[int, str], None]:
+    """Run a stand-in archive consumer without building its Haskell inputs."""
+    archive = tmp_path / "source.tar.gz"
+    prefix = "libtmux-haskell-0.0.1.0/"
+    sources = [
+        "test/integration/PublicMutationTest.hs",
+        "test/integration/PublicCreationTest.hs",
+        "test-support/Fixture.hs",
+        "test-support/fixture-watch.c",
+    ]
+    write_tar(archive, {prefix + name: b"" for name in sources})
+
+    def check(status: int, errors: str) -> None:
+        directory = tmp_path / f"run-{status}-{len(errors)}"
+        directory.mkdir()
+        program = directory / "consumer"
+        program.write_text(
+            f"#!{sys.executable} -S\nimport sys\nsys.stderr.write({errors!r})\nsys.exit({status})\n"
+        )
+        program.chmod(0o755)
+        monkeypatch.setattr(check_sdist, "run", lambda *_args: None)
+        monkeypatch.setattr(check_sdist, "output", lambda *_args, **_kwargs: str(program))
+        with tarfile.open(archive) as source:
+            check_sdist.check_public_commands(source, prefix, directory, "0.0.1.0")
+
+    return check
+
+
+def test_generated_consumer_ends_through_the_retained_owner_guard(
+    tmp_path: Path, public_consumer: Callable[[int, str], None]
+) -> None:
+    """Retirement writes no diagnostic, so only the runner's guard reports a retained owner."""
+    public_consumer(0, "")
+    runner = (tmp_path / "run-0-0/public-mutations/Main.hs").read_text()
+    assert "import Fixture (guardRetained)\n" in runner
+    assert "main = guardRetained (defaultMain (testGroup" in runner
+
+
+@pytest.mark.parametrize(
+    ("status", "errors", "message"),
+    [
+        pytest.param(
+            3, "fixture processes still owned: sleeper\n", "exited 3: .*sleeper", id="owned"
+        ),
+        pytest.param(1, "", "exited 1", id="failed"),
+        pytest.param(0, "noise\n", "emitted stderr: noise", id="stderr"),
+    ],
+)
+def test_public_consumer_failures_report_the_status_and_stderr(
+    public_consumer: Callable[[int, str], None], status: int, errors: str, message: str
+) -> None:
+    """A retained owner, failed test or stderr makes the archive check fail with its cause."""
+    public_consumer(0, "")
+    with pytest.raises(ValueError, match=message):
+        public_consumer(status, errors)

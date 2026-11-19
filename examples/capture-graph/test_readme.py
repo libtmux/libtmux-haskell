@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from run import fixture
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +38,4 @@ def test_readme_examples_share_one_server(
             )
             assert result.returncode == 0, result.stderr
             assert result.stderr == ""
-            assert (
-                result.stdout
-                == (ROOT / "examples" / name / "expected.stdout").read_text()
-            )
+            assert result.stdout == (ROOT / "examples" / name / "expected.stdout").read_text()

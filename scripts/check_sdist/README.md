@@ -11,7 +11,9 @@ It checks that:
   alone;
 - the public `>>>` Haddock examples run against the archived library;
 - the public mutation and creation tests pass against the archived library,
-  without its internal modules;
+  without its internal modules, and end with no fixture daemon or client still owned:
+  the generated runner exits 3 and names any owner left, and the check also
+  rejects any stderr output;
 - every declared example also builds and passes against the one source revision
   that `cabal.project.vcs` offers for installation, which must be an ancestor
   of `HEAD`.
@@ -29,8 +31,12 @@ named by `LIBTMUX_TEST_TMUX` for the examples and public command tests.
 $ uv run scripts/check_sdist/check_sdist.py
 ```
 
-Each `cabal`, `git` and example run has a time limit, so a hang fails with the
-command's name; an example's own run follows its catalogue `timeout`.
+Each `cabal`, `git` and example run has a time limit from
+[bounded](../bounded/README.md), which also stops the command's children. A hang
+fails with the command's name. The whole step took 82 s at most in CI, which is
+below the 120 s `QUICK` limit and a seventh of the 600 s `BUILD` limit; an
+example's own run follows its catalogue `timeout`. The example runner starts
+under the interpreter that runs this script.
 
 The tests cover the archive-member and Haddock-example checks, which need no
 build:

@@ -45,65 +45,11 @@ VOID = {
     "track",
     "wbr",
 }
-RESPONSIVE_CSS = b"""
-/* Contain long headings and wide native tables on narrow viewports. */
-@media screen and (max-width: 999px) {
-  #module-header .caption { overflow-wrap: anywhere; }
-  #interface .subs,
-  #index { overflow-x: auto; }
-}
-"""
-SOURCE_RESPONSIVE_CSS = b"""
-@media screen {
-  html.libtmux-source-scroll body > pre { overflow-x: auto; }
-}
-span.annot span.annottext[popover] {
-  position: fixed; inset: 0 auto auto 0; margin: 0; box-sizing: border-box;
-  width: max-content; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
-  white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto;
-}
-span.annot span.annottext[popover]:not(:popover-open) { display: none; }
-span.annot span.annottext[popover]:popover-open { display: block; }
-"""
-SOURCE_SCRIPT = b"""
-;(() => {
-  const initialize = () => {
-    if (!HTMLElement.prototype.showPopover || !document.querySelector('body > pre')) return;
-    let active;
-    const close = () => {
-      if (active?.tooltip.matches(':popover-open')) active.tooltip.hidePopover();
-      active = undefined;
-    };
-    document.addEventListener('pointerover', event => {
-      const annotation = event.target.closest('span.annot');
-      const tooltip = annotation?.querySelector(':scope > span.annottext');
-      if (!tooltip || annotation === active?.annotation) return;
-      close();
-      tooltip.setAttribute('popover', 'manual');
-      tooltip.showPopover();
-      active = {annotation, tooltip};
-      const anchor = annotation.getBoundingClientRect();
-      const box = tooltip.getBoundingClientRect();
-      const left = Math.max(8, Math.min(anchor.left, innerWidth - box.width - 8));
-      const top = anchor.bottom + box.height <= innerHeight - 8
-        ? anchor.bottom : Math.max(8, anchor.top - box.height);
-      tooltip.style.left = `${left}px`;
-      tooltip.style.top = `${top}px`;
-    });
-    document.addEventListener('pointerout', event => {
-      if (active && !active.annotation.contains(event.relatedTarget)) close();
-    });
-    document.addEventListener('scroll', event => {
-      if (active && !active.tooltip.contains(event.target)) close();
-    }, true);
-    document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
-    window.addEventListener('resize', close);
-    document.documentElement.classList.add('libtmux-source-scroll');
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, {once: true});
-  else initialize();
-})();
-"""
+ASSETS = Path(__file__).resolve().parent / "assets"
+# Each asset is appended to the Haddock file it extends, after a newline.
+RESPONSIVE_CSS = b"\n" + (ASSETS / "responsive.css").read_bytes()
+SOURCE_RESPONSIVE_CSS = b"\n" + (ASSETS / "source-responsive.css").read_bytes()
+SOURCE_SCRIPT = b"\n" + (ASSETS / "source-popover.js").read_bytes()
 
 
 class Node:

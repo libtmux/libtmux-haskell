@@ -17,24 +17,21 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "libtmux-haskell.cabal"
-for sibling in ("check_docs", "prepare_haddock"):
+for sibling in ("bounded", "check_docs", "prepare_haddock"):
     sys.path.append(str(SCRIPTS / sibling))
 
+from bounded import BUILD, QUICK, output
+from bounded import run as bounded_run
 from check_docs import DEFAULT_TIMEOUT, Entry
 from check_docs import check as check_docs
 from prepare_haddock import cabal_modules
 
 type Example = tuple[str, str]
 
-# Seconds. Every external command is bounded so a hang fails with the command's
-# name before the job's time limit stops it without one.
-QUICK = 120
-BUILD = 600
-
 
 def run(args: list[str], cwd: Path, timeout: int = QUICK) -> None:
     """Run a command that must succeed within ``timeout`` seconds."""
-    subprocess.run(args, cwd=cwd, check=True, timeout=timeout)
+    bounded_run(args, cwd=cwd, check=True, timeout=timeout)
 
 
 def archived(source: tarfile.TarFile, name: str) -> bytes:
@@ -138,21 +135,20 @@ def check_installation_pin(directory: Path, examples: list[Entry]) -> None:
     capture = next(entry for entry in examples if entry["id"] == "capture-graph")
     pin = installation_pin((ROOT / capture["vcs_project"]).read_text())
     run(["git", "merge-base", "--is-ancestor", pin, "HEAD"], ROOT)
-    manifest = subprocess.check_output(
-        ["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, text=True, timeout=QUICK
-    )
+    manifest = output(["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, timeout=QUICK)
     match = re.search(r"^version:\s*(\S+)", manifest, re.MULTILINE)
     if match is None:
         raise ValueError("The pinned Cabal manifest has no version")
     name = f"libtmux-haskell-{match.group(1)}"
     archive = directory / (name + ".tar.gz")
-    archive.write_bytes(
-        subprocess.check_output(
-            ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin],
-            cwd=ROOT,
-            timeout=QUICK,
-        )
+    tarball = bounded_run(
+        ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin],
+        cwd=ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+        timeout=QUICK,
     )
+    archive.write_bytes(tarball.stdout)
     check_example_consumers(
         examples,
         directory / "installation-examples",
@@ -180,17 +176,17 @@ def check_example_consumers(
     for entry in examples:
         consumer = workspace / entry["id"]
         target = "exe:" + entry["executable"]
-        executable = subprocess.check_output(
-            ["cabal", "list-bin", target, "--offline"], cwd=workspace, text=True, timeout=QUICK
+        executable = output(
+            ["cabal", "list-bin", target, "--offline"], cwd=workspace, timeout=QUICK
         ).strip()
         command = (
-            ["python3", str(consumer / Path(entry["runner"]).name), "--program", executable]
+            [sys.executable, str(consumer / Path(entry["runner"]).name), "--program", executable]
             if "runner" in entry
             else [executable]
         )
         if "fixture_panes" in entry:
             command += ["--expected-panes", str(entry["fixture_panes"])]
-        result = subprocess.run(
+        result = bounded_run(
             command,
             cwd=workspace,
             check=True,
@@ -204,7 +200,12 @@ def check_example_consumers(
 def check_public_commands(
     source: tarfile.TarFile, prefix: str, directory: Path, version: str
 ) -> None:
-    """Run public command cases against the archive, without private imports."""
+    """Run public command cases against the archive, without private imports.
+
+    They must exit zero and emit no stderr. The consumer ends through the fixture's guard, which
+    exits 3 and names the owners when a fixture daemon or client survived retirement, so a leak that
+    retirement reports to nobody still fails here.
+    """
     consumer = directory / "public-mutations"
     consumer.mkdir()
     for origin, name in [
@@ -216,12 +217,13 @@ def check_public_commands(
         (consumer / name).write_bytes(archived(source, prefix + origin))
     (consumer / "Main.hs").write_text(
         "module Main (main) where\n"
+        "import Fixture (guardRetained)\n"
         "import PublicMutationTest qualified\n"
         "import PublicCreationTest qualified\n"
         "import Test.Tasty (defaultMain, testGroup)\n"
         "main :: IO ()\n"
-        'main = defaultMain (testGroup "installed public commands"'
-        " [PublicMutationTest.tests, PublicCreationTest.tests])\n"
+        'main = guardRetained (defaultMain (testGroup "installed public commands"'
+        " [PublicMutationTest.tests, PublicCreationTest.tests]))\n"
     )
     (consumer / "cabal.project").write_text(
         f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"
@@ -240,23 +242,28 @@ def check_public_commands(
         "  c-sources: fixture-watch.c\n"
         "  cc-options: -std=c11 -Wall -Wextra\n"
         "  build-depends: base >=4.22 && <4.23, async, bytestring, directory, filepath,\n"
-        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, text, typed-process,"
-        " unix\n"
+        f"    libtmux-haskell ^>={version}, os-string, tasty, tasty-hunit, text, unix\n"
     )
     target = "exe:public-mutations-consumer"
     run(["cabal", "build", target, "--offline"], consumer, BUILD)
-    executable = subprocess.check_output(
-        ["cabal", "list-bin", target, "--offline"], cwd=consumer, text=True, timeout=QUICK
+    executable = output(
+        ["cabal", "list-bin", target, "--offline"], cwd=consumer, timeout=QUICK
     ).strip()
-    result = subprocess.run(
+    result = bounded_run(
         [executable, "--hide-successes"],
         cwd=directory,
-        check=True,
+        check=False,
         capture_output=True,
         timeout=BUILD,
     )
+    stderr = result.stderr.decode(errors="replace")
+    if result.returncode:
+        stdout = result.stdout.decode(errors="replace")[-2000:]
+        raise ValueError(
+            f"Installed public consumer exited {result.returncode}: {stderr}\n{stdout}"
+        )
     if result.stderr:
-        raise ValueError("Installed public mutation consumer emitted stderr")
+        raise ValueError(f"Installed public mutation consumer emitted stderr: {stderr}")
     print("PASS: installed public command behavior and recovery")
 
 
@@ -299,7 +306,7 @@ def check_haddock_examples(consumer: Path, modules: list[str], examples: list[Ex
         raise ValueError("No executable Haddock examples")
     plan = json.loads((consumer / "dist-newstyle/cache/plan.json").read_text())
     command = haddock_command(plan, modules, examples)
-    result = subprocess.run(
+    result = bounded_run(
         command, cwd=consumer, capture_output=True, text=True, check=False, timeout=BUILD
     )
     if result.returncode:

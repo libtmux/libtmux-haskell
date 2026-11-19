@@ -190,7 +190,7 @@ def test_a_missing_benchmark_build_says_how_to_make_it(
 ) -> None:
     """Without ``bench:capture`` built, the driver names the build command and leaves no output."""
     output = tmp_path / "results"
-    monkeypatch.setattr(bench.subprocess, "check_output", lambda *_, **__: str(tmp_path / "none"))
+    monkeypatch.setattr(bench.bounded, "output", lambda *_, **__: str(tmp_path / "none"))
     monkeypatch.setattr(
         sys, "argv", ["capture_benchmark", "--tmux", "tmux", "--output", str(output)]
     )
