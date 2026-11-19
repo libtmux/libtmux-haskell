@@ -387,7 +387,7 @@ startForeground owner names serverOwner = bracket arm N.close $ \watch -> do
       journal owner (\held -> held {client = Just started})
       pure started
     owner.probe.stage ClientLaunched names
-    atomically (readTMVar ticket.launchEvidence) >>= \case
+    atomically (P.awaitLaunch ticket) >>= \case
       P.LaunchRefused failure -> throwIO (StartRefused failure)
       P.NativeStarted -> pure ()
     descriptor <- mask_ $ withMVar ticket.signalLock $ \_ -> do

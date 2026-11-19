@@ -500,6 +500,16 @@ report pool = do
 awaitCleanup :: Pool -> IO ()
 awaitCleanup pool = atomically (readTMVar pool.pinResult) >>= either throwIO pure
 
+-- A worker can fail before publishing a child. Its original exception wakes
+-- observers without turning missing launch evidence into a refusal or freeing
+-- the ticket's cleanup ownership.
+awaitLaunch :: Ticket -> STM LaunchEvidence
+awaitLaunch ticket = readTMVar ticket.launchEvidence `orElse` do
+  outcome <- readTMVar ticket.result
+  case outcome of
+    Left problem -> throwSTM problem
+    Right _ -> throwSTM (userError "native completion has no launch observation")
+
 await :: Ticket -> IO Completion
 await ticket = atomically (readTMVar ticket.result) >>= either throwIO pure
 
@@ -528,7 +538,7 @@ stdoutPrefix ticket = readTVar ticket.prefix
 -- not infer an application's PID from a command client's process identity.
 clientProcessId :: Ticket -> IO Integer
 clientProcessId ticket = do
-  atomically (readTMVar ticket.launchEvidence) >>= \case
+  atomically (awaitLaunch ticket) >>= \case
     LaunchRefused problem -> throwIO problem
     NativeStarted -> pure ()
   withMVar ticket.signalLock $ \_ -> mask_ $ do

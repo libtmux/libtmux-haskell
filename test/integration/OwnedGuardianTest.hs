@@ -29,6 +29,7 @@ import LibTmux.Server qualified as Server
 import LibTmux.Snapshot qualified as Snapshot
 import System.Environment (lookupEnv)
 import System.OsString.Posix qualified as Os
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -147,6 +148,10 @@ unpublished loseHelper = do
         try @IOException (P.await ticket) >>= \case
           Left problem -> displayException problem @?= "user error (unpublished marker)"
           Right _ -> assertFailure "unpublished primary exception disappeared"
+        launch <- timeout 250000 (try @IOException (P.clientProcessId ticket))
+        case launch of
+          Just (Left problem) -> displayException problem @?= "user error (unpublished marker)"
+          _ -> assertFailure "launch observation discarded its published primary failure"
         atomically $ do
           retired <- P.ticketRetired pool ticket
           busy <- readTVar ticket.busy
