@@ -27,6 +27,8 @@
 
 - Send literal text or a validated sequence of named keys to a `PaneRef`
   with `sendKeys`. Use `sendKeysWith` for an explicit deadline. ([#24])
+- Read visible or historical rows through `capturePane`. Plain and ANSI
+  captures preserve empty rows and reject text over the byte limit. ([#25])
 
 ### Changed
 
@@ -148,3 +150,4 @@
 [#41]: https://github.com/libtmux/libtmux-haskell/issues/41
 [#28]: https://github.com/libtmux/libtmux-haskell/issues/28
 [#24]: https://github.com/libtmux/libtmux-haskell/issues/24
+[#25]: https://github.com/libtmux/libtmux-haskell/issues/25
