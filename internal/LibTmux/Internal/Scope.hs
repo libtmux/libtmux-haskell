@@ -15,6 +15,7 @@ import Data.Text (Text)
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Options (OptionError)
 import LibTmux.Version qualified as Version
 
 -- | Library operational failures. Context-preserving catching retains any
@@ -31,6 +32,10 @@ data TmuxException
   | BufferTooLarge !Int -- ^ Named buffer data exceeded the byte limit.
   | EnvironmentReadRejected !ByteString -- ^ tmux refused the exact environment query.
   | EnvironmentReadHookFailed !ByteString -- ^ A hook failed after a completed environment query.
+  | InvalidSetting !OptionError -- ^ An option or hook was refused before admission.
+  | SettingReadRejected !ByteString -- ^ tmux refused the selected option or hook query.
+  | SettingReadHookFailed !ByteString -- ^ An after-hook failed following a successful query.
+  | SettingReadTooLarge !Int -- ^ The setting reply exceeded the byte limit.
   | InvalidTarget !Text -- ^ Target belongs to a different connection or an offline fixture.
   | UnsupportedTmuxVersion !Version.VersionError -- ^ Daemon release is older than the supported minimum.
   | InvalidMutationArgument !Text -- ^ Invalid command operand; no command was admitted.

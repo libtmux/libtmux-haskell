@@ -10,6 +10,7 @@ module LibTmux.Internal.Command
   , compileKeyProbe, decodeKeyProbe
   , ControlDataReply (..), compilePaneCapture, decodeControlData
   , EnvironmentChange (..), compileEnvironmentRead
+  , OptionDestination (..), SettingChange (..), SettingRead (..), compileSettingRead, settingReadLimit
   , MutationReply (..), ReplyError (..), decodeControlReply
   , SessionReceipt (..), SessionCreationReply (..)
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
@@ -25,6 +26,7 @@ import Data.ByteString.Char8 qualified as Ascii
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
+import Data.Word (Word32)
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NonEmpty
 import LibTmux.Creation (SessionOptions (..), InitialProcess (..), defaultSessionOptions)
@@ -58,6 +60,7 @@ data Mutation
   | SelectExactPane !Id.SessionId !Value.WindowIndex !Id.PaneId
   | SelectLayout !Id.SessionId !Value.WindowIndex !NamedLayout
   | ChangeEnvironment !(Maybe Id.SessionId) !ByteString !EnvironmentChange
+  | ChangeSetting !OptionDestination !ByteString !SettingChange
   | LoadBuffer !ByteString !ByteString
   | SaveBuffer !ByteString !ByteString
   | PasteBuffer !Id.PaneId !ByteString !PasteNewlines !Bool
@@ -75,6 +78,33 @@ instance Show EnvironmentChange where
   show (SetVariable visibility _) = "SetVariable " <> show visibility
   show MarkVariableRemoved = "MarkVariableRemoved"
   show UnsetVariable = "UnsetVariable"
+
+data OptionDestination
+  = ServerDestination
+  | GlobalSessionDestination
+  | SessionDestination !Id.SessionId
+  | GlobalWindowDestination
+  | WindowDestination !Id.WindowId
+  | PaneDestination !Id.PaneId
+  deriving stock (Eq, Show)
+
+data SettingChange
+  = SetOptionValue !ByteString
+  | UnsetOptionValue
+  | SetHookEntry !Word32 !ByteString
+  | UnsetHookEntry
+  deriving stock (Eq)
+
+instance Show SettingChange where
+  show SetOptionValue {} = "SetOptionValue"
+  show UnsetOptionValue = "UnsetOptionValue"
+  show SetHookEntry {} = "SetHookEntry"
+  show UnsetHookEntry = "UnsetHookEntry"
+
+data SettingRead = ReadScalar !Bool | ReadHookListing
+
+settingReadLimit :: Int
+settingReadLimit = 65536
 
 -- | Layout names shared by tmux 3.3a and 3.8.
 data NamedLayout = EvenHorizontal | EvenVertical | MainHorizontal | MainVertical | Tiled
@@ -523,6 +553,14 @@ compileMutation = \case
           MarkVariableRemoved -> (["-r"], [name])
           UnsetVariable -> (["-u"], [name])
     literalArguments "environment" (["set-environment"] <> environmentScope scope <> flags <> ["--"]) operands
+  ChangeSetting destination name change ->
+    let (command, flags, operands) = case change of
+          SetOptionValue value -> ("set-option", [], [name, value])
+          UnsetOptionValue -> ("set-option", ["-u"], [name])
+          SetHookEntry index source ->
+            ("set-hook", [], [name <> "[" <> Ascii.pack (show index) <> "]", source])
+          UnsetHookEntry -> ("set-hook", ["-u"], [name])
+    in literalArguments "setting" ([command] <> optionDestination destination <> flags <> ["--"]) operands
   LoadBuffer name file -> bufferTransfer "load-buffer" name file
   SaveBuffer name file -> bufferTransfer "save-buffer" name file
   PasteBuffer pane name newlines rawFlag -> do
@@ -682,6 +720,22 @@ compileEnvironmentRead scope visibility name = do
   validateEnvironmentName name
   literalArguments "environment.name"
     (["show-environment"] <> environmentScope scope <> visibilityFlag visibility <> ["--"]) [name]
+
+compileSettingRead :: OptionDestination -> ByteString -> SettingRead -> Either ArgumentError [ByteString]
+compileSettingRead destination name request =
+  let (command, flags) = case request of
+        ReadScalar effective -> ("show-options", ["-v"] <> ["-A" | effective])
+        ReadHookListing -> ("show-hooks", [])
+  in literalArguments "setting" ([command] <> optionDestination destination <> flags <> ["--"]) [name]
+
+optionDestination :: OptionDestination -> [ByteString]
+optionDestination = \case
+  ServerDestination -> ["-s"]
+  GlobalSessionDestination -> ["-g"]
+  SessionDestination ident -> ["-t", creationSessionTarget ident]
+  GlobalWindowDestination -> ["-g", "-w"]
+  WindowDestination ident -> ["-w", "-t", Utf8.encodeUtf8 (Id.renderWindowId ident)]
+  PaneDestination ident -> ["-p", "-t", Utf8.encodeUtf8 (Id.renderPaneId ident)]
 
 environmentScope :: Maybe Id.SessionId -> [ByteString]
 environmentScope Nothing = ["-g"]
