@@ -4,6 +4,11 @@
 
 ### Added
 
+- Resize physical panes and windows with `resizePane`, `resizeWindow` and
+  their `With` variants. `ResizeWidth`, `ResizeHeight` and `ResizeBoth` use
+  checked dimensions and refuse axes above 10000 cells before native effects.
+  Capture again for actual geometry after layout constraints. ([#27])
+
 - Create windows through `createWindow` and `createWindowWith`, with explicit
   session/index placement, selection and occupied-link replacement policy.
   Return the actual window, pane and link identities. ([#33])
@@ -179,3 +184,4 @@
 [#25]: https://github.com/libtmux/libtmux-haskell/issues/25
 [#47]: https://github.com/libtmux/libtmux-haskell/issues/47
 [#12]: https://github.com/libtmux/libtmux-haskell/issues/12
+[#27]: https://github.com/libtmux/libtmux-haskell/issues/27
