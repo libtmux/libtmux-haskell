@@ -5,7 +5,7 @@ The public modules are:
 | Module | Read it for |
 | --- | --- |
 | [LibTmux](../src/LibTmux.hs) | Common observation, Server and scalar entry point |
-| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, creation, mutations, geometry and deadlines |
+| [LibTmux.Server](../src/LibTmux/Server.hs) | Private and borrowed scopes, capture, creation, mutations, geometry and deadlines |
 | [LibTmux.Recovery](../src/LibTmux/Recovery.hs) | Inspect and resume cleanup of retained scopes and operations |
 | [LibTmux.Options](../src/LibTmux/Options.hs) | Daemon-specific catalogues, option stores and scalar values |
 | [LibTmux.Control](../src/LibTmux/Control.hs) | Control events, bounded queues and terminal results |
@@ -27,8 +27,8 @@ The [program guide](programs.md) runs a terminal application, cancels and retrie
 an observation, and distinguishes owning deadlines from observation timeouts.
 The [resizing program](resizing.md) changes absolute geometry and reports actual cells.
 The [creation program](creation.md) uses actual returned references and reads
-them from a new capture. The [mutation program](mutations.md) selects physical targets before issuing
-commands and compares their detached observations afterward.
+them from a new capture. The [mutation program](mutations.md) renames its
+newly created targets and compares their detached observations afterward.
 
 Build the native Haddock browser from a checkout:
 

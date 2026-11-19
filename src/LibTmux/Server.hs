@@ -1,9 +1,10 @@
--- | Observe and change an existing tmux daemon through an owned Server handle.
+-- | Start, observe and change a tmux daemon through a scoped handle.
 --
--- A t'Server' represents one adoption of one endpoint. 'withServer' owns its
--- socket pin, native command clients and cleanup workers. Closing this scope
--- releases those resources; it does not send @kill-server@. The tmux noun
--- @Client@ refers to detached observations in "LibTmux.Snapshot".
+-- A t'Server' represents one adoption of one endpoint. 'withOwnedServer'
+-- starts and retires a private daemon. 'withServer' borrows a daemon and
+-- releases its socket pin, native command clients and cleanup workers when
+-- the scope closes. The tmux noun @Client@ refers to detached observations in
+-- "LibTmux.Snapshot".
 -- 'withRuntime' and 'withServerIn' give several handles shared resource limits
 -- and independent Server scopes.
 --
@@ -213,10 +214,13 @@ data OwnedServerConfig = OwnedServerConfig
   , operationTimeout :: !NominalDiffTime
   } deriving stock (Eq, Show)
 
+-- | Resolve @tmux@ on @PATH@ and use a two-second default operation deadline.
 defaultOwnedServerConfig :: OwnedServerConfig
 defaultOwnedServerConfig = OwnedServerConfig (Os.fromBytestring "tmux") 2
 
--- | Run with a private foreground daemon. Cleanup includes every descendant
+-- | Run with a private foreground daemon. The daemon begins with no sessions.
+-- The host must support peer pidfds and expose process data through @/proc@.
+-- Cleanup includes every descendant
 -- of its native clients and terminal applications. Helper loss or replaced
 -- endpoint names retain a cleanup owner through "LibTmux.Recovery".
 withOwnedServer :: OwnedServerConfig -> (Server -> IO a) -> IO a

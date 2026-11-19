@@ -1,10 +1,7 @@
 # Implementation status
 
-Use the current source for detached observations and typed input values.
-The API is experimental. Public operations cover session/window rename, pane
-titles, session/window creation, pane splits, absolute resizing, target removal,
-pane input and an initial Linux Program scope. These operations check the
-generation and retain recovery.
+The API is experimental. Start from the public operations and the tested
+configuration below.
 
 | Component | Available to consumers |
 | --- | --- |
@@ -30,9 +27,10 @@ generation and retain recovery.
 | Absolute pane/window width, height or both | Implemented through `resizePane` and `resizeWindow`; see [resizing](resizing.md). Other resize modes remain open. |
 | Built-in options and hooks by daemon release | Implemented through `LibTmux.Options`; see [options and hooks](options.md) |
 | Scoped scalar settings and built-in hooks | `readOption`, `setOption`, `readHook` and `setHook`; see [scope and values](options.md#select-a-store) |
-| Private daemons and explicit server shutdown | See [server scopes](capture.md) |
+| Start and retire a private daemon | `withOwnedServer`; see [server scopes](capture.md#open-a-server) |
 | Query interchange and backend optimization | Not implemented |
-| Bounded control notifications and optional pane output records | [Control scope](control.md) |
+| Bounded control notifications and optional pane output records | `withControl`; see [control scope](control.md) |
+| Agent discovery and pane inspection | `libtmux-mcp` adapter; see [MCP setup](agents.md) |
 
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
 interface. Additional commands, interchange and event contracts remain separate

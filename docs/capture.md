@@ -1,19 +1,23 @@
 # Capture and navigate a tmux server
 
-[`withServer`](../src/LibTmux/Server.hs) adopts an existing tmux endpoint.
-[`capture`](../src/LibTmux/Server.hs) reads it into a detached
-[`Snapshot`](../src/LibTmux/Snapshot.hs) that stays usable after the handle
-closes. The [README](../README.md) shows the
-[complete program](../examples/capture-graph/Main.hs).
-
-The example starts a private daemon with `withOwnedServer`. Run from a checkout.
+`capture` reads the tmux graph into a `Snapshot` that stays usable after
+the lifetime of the `Server`. Run the capture example from a checkout.
+[Complete program](../examples/capture-graph/Main.hs)
 
 ```console
 $ cabal run --verbose=0 capture-graph
 ```
 
-To inspect an existing daemon, pass its socket through `serverConfig` and
-open it with `withServer`. Borrowing an endpoint requires:
+## Open a server
+
+Use `withOwnedServer defaultOwnedServerConfig` to start an empty, private
+daemon. The callback can create sessions and observe them. The scope retires
+its processes and removes its directory on return, failure or cancellation.
+Set `tmuxExecutable` to select a different binary. [Server API](../src/LibTmux/Server.hs)
+
+Use `withServer (serverConfig socket)` to borrow a running daemon. The
+daemon stays running when the callback returns. Supply the following host
+and endpoint settings.
 
 - A trusted absolute socket path.
 - A writable pin directory on the socket's filesystem. The default is the
@@ -98,7 +102,7 @@ releases. An installed consumer also captured an attached terminal at
 - A snapshot records a monotonic capture interval. It is not a transaction over
   tmux and operating-system state.
 
-`withServer` rethrows the callback's own exception, cancellation included.
+Both scopes rethrow the callback's own exception, cancellation included.
 
 - If bounded cleanup stays incomplete, the exception context holds a
   `CleanupRecovery`.

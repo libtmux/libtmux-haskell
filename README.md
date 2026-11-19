@@ -26,7 +26,8 @@ and explicit `IO`. Capture once, then use ordinary records and collections.
 
 ## Install
 
-Not on Hackage yet. Add the library to your `.cabal` dependencies:
+Install from Git until the first Hackage release. Add the library to your
+`.cabal` dependencies.
 
 ```cabal
 build-depends: libtmux-haskell ^>=0.0.1.0
@@ -47,9 +48,10 @@ Update the package index:
 $ cabal update
 ```
 
-Needs a current GHC and Cabal, Linux and tmux 3.3a or newer.
-More: [installation](https://libtmux.org/en/haskell/latest/guides/installation/) ·
-[host requirements](docs/installation.md#native-backend-host-requirements).
+Requires Linux x86_64 with glibc 2.39 or newer, GHC 9.14 and tmux 3.3a or
+newer. The first example also uses Linux 6.5 peer pidfds.
+[Installation](https://libtmux.org/en/haskell/latest/guides/installation/) ·
+[Host requirements](docs/installation.md#native-backend-host-requirements)
 
 ## Read a tmux graph
 

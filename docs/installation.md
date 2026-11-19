@@ -2,9 +2,10 @@
 
 Requirements:
 
-- A current GHC and Cabal, within the bounds in the
+- GHC 9.14 and Cabal within the bounds in the
   [package manifest](../libtmux-haskell.cabal).
-- Linux x86_64; see [host requirements](#native-backend-host-requirements).
+- Linux x86_64. The first program needs peer pidfds from Linux 6.5.
+  [Host requirements](#native-backend-host-requirements)
 - tmux 3.3a or newer.
 
 Opening a Server refuses older observed releases before entering the callback.
@@ -69,8 +70,8 @@ for connection, capture and mutation operations.
 
 ## Fetch the source from Git
 
-The package is not on Hackage yet, so Cabal fetches a source revision from Git.
-Use this `cabal.project`:
+Cabal fetches a source revision from Git until the first Hackage release.
+Put the following settings in `cabal.project`.
 
 <!-- example-project: capture-graph -->
 ```cabal
@@ -92,6 +93,7 @@ The native backend needs:
 - A kernel with compatible pidfd operations.
 - Exclusive ownership of child reaping.
 
-A missing host operation fails before launch. Pure scalar construction and
-lookup do not need them. See the
-[process host contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#launch-and-host-requirements).
+`withOwnedServer` also needs `SO_PEERPIDFD`, available from Linux 6.5, and
+a mounted `/proc` with readable process and descriptor information. It checks
+host operations before starting tmux. Pure scalar construction and lookup
+work without a daemon. [Process host contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#launch-and-host-requirements)

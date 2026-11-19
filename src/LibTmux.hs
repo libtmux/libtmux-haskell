@@ -1,6 +1,7 @@
 -- | Capture tmux state in IO and process detached observations with ordinary
--- Haskell collections. Start with 'withServer' and 'capture'; navigation and
--- field access from "LibTmux.Snapshot" perform no external operations.
+-- Haskell collections. Start a private daemon with 'withOwnedServer' or
+-- borrow one with 'withServer'. Navigation and field access from
+-- "LibTmux.Snapshot" perform no external operations.
 -- 'renameSession', 'renameWindow' and 'setPaneTitle' act on explicit references
 -- in IO; detached observations change only when acquired again with 'capture'.
 -- 'createSession', 'createWindow' and 'splitPane' return historical identities;
