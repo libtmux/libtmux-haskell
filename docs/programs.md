@@ -208,5 +208,6 @@ witness may require the external owner to remove its resource before retry.
 
 The initial precreation witness conservatively observes respawns throughout the
 daemon until exact pane identity is available. An unrelated respawn during that
-short interval can refuse startup. Raw byte streaming, readiness predicates,
-controller-crash leases, keep/detach and MCP are not implemented.
+short interval can refuse startup. For agent access to ordinary tmux pane
+state, see [MCP setup and discovery](agents.md). Program input, rendered
+output and exit remain methods on the Haskell `Program` handle.
