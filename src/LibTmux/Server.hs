@@ -394,6 +394,7 @@ capturePane server@(Server runtime handle executable duration _) pane@(G.PaneRef
           rethrowIO (ExceptionWithContext context (PaneTextTooLarge options.byteLimit))
         _ -> rethrowIO original
     case reply of
+      Command.CaptureExceedsLimit -> throwIO (PaneTextTooLarge options.byteLimit)
       Command.CaptureRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
       Command.CapturedPaneText bytes ->
         either (const (throwIO (InvalidObservation "pane text is not valid UTF-8")))

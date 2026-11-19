@@ -5,6 +5,7 @@ import Data.ByteString qualified as Bytes
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.TmuxText qualified as Label
+import LibTmux.Pane qualified as Pane
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
@@ -64,6 +65,16 @@ tests = testGroup "typed mutation arguments"
       compile (Bytes.replicate 2334 35 <> "x;") @?= Left (C.EncodedCommandTooLarge "window.name")
       compile (Bytes.replicate 16339 120 <> ";") @?= Left (C.EncodedCommandTooLarge "window.name")
 
+  , testCase "pane capture refuses offsets tmux cannot represent safely" $ do
+      pane <- require (Id.parsePaneId "%5")
+      let compile first lastRow = C.compilePaneCapture pane
+            Pane.defaultPaneCapture {Pane.rows = Pane.RowsBetween first lastRow}
+          refused = Left (C.InvalidOperand "pane.capture.rows" "expected ordered offsets from -2147483647 through 32767")
+      compile (-2147483648) 0 @?= refused
+      compile 0 32768 @?= refused
+      compile 1 0 @?= refused
+      compile (-2147483647) 32767 @?=
+        Right ["capture-pane", "-p", "-t", "%5", "-S", "-2147483647", "-E", "32767"]
   , testCase "pane capture keeps its primary bytes and refuses ambiguous boundaries" $ do
       let begin = "%begin 1794000000 27 0\n"
           ended = "%end 1794000000 27 0\n"
@@ -73,7 +84,7 @@ tests = testGroup "typed mutation arguments"
           hook = "%begin 1794000000 28 0\nhook output\n%end 1794000000 28 0\n"
           decode limit body = C.decodePaneCapture limit (Just 0) (begin <> body <> footer) ""
       decode 64 (payload <> ended <> hook) @?= Right (C.CapturedPaneText payload)
-      decode 4 (payload <> ended) @?= Left C.ReplyTooLarge
+      decode 4 (payload <> ended) @?= Right C.CaptureExceedsLimit
       decode 128 (ended <> payload <> ended) @?= Left C.UnexpectedReply
       decode 128 (failed <> payload <> ended) @?= Left C.UnexpectedReply
       C.decodePaneCapture 64 (Just 1) (begin <> "can't find pane: %5\n" <> failed <> footer) ""

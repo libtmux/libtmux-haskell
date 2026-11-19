@@ -948,6 +948,7 @@ completionEvidence :: ResultDecoder value -> value -> S.Completion
 completionEvidence (ObservationResult _) _ = S.Success
 completionEvidence KeyProbeResult _ = S.Success
 completionEvidence (PaneCaptureResult _) (Command.CapturedPaneText _) = S.Success
+completionEvidence (PaneCaptureResult _) Command.CaptureExceedsLimit = S.Success
 completionEvidence (PaneCaptureResult _) (Command.CaptureRejected _) = S.CommandFailure
 completionEvidence MutationResult Command.Applied = S.Success
 completionEvidence MutationResult _ = S.CommandFailure
