@@ -254,6 +254,18 @@ int libtmux_process_watch_removals(const char *directory) {
     return fd;
 }
 
+/* SPIKE: tmux -D chmods its socket after listen. Arm before submitting the child. */
+int libtmux_process_watch_start(const char *directory) {
+    int fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
+    if (fd < 0) return -errno;
+    if (inotify_add_watch(fd, directory, IN_ATTRIB | IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF) < 0) {
+        int saved = errno;
+        close(fd);
+        return -saved;
+    }
+    return fd;
+}
+
 /* Discard queued watch events. Zero once drained, negative errno otherwise. */
 int libtmux_process_watch_drain(int fd) {
     char buffer[4096] __attribute__((aligned(8)));
