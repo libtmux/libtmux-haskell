@@ -36,6 +36,7 @@ extra-doc-files:
   docs/buffers.md
   docs/options.md
   docs/capabilities.md
+  docs/control.md
   docs/mutations.md
   docs/fixtures.md
   docs/performance.md
@@ -75,6 +76,12 @@ extra-source-files:
   examples/configure-session/libtmux-configure-session.cabal
   examples/configure-session/cabal.project
   examples/configure-session/cabal.project.vcs
+  examples/watch-window/Main.hs
+  examples/watch-window/README.md
+  examples/watch-window/expected.stdout
+  examples/watch-window/libtmux-watch-window.cabal
+  examples/watch-window/cabal.project
+  examples/watch-window/cabal.project.vcs
   capabilities.json
   examples/managed-program/Main.hs
   examples/managed-program/README.md

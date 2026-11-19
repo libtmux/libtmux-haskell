@@ -73,6 +73,7 @@ def test_registered_programs_are_valid(root: Path) -> None:
         "paste-buffer",
         "resize-geometry",
         "configure-session",
+        "watch-window",
     }
 
 
