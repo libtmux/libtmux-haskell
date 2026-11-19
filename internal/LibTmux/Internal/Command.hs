@@ -35,7 +35,7 @@ import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Frame qualified as Frame
 import LibTmux.Internal.TmuxText (TmuxText)
 import LibTmux.Internal.TmuxText qualified as Label
-import LibTmux.Pane (PaneCaptureOptions (..), PaneRendering (..), PaneRows (..))
+import LibTmux.Pane (PaneCaptureOptions (..), PaneRendering (..), PaneRows (..), PasteNewlines (..))
 import LibTmux.Snapshot qualified as Snapshot
 import LibTmux.Value qualified as Value
 import System.OsString.Posix (PosixString)
@@ -58,6 +58,9 @@ data Mutation
   | SelectExactPane !Id.SessionId !Value.WindowIndex !Id.PaneId
   | SelectLayout !Id.SessionId !Value.WindowIndex !NamedLayout
   | ChangeEnvironment !(Maybe Id.SessionId) !ByteString !EnvironmentChange
+  | LoadBuffer !ByteString !ByteString
+  | SaveBuffer !ByteString !ByteString
+  | PasteBuffer !Id.PaneId !ByteString !PasteNewlines !Bool
   deriving stock (Eq, Show)
 
 data EnvironmentChange
@@ -518,6 +521,14 @@ compileMutation = \case
           MarkVariableRemoved -> (["-r"], [name])
           UnsetVariable -> (["-u"], [name])
     literalArguments "environment" (["set-environment"] <> environmentScope scope <> flags <> ["--"]) operands
+  LoadBuffer name file -> bufferTransfer "load-buffer" name file
+  SaveBuffer name file -> bufferTransfer "save-buffer" name file
+  PasteBuffer pane name newlines rawFlag -> do
+    validateBufferName name
+    literalArguments "buffer.name"
+      (target "paste-buffer" (Id.renderPaneId pane)
+        <> ["-r" | newlines == PreserveLineFeeds] <> ["-S" | rawFlag] <> ["-b"])
+      [name]
   SendPaneText ident text ->
     literalArguments "pane.input" (target "send-keys" (Id.renderPaneId ident) <> ["-l", "--"])
       [Utf8.encodeUtf8 text]
@@ -635,6 +646,15 @@ checkProgramCost values = do
   mapM_ (\value -> when (Bytes.elem 0 value) (Left (NulOperand "program"))) values
   when (sum (map ((+ 1) . toInteger . Bytes.length) values) > commandLimitBytes)
     (Left (EncodedCommandTooLarge "program"))
+
+bufferTransfer :: ByteString -> ByteString -> ByteString -> Either ArgumentError [ByteString]
+bufferTransfer command name file = do
+  validateBufferName name
+  literalArguments "buffer.name" [command, "-b"] [name, protectFormat file]
+
+validateBufferName :: ByteString -> Either ArgumentError ()
+validateBufferName name =
+  when (Bytes.null name) (Left (InvalidOperand "buffer.name" "expected a nonempty buffer name"))
 
 compileEnvironmentRead :: Maybe Id.SessionId -> EnvironmentVisibility -> ByteString -> Either ArgumentError [ByteString]
 compileEnvironmentRead scope visibility name = do

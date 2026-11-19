@@ -1,7 +1,7 @@
--- | Choose a pane capture range, rendering and byte bound.
+-- | Pane capture settings and paste newline policy.
 module LibTmux.Pane
   ( PaneCaptureOptions (..), defaultPaneCapture
-  , PaneRows (..), PaneRendering (..)
+  , PaneRows (..), PaneRendering (..), PasteNewlines (..)
   ) where
 
 -- | A visible screen or an inclusive range relative to the first visible row.
@@ -29,3 +29,8 @@ data PaneCaptureOptions = PaneCaptureOptions
 -- | The visible rows in plain Unicode with a 64 KiB limit.
 defaultPaneCapture :: PaneCaptureOptions
 defaultPaneCapture = PaneCaptureOptions VisibleRows PlainText 65536
+
+-- | Choose how a named buffer's line feeds reach the target pane. Other
+-- bytes are preserved when tmux delivers the paste to the pane.
+data PasteNewlines = PreserveLineFeeds | LineFeedsToCarriageReturns
+  deriving stock (Eq, Show)
