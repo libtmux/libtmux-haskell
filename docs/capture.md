@@ -91,8 +91,9 @@ required.
 These meanings follow the native callbacks in
 [tmux 3.3a](https://github.com/tmux/tmux/blob/0b355ae8114511e1ff6359272b164f1cdf718e80/format.c) and
 [tmux 3.8](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/format.c).
-Live checks exercise control-client sizing and absent height on both releases;
-terminal-client height is represented and checked in offline fixtures.
+Live checks exercised control-client sizing and an absent height on both
+releases. An installed consumer also captured an attached terminal at
+89 columns and 37 rows on each release.
 
 ## Errors and recovery
 
