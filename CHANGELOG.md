@@ -44,6 +44,8 @@
 - Read and change named entries in the global or session environment.
   Preserve literal bytes, visibility and the difference between empty,
   removed and absent values. ([#12])
+- Load and read named binary buffers with a 64 KiB limit. Paste into an
+  exact pane with an explicit line-feed policy. ([#12])
 
 ### Changed
 
