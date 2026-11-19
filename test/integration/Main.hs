@@ -14,6 +14,7 @@ import PublicMutationTest qualified
 import PublicCreationTest qualified
 import EntityCaptureTest qualified
 import CommandIntegrationTest qualified
+import StartupOwnershipTest qualified
 import OwnedServerTest qualified
 import PublicLifecycleTest qualified
 import Fixture (guardRetained)
@@ -24,4 +25,4 @@ main = ProcessTest.withTests $ \processTests -> guardRetained $ defaultMain $
   testGroup "real tmux"
     [FixtureTest.tests, FrameIntegrationTest.tests, SocketPinTest.tests,
      RuntimeTest.tests, RuntimeReadTest.tests, RuntimeMutationTest.tests, RuntimeCreationTest.tests, ScopeTest.tests, PublicServerTest.tests, PublicMutationTest.tests, PublicCreationTest.tests,
-     EntityCaptureTest.tests, CommandIntegrationTest.tests, processTests, OwnedServerTest.tests, PublicLifecycleTest.tests]
+     EntityCaptureTest.tests, CommandIntegrationTest.tests, processTests, StartupOwnershipTest.tests, OwnedServerTest.tests, PublicLifecycleTest.tests]

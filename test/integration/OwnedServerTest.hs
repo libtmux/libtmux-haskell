@@ -25,7 +25,7 @@ import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Fixture qualified
-import Foreign.C.Error (eAGAIN, eCONNREFUSED, throwErrno)
+import Foreign.C.Error (eAGAIN, eCHILD, eCONNREFUSED, throwErrno)
 import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Array (allocaArray, peekArray)
@@ -386,20 +386,10 @@ tests = localOption (mkTimeout 60000000) $ testGroup "owned daemon lifecycle"
     [ testCase "failure and cancellation at every stage after the start client leaves keep their class and retire the daemon" $
         withTmux $ \exe -> forM_ [OS.ClientExited, OS.DaemonOwned, OS.Verified, OS.Admitted] (stageBoundary exe)
 
-    , testCase "a start client that fails, leaves no daemon, or never returns is not proof of no daemon: ownership is retained" startShapes
+    , testCase "known single-process startup failures retire their direct children and names" startShapes
 
-    , testCase "a stopped daemon whose socket vanished after its client exited keeps ownership until a restored endpoint is found and retired" unlistedDaemon
-    , testCase "awaiting a start that left no listener fails with its owner instead of waiting or reporting completion" $
-        withScratch $ \scratch -> do
-          outcome <- try @SomeException $
-            OS.withOwnedServerWith OS.defaultProbe {OS.root = Ascii.pack scratch} "/bin/true" (\_ -> pure ())
-          recovery <- OS.recoveryOwner <$> recoveryOf "a start that left no listener" (\case OS.NoDaemon -> True; _ -> False) outcome
-          let actions = OS.cleanupActions recovery
-          actions.observeCleanup >>= assertBool "an unproved start was reported complete" . not . (.complete)
-          try @SomeException (bounded actions.waitCleanup) >>= \case
-            Left problem | Just (OS.NotRetired _ _) <- fromException problem -> pure ()
-            other -> assertFailure ("await did not keep the unproved start: " <> either show (const "completed") other)
-          actions.observeCleanup >>= assertBool "await reported an unproved start complete" . not . (.complete)
+    , testCase "a stopped direct daemon retires even after its socket disappears" unlistedDaemon
+    , testCase "awaiting unresolved name cleanup keeps its owner and the replacement entry" awaitUnrecordedName
     ]
   , testGroup "start-server contract"
     [ testCase "start-server against a live socket is a no-op: the same daemon answers" $
@@ -1149,38 +1139,58 @@ stageBoundary exe point = do
   assertCancelled outcome
   assertRetired cancelled
 
--- | Three ways the start client can end without a daemon the library holds. None proves that no
--- daemon exists: a failed or custom executable may have started one, and an absent or refusing
--- socket is not death proof. Each keeps its owner and its private directory. Only an atomic
--- launch refusal, which has no child, removes the directory (covered above). The blocked client
--- is still killed and reaped, never abandoned.
+-- | These known single-process executables cannot leave a detached daemon.
+-- Each physical child is observed independently and must be collected before
+-- the private names are removed. Other executable shapes are a separate contract.
 startShapes :: Assertion
 startShapes = withScratch $ \scratch -> withScratch $ \scripts -> do
-  let attempt executable probe = try @SomeException $
-        OS.withOwnedServerWith probe {OS.root = Ascii.pack scratch} executable (\_ -> pure ())
-      retained label matches outcome = do
-        recovery <- recoveryOf label matches outcome
-        case OS.recoveryFailure recovery >>= fromException of
-          Just (OS.NotRetired _ _) -> pure ()
-          _ -> assertFailure (label <> ": the retained owner does not report an unproved start")
-        listDirectory scratch >>= \entries -> length entries @?= 1
-        listDirectory scratch >>= mapM_ (removePathForcibly . (scratch </>))
-  attempt "/bin/false" OS.defaultProbe >>= retained "a failed start"
+  let release witnesses = readIORef witnesses >>= mapM_ (\fd -> do
+        gone <- OS.awaitExit fd 0
+        unless gone $ do
+          void (N.cSignal fd sigKILL)
+          OS.awaitExit fd 2000 >>= assertBool "the witnessed startup child did not exit"
+        N.close fd)
+      attempt label executable probe matches = bracket (newIORef []) release $ \witnesses -> do
+        let launch spec = do
+              started <- N.launch spec
+              case started of
+                N.Refused _ -> pure ()
+                N.Owned child -> do
+                  copy <- OS.cDup child.pidfd
+                  when (copy >= 0) (modifyIORef' witnesses (copy :))
+              pure started
+        outcome <- tryWithContext @SomeException $ OS.withOwnedServerWith
+          probe {OS.root = Ascii.pack scratch, OS.hooks = P.defaultHooks {P.launchNative = launch}}
+          executable (\_ -> assertFailure (label <> ": admitted without a listener"))
+        observed <- readIORef witnesses
+        length observed @?= 1
+        forM_ observed $ \fd -> do
+          OS.awaitExit fd 0 >>= assertBool (label <> ": direct child is alive")
+          N.waitChild (N.Child fd (-1) (-1) (-1)) >>= \case
+            Just (N.StatusLost problem) | problem == N.errno eCHILD -> pure ()
+            other -> assertFailure (label <> ": child status was not collected: " <> show other)
+        case outcome of
+          Left (ExceptionWithContext context cause) -> do
+            maybe (assertFailure (label <> ": wrong failure: " <> show cause))
+              (assertBool (label <> ": wrong startup outcome") . matches) (fromException cause)
+            assertBool (label <> ": known child exit retained an unresolved birth")
+              (null (OS.ownedRecoveries context))
+          Right _ -> assertFailure (label <> ": startup succeeded")
+        listDirectory scratch >>= (@?= [])
+  attempt "a failed start" "/bin/false" OS.defaultProbe
     (\case OS.StartFailed (Just (N.Exited 1)) _ -> True; _ -> False)
-  attempt "/bin/true" OS.defaultProbe >>= retained "a start that left no listener"
-    (\case OS.NoDaemon -> True; _ -> False)
+  attempt "a start that left no listener" "/bin/true" OS.defaultProbe
+    (\case OS.StartFailed (Just (N.Exited 0)) _ -> True; _ -> False)
   let blocker = scripts </> "block.sh"
   writeFile blocker "#!/bin/sh\nexec /bin/sleep 613\n"
   Files.setFileMode blocker 0o755
-  attempt (Ascii.pack blocker) OS.defaultProbe {OS.startMs = 100} >>= retained "a start that never returned"
+  attempt "a start that never became ready" (Ascii.pack blocker) OS.defaultProbe {OS.startMs = 100}
     (\case OS.StartTimedOut -> True; _ -> False)
   mentioning "/bin/sleep\NUL613\NUL" >>= (@?= [])
 
--- | The start client exited, then the daemon was stopped and its socket path unlinked before the
--- library acquired a pidfd. No listener and an exited client are not death proof: the run must
--- not complete, the private directory must stay, and the attached owner must find the daemon
--- again once the endpoint is restored. The stopped daemon is restored and ended only through the
--- test's own pidfd, which also cleans up a failed case.
+-- | The daemon is stopped and its socket is removed before pin admission. The
+-- birth-held pidfd still proves which direct child must retire; the missing
+-- socket remains a pin error and never becomes proof of an absent process.
 unlistedDaemon :: Assertion
 unlistedDaemon = withTmux $ \exe -> do
   watch <- newWatch
@@ -1188,33 +1198,63 @@ unlistedDaemon = withTmux $ \exe -> do
   let vanish point names = when (point == OS.ClientExited) $ do
         daemon <- readIORef watch.daemonFd >>= maybe (assertFailure "no witness") pure
         N.cSignal daemon sigSTOP >>= (@?= 0)
-        -- Connections queued on the old listener reset once the daemon listens on a new socket.
         wedged <- saturating (Ascii.unpack names.socket)
         assertBool "backlog filled" (not (null wedged))
         writeIORef queued wedged
         Files.removeLink (Ascii.unpack names.socket)
       probe = watching watch (Just OS.ClientExited) OS.defaultProbe {OS.stage = vanish}
-  (do outcome <- try @SomeException (OS.withOwnedServerWith probe exe (\_ -> pure ()))
-      case outcome of
-        Right _ -> assertFailure "a stopped daemon with an unlinked socket was reported as a completed run"
-        Left _ -> pure ()
-      names <- readIORef watch.names >>= maybe (assertFailure "no directory") pure
-      daemon <- readIORef watch.daemonFd >>= maybe (assertFailure "no witness") pure
-      OS.awaitExit daemon 0 >>= assertBool "the stopped daemon is still alive" . not
-      doesPathExist (Ascii.unpack names.directory)
-        >>= assertBool "the private directory was removed while the born daemon is alive"
-      recovery <- recoveryOf "the unproved start" (\case OS.NoDaemon -> True; _ -> False) outcome
-      -- Restore the endpoint: the stopped daemon rebinds its socket once it runs again.
-      void (N.cSignal daemon sigUSR1)
-      void (N.cSignal daemon sigCONT)
-      wedged <- readIORef queued
-      bounded (awaitReset (last wedged))
-      OS.settle (OS.recoveryOwner recovery)
-      assertRetired watch)
-    `finally` do
-      retireWitnessed watch
-      readIORef queued >>= mapM_ N.close
-      readIORef watch.names >>= mapM_ (removePathForcibly . Ascii.unpack . (.directory))
+  finally
+    (do outcome <- tryWithContext @SomeException (OS.withOwnedServerWith probe exe (\_ -> pure ()))
+        case outcome of
+          Left (ExceptionWithContext context cause) -> do
+            case fromException cause of
+              Just (Pin.SocketPinUnavailable (Pin.FileSystemFailure problem)) ->
+                assertBool "pin admission lost the missing-socket failure" (isDoesNotExistError problem)
+              _ -> assertFailure ("wrong missing-socket failure: " <> show cause)
+            assertBool "a proven direct daemon exit retained an unknown birth" (null (OS.ownedRecoveries context))
+          Right _ -> assertFailure "a missing socket was admitted"
+        daemon <- readIORef watch.daemonFd >>= maybe (assertFailure "no witness") pure
+        OS.awaitExit daemon 0 >>= assertBool "the stopped direct daemon outlived cleanup"
+        N.waitChild (N.Child daemon (-1) (-1) (-1)) >>= \case
+          Just (N.StatusLost problem) | problem == N.errno eCHILD -> pure ()
+          other -> assertFailure ("the direct daemon status was not collected: " <> show other)
+        wedged <- readIORef queued
+        bounded (awaitReset (last wedged))
+        assertRetired watch)
+    (do retireWitnessed watch
+        readIORef queued >>= mapM_ N.close)
+
+-- | Waiting cannot authorize an unrecognized namespace entry. Keep that entry
+-- and the reachable owner, then retry only after the test removes its own inode.
+awaitUnrecordedName :: Assertion
+awaitUnrecordedName = withTmux $ \exe -> do
+  watch <- newWatch
+  planted <- newIORef Nothing
+  let discard = unplant planted Files.removeLink
+  finally
+    (do outcome <- try @SomeException $ OS.withOwnedServerWith
+          (watching watch (Just OS.Admitted) OS.defaultProbe) exe $ \owned -> do
+            let path = Ascii.unpack owned.names.socket <> ".lock"
+            writeFile path "test-owned replacement\n"
+            plant path >>= writeIORef planted . Just
+            throwIO Boom
+        assertProcessesGone watch
+        recovery <- retainedAfter "the unrecognized lock name" outcome
+        failure <- maybe (assertFailure "missing name-removal failure") pure
+          (OS.recoveryFailure recovery >>= fromException @IOException)
+        let actions = OS.cleanupActions (OS.recoveryOwner recovery)
+        actions.observeCleanup >>= assertBool "unresolved names were reported complete" . not . (.complete)
+        try @SomeException (bounded actions.waitCleanup) >>= \case
+          Left problem | Just original <- fromException @IOException problem ->
+            ioeGetErrorString original @?= ioeGetErrorString failure
+          other -> assertFailure ("await did not keep the name failure: " <> either show (const "completed") other)
+        actions.observeCleanup >>= assertBool "await lost unresolved name ownership" . not . (.complete)
+        recorded <- readIORef planted >>= maybe (assertFailure "no replacement inode") pure
+        identityAt recorded.path >>= (@?= recorded.planted)
+        discard
+        actions.requestCleanup >>= assertBool "retry did not finish" . (.complete)
+        assertNamesGone watch)
+    (discard >> retireWitnessed watch)
 
 -- | End a witnessed daemon that a failed case may have left stopped, through its pidfd only.
 retireWitnessed :: Watch -> IO ()
