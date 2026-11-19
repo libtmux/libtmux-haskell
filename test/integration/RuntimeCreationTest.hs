@@ -266,7 +266,7 @@ tests = testGroup "owned Runtime creation"
           tryWithContext @SomeException (M.performRequest 1000000 runtime server submit (const (pure ()))) >>= \case
             Left (ExceptionWithContext annotations problem) -> do
               case fromException @Scope.TmuxException problem of
-                Just (Scope.InvalidConfiguration message) -> message @?= "native launch: " <> reason
+                Just (Scope.InvalidConfiguration (Scope.InvalidLaunchConfiguration message)) -> message @?= reason
                 _ -> assertFailure (show problem)
               assertBool "refused context retained an operation"
                 (null (Context.getExceptionAnnotations @M.MutationRecovery annotations))

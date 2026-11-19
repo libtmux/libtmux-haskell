@@ -22,6 +22,7 @@ module LibTmux.Snapshot
   ( -- * Complete observations
     Snapshot, ServerInfo (..), SnapshotOrigin (..), snapshotOrigin
   , serverInfo, captureInterval, CaptureInterval (..)
+  , GraphError (..)
     -- * Physical and contextual values
   , Session (..), Window (..), Pane (..), WindowLink (..), PaneOccurrence (..)
   , Client (..), ClientAttachment (..)
@@ -46,7 +47,7 @@ import LibTmux.Internal.Graph
   ( Snapshot, ServerInfo (..), CaptureInterval (..), captureInterval, serverInfo, clients
   , Session (..), Window (..), Pane (..), WindowLink (..), PaneOccurrence (..)
   , Client (..), ClientAttachment (..)
-  , Generation, SessionRef, WindowRef, PaneRef, LookupError (..)
+  , Generation, SessionRef, WindowRef, PaneRef, LookupError (..), GraphError (..)
   )
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.TmuxText (TmuxText)

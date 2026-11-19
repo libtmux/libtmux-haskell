@@ -101,7 +101,7 @@ tests = testGroup "public absolute resizing"
                  Tmux.resizePane server offlinePane (Tmux.ResizeWidth width),
                  Tmux.resizeWindow server offlineWindow (Tmux.ResizeWidth width)] $ \request ->
             Tmux.tryTmux request >>= \case
-              Left (ExceptionWithContext _ (Tmux.InvalidTarget _)) -> pure ()
+              Left (ExceptionWithContext _ Tmux.InvalidTarget) -> pure ()
               _ -> assertFailure "foreign resize was admitted"
         closed <- Tmux.withServer (config fixture) pure
         forM_ [Tmux.resizePane closed base.pane (Tmux.ResizeWidth width),

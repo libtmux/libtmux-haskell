@@ -142,7 +142,7 @@ tests = testGroup "owned Runtime mutations"
         window <- require (Id.parseWindowId "@0")
         let mutate duration = M.performMutation P.defaultHooks duration runtime client (Ascii.pack fixture.executable)
         try @Scope.TmuxException (mutate 1000000 (C.RenameWindow window (Label.fromBytes "x\NULy"))) >>= \case
-          Left (Scope.InvalidMutationArgument "window.name contains NUL") -> pure ()
+          Left (Scope.InvalidMutationArgument (C.NulOperand "window.name")) -> pure ()
           _ -> assertFailure "NUL operand was admitted"
         forM_ [0, -1, 10000001] $ \duration ->
           try @Scope.TmuxException (mutate duration (C.RenameWindow window "invalid-timeout")) >>= \case
