@@ -16,7 +16,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (STM)
 import Control.DeepSeq (NFData, force)
 import Control.Exception (Exception, ExceptionWithContext (..), Handler (..), SomeException,
-  catchNoPropagate, catches, evaluate, fromException, mask, onException, rethrowIO, someExceptionContext, throwIO)
+  catchNoPropagate, catches, evaluate, fromException, mask, onException, rethrowIO, someExceptionContext, throwIO, toException)
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context qualified as Context
 import Control.Monad (forM, when)
@@ -117,7 +117,7 @@ waitForPaneText runtime client executable duration pane options decode needle in
           (\receipt deadline -> loop latest receipt deadline initialCount)
         maybe (TextPaneEnded <$> readIORef latest) (pure . TextMatched) result
   catchNoPropagate observe $ \original@(ExceptionWithContext context (problem :: SomeException)) ->
-    if fromException problem == Just CaptureDeadline || fromException problem == Just R.ReadExpired
+    if fromException problem == Just CaptureDeadline
       then TextWaitExpired <$> readIORef latest <*> pure (listToMaybe (Context.getExceptionAnnotations context))
       else rethrowIO original
   where
@@ -275,7 +275,11 @@ withinDeadline runtime client duration action = mask $ \restore -> do
               Just !value ->
                 let !recovery = CaptureRecovery runtime client value
                 in Context.addExceptionAnnotation recovery context
-        rethrowIO (ExceptionWithContext annotated problem)
+            -- The scheduled read can publish expiration before the outer timer fires.
+            failure = case fromException problem of
+              Just R.ReadExpired -> toException CaptureDeadline
+              _ -> problem
+        rethrowIO (ExceptionWithContext annotated failure)
   catchNoPropagate (restore (timed receipt)) annotate
   where
     timed receipt = do
