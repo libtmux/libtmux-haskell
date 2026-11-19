@@ -38,6 +38,7 @@ data TmuxException
   | SettingReadTooLarge !Int -- ^ The setting reply exceeded the byte limit.
   | InvalidTarget !Text -- ^ Target belongs to a different connection or an offline fixture.
   | UnsupportedTmuxVersion !Version.VersionError -- ^ Daemon release is older than the supported minimum.
+  | IncompatibleTmuxClientProtocol -- ^ The daemon rejected the selected client's older-server protocol. No daemon release was observed.
   | InvalidMutationArgument !Text -- ^ Invalid command operand; no command was admitted.
   | MutationRejected !ByteString -- ^ tmux rejected the primary command; bounded diagnostic bytes.
   | MutationAppliedWithErrors !ByteString -- ^ The primary command ran, then a command hook failed.

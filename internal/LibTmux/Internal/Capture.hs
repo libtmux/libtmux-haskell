@@ -42,6 +42,7 @@ import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin (pinGeneration)
 import LibTmux.Pane (PaneCaptureOptions)
 import LibTmux.Version qualified as Version
+import LibTmux.Internal.VersionProbe qualified as VersionProbe
 import LibTmux.Internal.Topology qualified as T
 import System.Timeout (timeout)
 
@@ -86,7 +87,12 @@ detachRecovery (CaptureRecovery runtime client receipt) = R.detachReceipt runtim
 captureVersionWith :: P.Hooks -> R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO (Word64, Word64, Version.TmuxVersion)
 captureVersionWith hooks runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
   left <- remaining deadline
-  owned runtime receipt (R.readServerVersionWith hooks left runtime client executable R.ScalarRead)
+  catchNoPropagate (owned runtime receipt (R.readServerVersionWith hooks left runtime client executable R.ScalarRead)) $
+    \original@(ExceptionWithContext _ (problem :: R.ReadError)) ->
+      if problem == R.InvalidVersionProbe VersionProbe.LegacyProbeRequired then do
+        legacyBudget <- remaining deadline
+        owned runtime receipt (R.readLegacyServerVersionWith hooks legacyBudget runtime client executable R.ScalarRead)
+      else rethrowIO original
 
 capturePaneWith :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> PaneId
   -> PaneCaptureOptions -> IO (Word64, Word64, ControlDataReply)

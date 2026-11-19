@@ -32,6 +32,7 @@ type ReadCall = CInt -> Ptr Word8 -> CSize -> IO CInt
 
 foreign import ccall safe "libtmux_process_features" cFeatures :: IO CInt
 foreign import ccall safe "libtmux_process_spawn" cSpawn :: LaunchCall
+foreign import ccall safe "libtmux_process_spawn_discard_stdout" cSpawnDiscard :: LaunchCall
 foreign import ccall safe "libtmux_process_wait" cWait :: WaitCall
 foreign import ccall unsafe "libtmux_process_read" cRead :: CInt -> Ptr a -> CSize -> IO CInt
 foreign import ccall unsafe "libtmux_process_write" cWrite :: CInt -> Ptr a -> CSize -> IO CInt
@@ -85,7 +86,8 @@ data Failure = InvalidInput !String | LaunchRefused !Phase !CInt
 instance Exception Failure
 
 data Spec = Spec
-  { file :: !ByteString, args :: ![ByteString], env :: ![ByteString], cwd :: !ByteString }
+  { file :: !ByteString, args :: ![ByteString], env :: ![ByteString], cwd :: !ByteString
+  , discardOutput :: !Bool }
 
 data Child = Child
   { pidfd :: !CInt, input :: !CInt, output :: !CInt, errors :: !CInt }
@@ -102,7 +104,7 @@ vectorLimitBytes = 65536
 chunkBytes = 16384
 
 spec :: ByteString -> [ByteString] -> Spec
-spec file args = Spec file args ["LANG=C.UTF-8"] "/"
+spec file args = Spec file args ["LANG=C.UTF-8"] "/" False
 
 missingFeatures :: IO [Feature]
 missingFeatures = do
@@ -135,10 +137,10 @@ copySpec value = do
   validate value
   (file, args, env, cwd) <- evaluate (force
     (Bytes.copy value.file, map Bytes.copy value.args, map Bytes.copy value.env, Bytes.copy value.cwd))
-  pure Spec {file, args, env, cwd}
+  pure Spec {file, args, env, cwd, discardOutput = value.discardOutput}
 
 launch :: Spec -> IO Start
-launch = launchWith cSpawn
+launch value = launchWith (if value.discardOutput then cSpawnDiscard else cSpawn) value
 
 -- | Marshal and decode during the call. The owner supplies the surrounding mask
 -- that spans this return and its own child/descriptor journal.

@@ -73,8 +73,9 @@ static int private_input(int *fds) {
 }
 
 /* result: pidfd, stdin writer, stdout reader, stderr reader, failure stage. */
-int libtmux_process_spawn(const char *file, char *const argv[],
-                          char *const env[], const char *cwd, int *result) {
+static int process_spawn(const char *file, char *const argv[],
+                         char *const env[], const char *cwd, int *result,
+                         int discard_stdout) {
     for (int i = 0; i < 4; ++i) result[i] = -1;
     result[4] = 1;
     struct operations calls = operations();
@@ -109,7 +110,11 @@ int libtmux_process_spawn(const char *file, char *const argv[],
     if ((rc = posix_spawnattr_init(&attributes))) goto destroy_actions;
     if ((rc = calls.chdir(&actions, cwd))) goto destroy_both;
     if ((rc = posix_spawn_file_actions_adddup2(&actions, pipes[0], 0))) goto destroy_both;
-    if ((rc = posix_spawn_file_actions_adddup2(&actions, pipes[3], 1))) goto destroy_both;
+    if (discard_stdout)
+        rc = posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+    else
+        rc = posix_spawn_file_actions_adddup2(&actions, pipes[3], 1);
+    if (rc) goto destroy_both;
     if ((rc = posix_spawn_file_actions_adddup2(&actions, pipes[5], 2))) goto destroy_both;
     if ((rc = calls.closefrom(&actions, 3))) goto destroy_both;
     result[4] = 5;
@@ -143,6 +148,16 @@ destroy_actions:
 no_child:
     close_pipes(pipes);
     return rc;
+}
+
+int libtmux_process_spawn(const char *file, char *const argv[],
+                          char *const env[], const char *cwd, int *result) {
+    return process_spawn(file, argv, env, cwd, result, 0);
+}
+
+int libtmux_process_spawn_discard_stdout(const char *file, char *const argv[],
+                                        char *const env[], const char *cwd, int *result) {
+    return process_spawn(file, argv, env, cwd, result, 1);
 }
 
 int libtmux_process_read(int fd, void *buffer, size_t size) {

@@ -29,6 +29,19 @@ tests = testGroup "hook-free version probe"
         V.renderVersion expected @?= release
         P.decodeVersionProbe nonce (Just 1) "" (daemonReply nonce release) @?= Right expected
         evaluate (force expected) >>= (@?= expected)
+  , testCase "a failed legacy option lookup carries the actual older daemon release" $ do
+      nonce <- require (F.parseNonce token)
+      expected <- require (V.parseVersion "3.1c")
+      P.decodeVersionProbe nonce (Just 1) ""
+        ("invalid option: " <> F.scalarFormat nonce "3.1c" <> "\n") @?= Right expected
+  , testCase "legacy usage and protocol refusal stay distinct from an observed version" $ do
+      nonce <- require (F.parseNonce token)
+      P.decodeVersionProbe nonce (Just 1) ""
+        "usage: run-shell [-b] [-t target-pane] shell-command\n" @?= Left P.LegacyProbeRequired
+      P.decodeVersionProbe nonce (Just 1) ""
+        "server version is too old for client\n" @?= Left P.IncompatibleClientProtocol
+      P.decodeVersionProbe nonce (Just 0) ""
+        "server version is too old for client\n" @?= Left P.UnexpectedProbeReply
   , testCase "the decoder neither guesses a release nor accepts a respelled one" $ do
       nonce <- require (F.parseNonce token)
       forM_ ["master", "3.8-dev", "3.8-rc0", "next-3.8a", "openbsd-7.4"] $ \unknown ->

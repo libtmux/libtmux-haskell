@@ -16,7 +16,7 @@ module LibTmux.Internal.Runtime
   , inspectServerHandle, shutdownServerHandle
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
-  , readServerVersion, readServerVersionWith
+  , readServerVersion, readServerVersionWith, readLegacyServerVersionWith
   , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, readSnapshotWith, withCaptureBudget, withReadBudget
   , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, receiptOperation, inspectReceipt, resumeReceipt
   , cancelReceipt, detachReceipt
@@ -150,6 +150,7 @@ data ReadResult value = ReadValue !value | ReadUnavailable !S.Outcome !(Maybe So
 data ReadCommand value where
   ReadPid :: ReadCommand Integer
   ReadVersion :: ReadCommand Version.TmuxVersion
+  ReadLegacyVersion :: ReadCommand Version.TmuxVersion
   ReadPaneAlive :: !Id.PaneId -> ReadCommand Bool
   ReadTopology :: ReadCommand ByteString
   ReadEntityField :: !EntityField -> ReadCommand ByteString
@@ -660,6 +661,9 @@ readServerVersion = readServerVersionWith P.defaultHooks 1000000
 readServerVersionWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
 readServerVersionWith = startRead ReadVersion
 
+readLegacyServerVersionWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO VersionRead
+readLegacyServerVersionWith = startRead ReadLegacyVersion
+
 readTopologyWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> ReadClass -> IO (Request ByteString)
 readTopologyWith = startRead ReadTopology
 
@@ -693,6 +697,7 @@ commandArguments :: F.Nonce -> ReadCommand value -> [ByteString]
 commandArguments nonce command = case command of
   ReadPid -> framed "#{pid}"
   ReadVersion -> VersionProbe.versionArguments nonce
+  ReadLegacyVersion -> VersionProbe.legacyVersionArguments nonce
   ReadPaneAlive pane -> VersionProbe.formatArguments nonce
     ["-t", Utf8.encodeUtf8 (Id.renderPaneId pane)] "#{pane_id}:#{pane_dead}"
   ReadTopology -> framed Topology.topologyFormat
@@ -750,6 +755,10 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
         Create context _ _ -> context
         _ -> N.spec executable []
       spec = base {N.args = [executable, "-u", "-N", "-S", pinPath (serverPin client)] <> arguments}
+        {N.discardOutput = case selected of
+          Observe ReadVersion -> True
+          Observe ReadLegacyVersion -> True
+          _ -> False}
       (lane, resourceClass) = case decoder of
         MutationResult -> (S.Mutation, B.Ordinary)
         ProgramResult _ -> (S.Mutation, B.Ordinary)
@@ -982,6 +991,7 @@ forceResult (CreationResult _) value = void (evaluate (force value))
 forceResult (ObservationResult command) value = case command of
   ReadPid -> void (evaluate value)
   ReadVersion -> void (evaluate value)
+  ReadLegacyVersion -> void (evaluate value)
   ReadPaneAlive _ -> void (evaluate value)
   ReadTopology -> void (evaluate (force value))
   ReadEntityField _ -> void (evaluate (force value))
@@ -1052,6 +1062,7 @@ decodeRead ReadVersion nonce completed =
         _ -> Nothing
   in either (Left . toException . InvalidVersionProbe) Right
     (VersionProbe.decodeVersionProbe nonce status completed.output completed.errors)
+decodeRead ReadLegacyVersion nonce completed = decodeRead ReadVersion nonce completed
 decodeRead (ReadPaneAlive pane) nonce completed = do
   let status = case completed.exit of
         Just (N.Exited value) -> Just (fromIntegral value)

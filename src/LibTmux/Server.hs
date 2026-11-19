@@ -129,6 +129,7 @@ import LibTmux.Options
 import LibTmux.Options qualified as Options
 import LibTmux.Pane (PaneCaptureOptions (..), PasteNewlines, defaultPaneCapture)
 import LibTmux.Version qualified as Version
+import LibTmux.Internal.VersionProbe qualified as VersionProbe
 import LibTmux.Value (Resize)
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
@@ -205,6 +206,8 @@ serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeD
 -- minimum, run the callback, then perform bounded owned cleanup. Version
 -- observation runs no command hook. A release older than 3.3a or an
 -- unrecognized reply fails before entering the callback.
+-- 'IncompatibleTmuxClientProtocol' means the client could not query this
+-- daemon's release; no version is inferred from that protocol refusal.
 -- Cleanup never replaces a callback exception. Incomplete cleanup raises
 -- 'CleanupFailed' after success, or annotates the original callback failure
 -- with a reachable t'CleanupRecovery'. No daemon shutdown is requested.
@@ -219,7 +222,12 @@ withServer config action = do
 
 qualifyVersion :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO Version.TmuxVersion
 qualifyVersion runtime handle executable duration = do
-  (_, _, version) <- C.captureVersionWith P.defaultHooks runtime handle executable duration
+  (_, _, version) <- catchNoPropagate
+    (C.captureVersionWith P.defaultHooks runtime handle executable duration) $
+    \original@(ExceptionWithContext annotations (problem :: R.ReadError)) ->
+      if problem == R.InvalidVersionProbe VersionProbe.IncompatibleClientProtocol
+        then rethrowIO (ExceptionWithContext annotations IncompatibleTmuxClientProtocol)
+        else rethrowIO original
   either (throwIO . UnsupportedTmuxVersion) pure (Version.requireSupported version)
 
 checkedConfiguration :: ServerConfig -> IO (ByteString, Int)

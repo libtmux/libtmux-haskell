@@ -7,6 +7,8 @@ int libtmux_process_features(void);
 /* Spawn returns errno; success transfers a pidfd and three parent endpoints. */
 int libtmux_process_spawn(const char *file, char *const argv[],
                           char *const env[], const char *cwd, int *result);
+int libtmux_process_spawn_discard_stdout(const char *file, char *const argv[],
+                                        char *const env[], const char *cwd, int *result);
 /* Stream calls return a byte count or negative errno. */
 int libtmux_process_read(int fd, void *buffer, size_t size);
 int libtmux_process_write(int fd, const void *buffer, size_t size);
