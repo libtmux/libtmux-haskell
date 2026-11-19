@@ -2,11 +2,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module ProcessTest (withTests) where
 
-import Control.Concurrent (throwTo)
+import Control.Concurrent (newEmptyMVar, putMVar, readMVar, throwTo, withMVar)
 import Control.Concurrent.Async (AsyncCancelled (..), asyncThreadId, cancel, wait, waitCatch, withAsync)
 import Control.Concurrent.STM (atomically, check, newEmptyTMVarIO, newTVarIO, putTMVar, readTMVar, readTVar, retry, writeTVar)
 import Control.Exception (bracket_, mask, onException, IOException, SomeException, bracket, finally, fromException, throwIO, try)
-import Control.Monad (replicateM_, unless, when)
+import Control.Monad (forM_, replicateM_, unless, when)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Internal qualified as BytesInternal
@@ -17,9 +17,11 @@ import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IntSet qualified as Set
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.List (isInfixOf)
 import Data.Maybe (isJust)
-import GHC.Conc (threadWaitRead)
+import GHC.Conc (getNumCapabilities, threadWaitRead)
 import Fixture qualified
+import GuardianDriver qualified as DG
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.SocketPin
 import LibTmux.Internal.Process.Native qualified as N
@@ -29,6 +31,7 @@ import System.Directory (removePathForcibly)
 import System.Posix.Temp (mkdtemp)
 import System.Process.Typed (proc, readProcess)
 import System.Exit (ExitCode (..))
+import System.Environment (lookupEnv)
 import System.Posix.Types (Fd (..))
 import System.Posix.Directory.ByteString qualified as Directory
 import System.Posix.Files.ByteString qualified as Files
@@ -52,7 +55,34 @@ withTests action = bracket buildChild (removePathForcibly . fst) $ \helpers ->
 
 tests :: IO (FilePath, (Bytes.ByteString, FilePath)) -> TestTree
 tests getChild = testGroup "private process owner"
-    [ testGroup "isolated host policies"
+    [ -- Outer: native-helper compilation and isolated processes keep retained owners contained.
+      testGroup "guardian process membership"
+        [ testCase "guardian loss before child publication retains the exact ticket and credits" $
+            Fixture.inIsolatedProcess "guardian loss before child publication retains the exact ticket and credits" $
+            guardianUnpublished getChild True
+        , testCase "guardian full proof retires an unpublished child before releasing credits" $
+            Fixture.inIsolatedProcess "guardian full proof retires an unpublished child before releasing credits" $
+            guardianUnpublished getChild False
+        , testCase "guardian child collection survives the native cleanup fallback" $
+            Fixture.inIsolatedProcess "guardian child collection survives the native cleanup fallback" $
+            guardianCollection getChild
+        , testCase "guardian binding precedes reservation and protects inspection payload" $
+            Fixture.inIsolatedProcess "guardian binding precedes reservation and protects inspection payload" $
+            guardianAdmission
+        , testCase "guardian domain keeps sixteen shared reservations until physical collection" $
+            Fixture.inIsolatedProcess "guardian domain keeps sixteen shared reservations until physical collection" $
+            guardianShared getChild
+        , testCase "guardian clients preserve the borrowed daemon and socket" $
+            Fixture.inIsolatedProcess "guardian clients preserve the borrowed daemon and socket" $
+            guardianTmux
+        , testCase "guardian response already dispatched completes without another socket event" $
+            Fixture.inIsolatedProcess "guardian response already dispatched completes without another socket event" $
+            guardianDispatched getChild
+        , testCase "guardian peer exit after full proof does not erase completed ownership" $
+            Fixture.inIsolatedProcess "guardian peer exit after full proof does not erase completed ownership" $
+            guardianPeerExit getChild
+        ]
+    , testGroup "isolated host policies"
         [ testCase mode $ do
             (_, (_, policy)) <- getChild
             (code, output, errors) <- readProcess (proc policy [mode])
@@ -803,6 +833,239 @@ tests getChild = testGroup "private process owner"
           assertBool "empty input created no named buffer"
             (not ("native-socket-empty" `Bytes.isInfixOf` listed.output))
     ]
+
+guardianPool :: IO O.Pool
+guardianPool = do
+  budget <- B.newBudget (O.inspectionBytes + DG.transportBytes)
+  owner <- newPinOwner
+  O.newPool budget O.normalFork owner 2 `onException` closePin owner
+
+guardianUnpublished :: IO (FilePath, (Bytes.ByteString, FilePath)) -> Bool -> IO ()
+guardianUnpublished resource lost = do
+  guardianCapabilities
+  DG.cSubreaper >>= DG.checked
+  (_, (executable, _)) <- resource
+  DG.withContext lost $ \context -> DG.withWitnessServer $ \path server -> do
+    pool <- guardianPool
+    cleanup <- newEmptyMVar
+    hooks <- DG.backendHooks pool context DG.Unpublished (readMVar cleanup)
+    ticket <- O.submit B.Ordinary hooks pool
+      (N.spec executable [executable, "--self-witness", Ascii.pack path]) ""
+    DG.withWitness server $ \(witness, _) -> do
+      DG.witnessExited witness >>= assertBool "the independent unpublished child was already dead" . not
+      when lost (DG.killHelper context >> DG.collectHelper context)
+      putMVar cleanup ()
+      outcome <- try @IOException (O.await ticket)
+      case outcome of
+        Left problem -> assertBool "the original launch exception changed"
+          ("delegated launch reply was withheld" `isInfixOf` show problem)
+        Right _ -> assertFailure "an unpublished launch unexpectedly completed"
+      report <- O.requestClose pool
+      usage <- atomically (B.usage pool.budget)
+      active <- atomically (O.activeCount pool)
+      physical <- DG.witnessExited witness
+      if lost
+        then do
+          -- Retire only the fixture's independently witnessed child. This does
+          -- not clear the candidate's unknown helper-loss ownership debt.
+          assertBool "the helper-loss control lost its independent live child" (not physical)
+          DG.cFixtureRetire witness >>= DG.checked
+          DG.witnessExited witness >>= assertBool "fixture child retirement lacked physical exit"
+          assertBool "a live unpublished child lost its pool reservation" (case report of
+            O.CleanupIncomplete [_] -> True; _ -> False)
+          active @?= 1
+          usage @?= B.Usage True 1 1 (O.childBytes + DG.transportBytes)
+          O.requestClose pool >>= assertIncomplete
+          atomically (B.usage pool.budget) >>= (@?= usage)
+        else do
+          assertBool "unpublished child exit was replaced by pool accounting" physical
+          DG.fullProof context >>= assertBool "unpublished cleanup lacked the guardian's full proof and exit"
+          O.awaitCleanup pool
+          active @?= 0
+          atomically (B.usage pool.budget) >>= (@?= B.Usage True 0 0 0)
+
+guardianCollection :: IO (FilePath, (Bytes.ByteString, FilePath)) -> IO ()
+guardianCollection resource = do
+  guardianCapabilities
+  (_, (executable, _)) <- resource
+  DG.withContext False $ \context -> DG.withWitnessServer $ \path server -> do
+    pool <- guardianPool
+    hooks <- DG.backendHooks pool context DG.Published (pure ())
+    published <- newEmptyTMVarIO
+    let observed = hooks {O.afterStart = do
+          pair@(witness, _) <- DG.takeWitness server
+          DG.witnessExited witness >>= assertBool "delegated child was not live at the failure checkpoint" . not
+          atomically (putTMVar published pair)
+          throwIO AsyncCancelled}
+    (do
+      ticket <- O.submit B.Ordinary observed pool
+        (N.spec executable [executable, "--self-witness", Ascii.pack path]) ""
+      (witness, peer) <- atomically (readTMVar published)
+      (do
+        try @SomeException (O.await ticket) >>= assertCancelled
+        DG.witnessExited witness >>= assertBool "cleanup status preceded independent physical child exit"
+        atomically (readTVar ticket.exitCache) >>= (@?= Just (N.Signaled 9 False))
+        DG.collections context >>= (@?= 1))
+        `finally` ((DG.cFixtureRetire witness >>= DG.checked) `finally` (N.close witness >> N.close peer)))
+      `finally` (O.abortAll pool >> O.requestClose pool >> O.awaitCleanup pool)
+
+guardianCapabilities :: IO ()
+guardianCapabilities = lookupEnv "LIBTMUX_EXPECT_CAPABILITIES" >>= mapM_ (\expected ->
+  getNumCapabilities >>= \actual -> show actual @?= expected)
+
+closeGuardianPool :: O.Pool -> IO ()
+closeGuardianPool pool = O.abortAll pool >> O.requestClose pool >> O.awaitCleanup pool
+
+guardianAdmission :: IO ()
+guardianAdmission = do
+  guardianCapabilities
+  DG.withContext False $ \context -> do
+    budget <- B.newBudget O.inspectionBytes
+    owner <- newPinOwner
+    low <- O.newPool budget O.normalFork owner 2
+    (do
+      try @O.OwnerError (DG.backendHooks low context DG.Published (pure ())) >>= \case
+        Left O.ResourceLimit -> pure ()
+        _ -> assertFailure "backend accepted an unprotected serialized inspection buffer"
+      atomically (readTVar low.backend) >>= \case
+        Nothing -> pure ()
+        Just _ -> assertFailure "refused backend still changed pool membership"
+      DG.preparedCount context >>= (@?= 0)) `finally` closeGuardianPool low
+    bound <- guardianPool
+    (do
+      _ <- DG.backendHooks bound context DG.Published (pure ())
+      try @O.OwnerError (DG.backendHooks bound context DG.Published (pure ())) >>= \case
+        Left O.PoolClosed -> pure ()
+        _ -> assertFailure "pool allowed its execution domain to be replaced"
+      DG.preparedCount context >>= (@?= 0)) `finally` closeGuardianPool bound
+    late <- guardianPool
+    (do
+      result <- O.submit B.Ordinary O.defaultHooks late (N.spec "/bin/true" ["/bin/true"]) "" >>= O.await
+      result.exit @?= Just (N.Exited 0)
+      try @O.OwnerError (DG.backendHooks late context DG.Published (pure ())) >>= \case
+        Left O.PoolClosed -> pure ()
+        _ -> assertFailure "pool accepted a domain after its first native reservation"
+      DG.preparedCount context >>= (@?= 0)) `finally` closeGuardianPool late
+
+guardianShared :: IO (FilePath, (Bytes.ByteString, FilePath)) -> IO ()
+guardianShared resource = do
+  guardianCapabilities
+  (_, (executable, _)) <- resource
+  DG.withContext False $ \context -> DG.withWitnessServer $ \path server -> do
+    budget <- B.newBudget (O.inspectionBytes + DG.transportBytes)
+    let pool = newPinOwner >>= \owner -> O.newPool budget O.normalFork owner 16
+    first <- pool
+    second <- pool
+    (do
+      _ <- DG.backendHooks first context DG.Published (pure ())
+      _ <- DG.backendHooks second context DG.Published (pure ())
+      let spec = N.spec executable [executable, "--self-witness", Ascii.pack path]
+          guarded = O.defaultHooks {O.launchNative = \_ -> assertFailure "bound ticket escaped its guardian domain" >> N.launch spec}
+          owners = replicate 8 first <> replicate 8 second
+          allocations = replicate 15 B.Ordinary <> [B.Inspection]
+      tickets <- sequence [O.submit allocation guarded owner spec "" | (owner, allocation) <- zip owners allocations]
+      let witnesses 0 action = action []
+          witnesses n action = DG.withWitness server $ \pair -> witnesses (n - 1) (action . (pair :))
+      witnesses (16 :: Int) $ \held -> do
+        forM_ held $ \(witness, _) -> DG.witnessExited witness >>= assertBool "shared birth control was not live" . not
+        DG.preparedCount context >>= (@?= 16)
+        DG.serializedBytes context >>= (@?= 0)
+        atomically (B.usage budget) >>= (@?= B.Usage True 2 16 (16 * (O.childBytes + DG.transportBytes)))
+        case tickets of
+          initial : _ -> withAsync (O.await initial) $ \waiter -> do
+            cancel waiter
+            waitCatch waiter >>= assertCancelled
+          [] -> assertFailure "shared domain admitted no physical births"
+        try @B.LimitError (O.submit B.Inspection guarded first spec "") >>= \case
+          Left (B.Exhausted B.Children 1 16 16) -> pure ()
+          _ -> assertFailure "seventeenth shared reservation reached native transport"
+        DG.preparedCount context >>= (@?= 16)
+        O.abortAll first
+        O.abortAll second
+        forM_ tickets $ \ticket -> try @O.OwnerError (O.await ticket) >>= \case
+          Left O.Aborted -> pure ()
+          Right result -> result.exit @?= Just (N.Signaled 9 False)
+          Left other -> assertFailure ("unexpected delegated cancellation: " <> show other)
+        forM_ held $ \(witness, _) -> DG.witnessExited witness >>= assertBool "shared credits released ahead of physical exit"
+        DG.collectedCount context >>= (@?= 16)
+        atomically (B.usage budget) >>= (@?= B.Usage True 2 0 0))
+      `finally` (closeGuardianPool first >> closeGuardianPool second)
+    atomically (B.usage budget) >>= (@?= B.Usage True 0 0 0)
+
+guardianTmux :: IO ()
+guardianTmux = do
+  guardianCapabilities
+  Fixture.withFixture $ \fixture -> do
+    let path = Ascii.pack fixture.socket
+        executable = Ascii.pack fixture.executable
+        daemonLive = withMVar fixture.daemon.phase $ \_ -> do
+          let Fd descriptor = fixture.daemon.pidfd
+          DG.witnessExited descriptor >>= assertBool "guardian cleanup reached the unrelated daemon" . not
+        statusIdentity status = (Files.deviceID status, Files.fileID status)
+    before <- statusIdentity <$> Files.getSymbolicLinkStatus path
+    (expectedCode, expectedPid, expectedErrors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
+    expectedCode @?= ExitSuccess
+    expectedErrors @?= ""
+    DG.withContext False $ \context -> do
+      pool <- guardianPool
+      (do
+        _ <- DG.backendHooks pool context DG.Published (pure ())
+        let run argv = O.submit B.Ordinary O.defaultHooks pool
+              (N.spec executable (executable : argv)) "" >>= O.await
+        version <- run ["-V"]
+        version.exit @?= Just (N.Exited 0)
+        assertBool "version client returned no release" ("tmux " `Bytes.isPrefixOf` version.output)
+        identityReply <- run ["-u", "-N", "-S", path, "display-message", "-p", "#{pid}"]
+        identityReply.exit @?= Just (N.Exited 0)
+        Lazy.fromStrict identityReply.output @?= expectedPid
+        screen <- run ["-u", "-N", "-S", path, "capture-pane", "-p", "-t", "fixture:0.0"]
+        screen.exit @?= Just (N.Exited 0)
+        DG.preparedCount context >>= (@?= 3)
+        DG.collectedCount context >>= (@?= 3)
+        DG.serializedBytes context >>= (@?= 0)) `finally` closeGuardianPool pool
+    daemonLive
+    after <- statusIdentity <$> Files.getSymbolicLinkStatus path
+    after @?= before
+    (code, pid, errors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
+    (code, pid, errors) @?= (ExitSuccess, expectedPid, "")
+
+guardianDispatched :: IO (FilePath, (Bytes.ByteString, FilePath)) -> IO ()
+guardianDispatched resource = do
+  guardianCapabilities
+  (_, (executable, _)) <- resource
+  DG.withContext False $ \context -> DG.withWitnessServer $ \path server -> do
+    pool <- guardianPool
+    hooks <- DG.backendHooks pool context DG.DispatchedFirst (pure ())
+    (do
+      ticket <- O.submit B.Ordinary hooks pool (N.spec executable [executable, "--self-witness", Ascii.pack path]) ""
+      DG.withWitness server $ \(witness, _) -> do
+        DG.witnessExited witness >>= assertBool "dispatched-response child was not independently live" . not
+        DG.awaitDispatched context
+        ready <- timeout 250000 (atomically (readTMVar ticket.launchEvidence))
+        ready @?= Just O.NativeStarted
+        O.abortAll pool
+        _ <- try @O.OwnerError (O.await ticket)
+        DG.witnessExited witness >>= assertBool "dispatched-response cleanup lacks physical exit")
+      `finally` closeGuardianPool pool
+
+guardianPeerExit :: IO (FilePath, (Bytes.ByteString, FilePath)) -> IO ()
+guardianPeerExit resource = do
+  guardianCapabilities
+  (_, (executable, _)) <- resource
+  DG.withContext False $ \context -> DG.withWitnessServer $ \path server -> do
+    pool <- guardianPool
+    hooks <- DG.backendHooks pool context DG.Published (pure ())
+    (do
+      ticket <- O.submit B.Ordinary hooks pool (N.spec executable [executable, "--self-witness", Ascii.pack path]) ""
+      DG.withWitness server $ \(witness, _) -> do
+        DG.witnessExited witness >>= assertBool "peer-exit control lacked a live independent child" . not
+        atomically (readTMVar ticket.launchEvidence) >>= (@?= O.NativeStarted)
+        O.abortAll pool
+        _ <- try @O.OwnerError (O.await ticket)
+        DG.witnessExited witness >>= assertBool "peer-exit control lacked collected physical child exit"
+        DG.collections context >>= (@?= 1)) `finally` closeGuardianPool pool
+    -- Hold the host between STOP and RELEASE until the empty guardian exits.
+    DG.forcePeerExit context
 
 buildChild :: IO (FilePath, (Bytes.ByteString, FilePath))
 buildChild = mask $ \restore -> do
