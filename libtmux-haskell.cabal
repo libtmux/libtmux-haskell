@@ -95,6 +95,10 @@ extra-source-files:
   scripts/bounded/README.md
   scripts/bounded/bounded.py
   scripts/bounded/tests/test_bounded.py
+  scripts/generate_options/README.md
+  scripts/generate_options/generate_options.py
+  scripts/generate_options/sources.json
+  scripts/generate_options/tests/test_generate_options.py
   scripts/check_types/README.md
   scripts/check_types/check_types.py
   scripts/check_types/tests/test_check_types.py
@@ -204,11 +208,11 @@ benchmark capture
 library
   import: modern
   hs-source-dirs: src internal
-  exposed-modules: LibTmux LibTmux.Capabilities LibTmux.Creation LibTmux.Environment LibTmux.Pane LibTmux.Program LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
+  exposed-modules: LibTmux LibTmux.Capabilities LibTmux.Creation LibTmux.Environment LibTmux.Options LibTmux.Pane LibTmux.Program LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
     LibTmux.Query LibTmux.Query.Pane LibTmux.Query.Session LibTmux.Query.Window
     LibTmux.Query.Link LibTmux.Query.Occurrence LibTmux.Query.Client
     LibTmux.Query.ClientAttachment LibTmux.Query.ServerInfo
-  other-modules: LibTmux.Internal.Buffer LibTmux.Internal.Program LibTmux.Internal.Creation LibTmux.Internal.Mutation LibTmux.Internal.Command LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
+  other-modules: LibTmux.Internal.Buffer LibTmux.Internal.OptionTable LibTmux.Internal.Program LibTmux.Internal.Creation LibTmux.Internal.Mutation LibTmux.Internal.Command LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits
   cc-options: -std=c11 -Wall -Wextra
@@ -247,7 +251,7 @@ test-suite unit
   type: exitcode-stdio-1.0
   hs-source-dirs: test internal
   main-is: Main.hs
-  other-modules: CapabilitiesTest VersionProbeTest LibTmux.Internal.VersionProbe CreationTest CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
+  other-modules: CapabilitiesTest OptionCatalogueTest VersionProbeTest LibTmux.Internal.VersionProbe CreationTest CommandTest LibTmux.Internal.Command QueryTest QueryFixture QueryProperties LibTmux.Internal.Query RecordTest FieldTest SchedulerTest BudgetTest FrameTest GraphTest GraphProperties TopologyTest LibTmux.Internal.Topology LibTmux.Internal.Scheduler LibTmux.Internal.Budget LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph
   ghc-options: -threaded -rtsopts
   build-depends:
     libtmux-haskell,
