@@ -36,6 +36,7 @@ module LibTmux.Server
   , PaneInput (..), sendKeys, sendKeysWith
     -- * Pane text
   , PaneText, capturePane, paneText
+  , PaneWaitOptions (..), defaultPaneWait, PaneMatch (..), PaneWaitResult (..), waitForText
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
@@ -97,7 +98,7 @@ import LibTmux.Internal.Scope
   )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
-import LibTmux.Pane (PaneCaptureOptions (..))
+import LibTmux.Pane (PaneCaptureOptions (..), defaultPaneCapture)
 import LibTmux.Version qualified as Version
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
@@ -386,25 +387,84 @@ capturePane :: Server -> PaneRef -> PaneCaptureOptions -> IO PaneText
 capturePane server@(Server runtime handle executable duration _) pane@(G.PaneRef generation ident) options =
   operational $ do
     checkTarget server generation
-    let acquire = C.capturePaneWith runtime handle executable duration ident options
-    (_, _, reply) <- catchNoPropagate acquire $ \original@(ExceptionWithContext context problem) ->
-      case problem of
-        R.InvalidCommandOperands (Command.InvalidOperand field reason) ->
-          rethrowIO (ExceptionWithContext context (InvalidConfiguration (field <> ": " <> reason)))
-        R.InvalidCommandReply Command.ReplyTooLarge ->
-          rethrowIO (ExceptionWithContext context (PaneTextTooLarge options.byteLimit))
-        _ -> rethrowIO original
-    case reply of
-      Command.CaptureExceedsLimit -> throwIO (PaneTextTooLarge options.byteLimit)
-      Command.CaptureHookFailed diagnostic -> throwIO (PaneCaptureHookFailed diagnostic)
-      Command.CaptureRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
-      Command.CapturedPaneText bytes ->
-        either (const (throwIO (InvalidObservation "pane text is not valid UTF-8")))
-          (pure . PaneText pane options) (Utf8.decodeUtf8' bytes)
+    (_, _, reply) <- paneCaptureErrors options
+      (C.capturePaneWith runtime handle executable duration ident options)
+    PaneText pane options <$> decodePaneText options reply
+
+paneCaptureErrors :: PaneCaptureOptions -> IO a -> IO a
+paneCaptureErrors options action = catchNoPropagate action $ \original@(ExceptionWithContext context problem) ->
+  case problem of
+    R.InvalidCommandOperands (Command.InvalidOperand field reason) ->
+      rethrowIO (ExceptionWithContext context (InvalidConfiguration (field <> ": " <> reason)))
+    R.InvalidCommandReply Command.ReplyTooLarge ->
+      rethrowIO (ExceptionWithContext context (PaneTextTooLarge options.byteLimit))
+    _ -> rethrowIO original
+
+decodePaneText :: PaneCaptureOptions -> Command.PaneCaptureReply -> IO Text.Text
+decodePaneText options = \case
+  Command.CaptureExceedsLimit -> throwIO (PaneTextTooLarge options.byteLimit)
+  Command.CaptureHookFailed diagnostic -> throwIO (PaneCaptureHookFailed diagnostic)
+  Command.CaptureRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
+  Command.CapturedPaneText bytes ->
+    either (const (throwIO (InvalidObservation "pane text is not valid UTF-8")))
+      pure (Utf8.decodeUtf8' bytes)
 
 -- | Read the captured Unicode text without contacting tmux.
 paneText :: PaneText -> Text.Text
 paneText (PaneText _ _ text) = text
+
+-- | Presence can match the first capture. Freshness compares observed
+-- non-overlapping occurrences against a capture taken before input. Use the
+-- same exact pane, row range and rendering in both observations.
+data PaneMatch = Presence | FreshSince !PaneText
+
+-- | Configure a text wait on the selected range and rendering.
+data PaneWaitOptions = PaneWaitOptions
+  { waitTimeout :: !NominalDiffTime -- ^ Whole wait in seconds, positive and at most ten.
+  , waitCapture :: !PaneCaptureOptions
+  , waitMatch :: !PaneMatch
+  }
+
+-- | Wait up to one second for text in the visible, plain screen.
+defaultPaneWait :: PaneWaitOptions
+defaultPaneWait = PaneWaitOptions 1 defaultPaneCapture Presence
+
+-- | The last complete capture is available on timeout and pane exit, if a
+-- capture completed. A deadline inside a native read may retain its owner.
+data PaneWaitResult
+  = PaneTextMatched !PaneText
+  | PaneTextTimedOut !(Maybe PaneText) !(Maybe CaptureRecovery)
+  | PaneTextExited !(Maybe PaneText)
+
+-- | Observe a nonempty, case-sensitive substring in an exact pane. The first
+-- capture runs immediately. After a nonmatch, check liveness and wait up to
+-- 100 ms before the next capture. One deadline covers every request.
+--
+-- A fresh match requires absence followed by presence or an additional
+-- occurrence. Moving a match and repainting identical text provide no new
+-- evidence. A match can include terminal echo. Cancellation preserves its
+-- exception class and any in-flight 'CaptureRecovery'.
+waitForText :: Server -> PaneRef -> PaneWaitOptions -> Text.Text -> IO PaneWaitResult
+waitForText server@(Server runtime handle executable _ _) pane@(G.PaneRef generation ident) options needle =
+  operational $ do
+    checkTarget server generation
+    when (Text.null needle) (throwIO (InvalidConfiguration "pane text wait requires nonempty text"))
+    duration <- limitedDuration "pane text wait" options.waitTimeout
+    let settings = options.waitCapture
+        captured = PaneText pane settings
+    baseline <- case options.waitMatch of
+      Presence -> pure 0
+      FreshSince (PaneText other previous contents)
+        | other == pane && previous.rows == settings.rows && previous.rendering == settings.rendering ->
+            pure (Text.count needle contents)
+        | otherwise ->
+            throwIO (InvalidConfiguration "baseline requires the same pane, rows and rendering")
+    result <- paneCaptureErrors settings $
+      C.waitForPaneText runtime handle executable duration ident settings (decodePaneText settings) needle baseline
+    pure $ case result of
+      C.TextMatched matched -> PaneTextMatched (captured matched)
+      C.TextPaneEnded latest -> PaneTextExited (captured <$> latest)
+      C.TextWaitExpired latest recovery -> PaneTextTimedOut (captured <$> latest) recovery
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server@(Server runtime handle executable _ _) generation command = operational $ do
@@ -420,10 +480,13 @@ checkTarget server@(Server _ handle _ _ _) generation = do
     (throwIO (InvalidTarget "reference belongs to a different Server generation or an offline fixture"))
 
 mutationDuration :: MutationOptions -> IO Int
-mutationDuration options = do
-  let seconds = toRational options.timeout
+mutationDuration options = limitedDuration "mutation" options.timeout
+
+limitedDuration :: Text.Text -> NominalDiffTime -> IO Int
+limitedDuration operation duration = do
+  let seconds = toRational duration
   when (seconds <= 0 || seconds > 10)
-    (throwIO (InvalidConfiguration "mutation timeout must be positive and at most ten seconds"))
+    (throwIO (InvalidConfiguration (operation <> " timeout must be positive and at most ten seconds")))
   pure (fromInteger (ceiling (seconds * 1000000)))
 
 -- | Correlated creation owners from 'tryTmux' or 'tryWithContext'. Keep the

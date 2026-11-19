@@ -22,7 +22,7 @@ module LibTmux.Internal.Runtime
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
   , mutateWith, programMutationWith, validateKeyWith
-  , readPaneCaptureWith
+  , readPaneCaptureWith, readPaneAliveWith
   , SessionCreation, CreationJournal, createSessionWith
   , creationRequest, creationJournal, journalReceipt
   ) where
@@ -149,6 +149,7 @@ data ReadResult value = ReadValue !value | ReadUnavailable !S.Outcome !(Maybe So
 data ReadCommand value where
   ReadPid :: ReadCommand Integer
   ReadVersion :: ReadCommand Version.TmuxVersion
+  ReadPaneAlive :: !Id.PaneId -> ReadCommand Bool
   ReadTopology :: ReadCommand ByteString
   ReadEntityField :: !EntityField -> ReadCommand ByteString
   ReadGraph :: !Graph.Generation -> ReadCommand Graph.EntityGraph
@@ -185,6 +186,7 @@ data ReadError
   | InvalidReadFrame !F.FrameError | InvalidServerPid
   | InvalidRecordFrame !Record.RecordError
   | InvalidVersionProbe !VersionProbe.ProbeError
+  | InvalidPaneProbe !VersionProbe.ProbeError
   | InvalidEntityReceipt
   | InvalidCommandOperands !Command.ArgumentError
   | InvalidCommandReply !Command.ReplyError
@@ -601,6 +603,12 @@ readPaneCaptureWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString
 readPaneCaptureWith hooks duration runtime client executable pane options =
   startNative (CapturePane pane options) hooks duration runtime client executable ScalarRead
 
+-- | Query the exact pane's existence and process state without running hooks.
+readPaneAliveWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString
+  -> Id.PaneId -> IO (Request Bool)
+readPaneAliveWith hooks duration runtime client executable pane =
+  startRead (ReadPaneAlive pane) hooks duration runtime client executable ScalarRead
+
 -- | Create through an existing pin in the serialized mutation lane. The launch
 -- context contributes file, cwd and environment; its argv is replaced by the
 -- closed compiler. Failure before Request handoff retains journal annotations
@@ -658,6 +666,8 @@ commandArguments :: F.Nonce -> ReadCommand value -> [ByteString]
 commandArguments nonce command = case command of
   ReadPid -> framed "#{pid}"
   ReadVersion -> VersionProbe.versionArguments nonce
+  ReadPaneAlive pane -> VersionProbe.formatArguments nonce
+    ["-t", Utf8.encodeUtf8 (Id.renderPaneId pane)] "#{pane_id}:#{pane_dead}"
   ReadTopology -> framed Topology.topologyFormat
   ReadEntityField (ProgramState _) ->
     framed "#{pane_id}:#{pane_pid}:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}:#{history_size}"
@@ -939,6 +949,7 @@ forceResult (CreationResult _) value = void (evaluate (force value))
 forceResult (ObservationResult command) value = case command of
   ReadPid -> void (evaluate value)
   ReadVersion -> void (evaluate value)
+  ReadPaneAlive _ -> void (evaluate value)
   ReadTopology -> void (evaluate (force value))
   ReadEntityField _ -> void (evaluate (force value))
   ReadGraph _ -> void (evaluate (force value))
@@ -1008,6 +1019,18 @@ decodeRead ReadVersion nonce completed =
         _ -> Nothing
   in either (Left . toException . InvalidVersionProbe) Right
     (VersionProbe.decodeVersionProbe nonce status completed.output completed.errors)
+decodeRead (ReadPaneAlive pane) nonce completed = do
+  let status = case completed.exit of
+        Just (N.Exited value) -> Just (fromIntegral value)
+        _ -> Nothing
+      target = Utf8.encodeUtf8 (Id.renderPaneId pane)
+  payload <- either (Left . toException . InvalidPaneProbe) Right
+    (VersionProbe.decodeFormatProbe nonce status completed.output completed.errors)
+  case Ascii.split ':' payload of
+    ["", ""] -> Right False
+    [ident, "0"] | ident == target -> Right True
+    [ident, "1"] | ident == target -> Right False
+    _ -> Left (toException InvalidEntityReceipt)
 decodeRead command nonce completed
   | completed.exit /= Just (N.Exited 0) = Left (toException (ReadExit completed.exit))
   | not (Bytes.null completed.errors) = Left (toException (ReadStderr (Bytes.length completed.errors)))
