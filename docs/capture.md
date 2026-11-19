@@ -89,8 +89,9 @@ Both keep the
 [`ExceptionWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#t:ExceptionWithContext)
 that recovery needs. A typed `try` drops it.
 
-`cleanupRecoveries` and `captureRecoveries` read the correlated owners from
-that context. For each owner you can:
+Import [`LibTmux.Recovery`](../src/LibTmux/Recovery.hs) for
+`cleanupRecoveries` and `captureRecoveries`. They read the correlated owners
+from that context.
 
 - Inspect it locally.
 - Resume cleanup. This never sends a second capture.
