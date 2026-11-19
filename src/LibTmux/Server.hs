@@ -11,8 +11,9 @@
 -- navigation are pure. Captures use an observation interval, not an atomic
 -- transaction over tmux and operating-system state.
 -- 'createSession' returns historical created identities. 'renameSession',
--- 'renameWindow' and 'setPaneTitle' perform explicit mutations
--- against generation-bound references. Earlier observations stay detached.
+-- 'renameWindow' and 'setPaneTitle' update generation-bound targets.
+-- 'killSession', 'killWindow' and 'killPane' remove those targets.
+-- Capture again to observe their effects.
 --
 -- Operational failures use t'TmuxException'. 'tryTmux' catches that type only.
 -- Cancellation retains its original exception class. If bounded cleanup
@@ -27,6 +28,8 @@ module LibTmux.Server
   , createSession, createSessionWith
     -- * Rename and title
   , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
+    -- * Remove a target
+  , killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
@@ -269,6 +272,39 @@ setPaneTitle = setPaneTitleWith defaultMutationOptions
 setPaneTitleWith :: MutationOptions -> Server -> PaneRef -> Text.Text -> IO ()
 setPaneTitleWith options server (G.PaneRef generation ident) label =
   mutate options server generation (Command.SetPaneTitle ident label)
+
+-- | Remove a session from this Server generation. A window linked from
+-- another session survives. Use 'killSessionWith' to choose a deadline.
+killSession :: Server -> SessionRef -> IO ()
+killSession = killSessionWith defaultMutationOptions
+
+-- | 'killSession' with an explicit deadline. tmux may exit when its last
+-- session closes. Observe the daemon separately.
+killSessionWith :: MutationOptions -> Server -> SessionRef -> IO ()
+killSessionWith options server (G.SessionRef generation ident) =
+  mutate options server generation (Command.KillSession ident)
+
+-- | Remove a physical window across all its links. tmux closes sessions
+-- left without windows. Use 'killWindowWith' to choose a deadline.
+killWindow :: Server -> WindowRef -> IO ()
+killWindow = killWindowWith defaultMutationOptions
+
+-- | 'killWindow' with an explicit deadline. Missing windows raise
+-- 'MutationRejected'. Foreign and offline references raise 'InvalidTarget'.
+killWindowWith :: MutationOptions -> Server -> WindowRef -> IO ()
+killWindowWith options server (G.WindowRef generation ident) =
+  mutate options server generation (Command.KillWindow ident)
+
+-- | Remove one physical pane. Removing the last pane also closes its
+-- window. Use 'killPaneWith' to choose a deadline.
+killPane :: Server -> PaneRef -> IO ()
+killPane = killPaneWith defaultMutationOptions
+
+-- | 'killPane' with an explicit deadline. Success confirms the native
+-- removal command. Observe descendant process exit separately.
+killPaneWith :: MutationOptions -> Server -> PaneRef -> IO ()
+killPaneWith options server (G.PaneRef generation ident) =
+  mutate options server generation (Command.KillPane ident)
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server@(Server runtime handle executable _) generation command = operational $ do

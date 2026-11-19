@@ -37,6 +37,9 @@ data Mutation
   = RenameSession !Id.SessionId !Text
   | RenameWindow !Id.WindowId !TmuxText
   | SetPaneTitle !Id.PaneId !Text
+  | KillSession !Id.SessionId
+  | KillWindow !Id.WindowId
+  | KillPane !Id.PaneId
   deriving stock (Eq, Show)
 
 -- | Refusal before a command tail exists, carrying its catalogue field key.
@@ -272,26 +275,27 @@ errorBody stamp body
 -- invocation before admission. A tail neither validates generation nor reserves
 -- a target, and native completion requires its own operation-specific evidence.
 compileMutation :: Mutation -> Either ArgumentError [ByteString]
-compileMutation mutation = do
-  checkCost key value minimumCost expansionCost
-  pure (prefix <> [protectSeparator (protectFormat value)])
-  where
-    (prefix, value, key) = mutationParts mutation
-    minimumCost = sum (map ((+ 1) . toInteger . Bytes.length) prefix)
-      + toInteger (Bytes.length value) + 1
-    expansionCost = 6 * toInteger (Bytes.count 35 value) + if endsSeparator value then 1 else 0
-
-mutationParts :: Mutation -> ([ByteString], ByteString, Text)
-mutationParts mutation = case mutation of
+compileMutation = \case
   RenameSession ident text ->
-    (["rename-session", "-t", Utf8.encodeUtf8 (Id.renderSessionId ident), "--"],
-     Utf8.encodeUtf8 text, Field.fieldKey Field.SessionName)
+    withOperand (target "rename-session" (Id.renderSessionId ident) <> ["--"])
+      (Field.fieldKey Field.SessionName) (Utf8.encodeUtf8 text)
   RenameWindow ident label ->
-    (["rename-window", "-t", Utf8.encodeUtf8 (Id.renderWindowId ident), "--"],
-     Label.toBytes label, Field.fieldKey Field.WindowName)
+    withOperand (target "rename-window" (Id.renderWindowId ident) <> ["--"])
+      (Field.fieldKey Field.WindowName) (Label.toBytes label)
   SetPaneTitle ident text ->
-    (["select-pane", "-t", Utf8.encodeUtf8 (Id.renderPaneId ident), "-T"],
-     Utf8.encodeUtf8 text, Field.fieldKey Field.PaneTitle)
+    withOperand (target "select-pane" (Id.renderPaneId ident) <> ["-T"])
+      (Field.fieldKey Field.PaneTitle) (Utf8.encodeUtf8 text)
+  KillSession ident -> Right (target "kill-session" (Id.renderSessionId ident))
+  KillWindow ident -> Right (target "kill-window" (Id.renderWindowId ident))
+  KillPane ident -> Right (target "kill-pane" (Id.renderPaneId ident))
+  where
+    target command ident = [command, "-t", Utf8.encodeUtf8 ident]
+    withOperand prefix key value = do
+      let minimumCost = sum (map ((+ 1) . toInteger . Bytes.length) prefix)
+            + toInteger (Bytes.length value) + 1
+          expansionCost = 6 * toInteger (Bytes.count 35 value) + if endsSeparator value then 1 else 0
+      checkCost key value minimumCost expansionCost
+      pure (prefix <> [protectSeparator (protectFormat value)])
 
 checkCost :: Text -> ByteString -> Integer -> Integer -> Either ArgumentError ()
 checkCost key value minimumCost expansionCost

@@ -50,6 +50,43 @@ tests = testGroup "public mutation API"
           oldWindow.name @?= "original-window"
           oldPane.title @?= "original-title"
 
+  , testCase "kills only the selected pane, physical window and session" $
+      Fixture.withFixture $ \fixture -> do
+        configured fixture ["new-session", "-d", "-s", "disposable", "/bin/cat", "-"]
+        configured fixture ["new-window", "-d", "-t", "disposable:4", "-n", "shared", "/bin/cat", "-"]
+        configured fixture ["split-window", "-d", "-t", "disposable:4", "/bin/cat", "-"]
+        configured fixture ["link-window", "-s", "disposable:4", "-t", "fixture:4"]
+        Tmux.withServer (config fixture) $ \server -> do
+          before <- Tmux.capture server
+          session <- one [row | row <- Tmux.sessions before, row.name == "disposable"]
+          bystander <- one [row | row <- Tmux.sessions before, row.name == "fixture"]
+          window <- one [row | row <- Tmux.windows before, row.name == "shared"]
+          panes <- require (Tmux.panesForWindow before window.ref)
+          pane <- one (filter (not . (.active)) panes)
+          sibling <- one (filter (.active) panes)
+          length [link | link <- Tmux.windowLinks before, link.window == window.ref] @?= 2
+
+          Tmux.killPane server pane.ref
+          afterPane <- Tmux.capture server
+          Tmux.lookupPane afterPane pane.ref @?= Left (Tmux.MissingPane pane.ref)
+          require (Tmux.panesForWindow afterPane window.ref) >>= (@?= [sibling.ref]) . map (.ref)
+          Tmux.tryTmux (Tmux.killPane server pane.ref) >>= \case
+            Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+            _ -> assertFailure "removed pane was accepted as a live target"
+
+          Tmux.killWindow server window.ref
+          afterWindow <- Tmux.capture server
+          Tmux.lookupWindow afterWindow window.ref @?= Left (Tmux.MissingWindow window.ref)
+          Tmux.lookupPane afterWindow sibling.ref @?= Left (Tmux.MissingPane sibling.ref)
+          length (Tmux.sessions afterWindow) @?= 2
+          assertBool "a link to the killed physical window survived"
+            (all ((/= window.ref) . (.window)) (Tmux.windowLinks afterWindow))
+
+          Tmux.killSession server session.ref
+          afterSession <- Tmux.capture server
+          Tmux.lookupSession afterSession session.ref @?= Left (Tmux.MissingSession session.ref)
+          map (.ref) (Tmux.sessions afterSession) @?= [bystander.ref]
+
   , testCase "refuses foreign and offline references before changing the daemon" $
       Fixture.withFixture $ \fixture -> do
         configured fixture ["rename-window", "-t", "@0", "original-window"]
@@ -59,6 +96,7 @@ tests = testGroup "public mutation API"
           Tmux.withServerIn runtime (config fixture) $ \other -> do
             rejected <- Tmux.tryTmux (Tmux.renameWindow other window.ref "foreign-write")
             expectInvalidTarget rejected
+            Tmux.tryTmux (Tmux.killWindow other window.ref) >>= expectInvalidTarget
             let offline = F.windowRef (F.fixtureOrigin "test") (Tmux.windowId window.ref)
             Tmux.tryTmux (Tmux.renameWindow other offline "fixture-write") >>= expectInvalidTarget
           after <- Tmux.capture first
