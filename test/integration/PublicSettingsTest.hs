@@ -5,6 +5,7 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Fixture qualified
 import LibTmux qualified as Tmux
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Creation qualified as Creation
 import System.Exit (ExitCode (..))
 import System.OsString.Posix qualified as Os
@@ -113,6 +114,6 @@ refused :: Tmux.OptionError -> Either (ExceptionWithContext Tmux.TmuxException) 
 refused expected = \case
   Left (ExceptionWithContext context (Tmux.InvalidSetting actual)) -> do
     actual @?= expected
-    assertBool "configuration refusal retained a mutation" (null (Tmux.mutationRecoveries context))
-    assertBool "configuration refusal retained a read" (null (Tmux.captureRecoveries context))
+    assertBool "configuration refusal retained a mutation" (null (Recovery.mutationRecoveries context))
+    assertBool "configuration refusal retained a read" (null (Recovery.captureRecoveries context))
   _ -> assertFailure "configuration was admitted"

@@ -117,7 +117,7 @@ def test_each_package_needs_exactly_one_library_unit(plan: dict[str, Any]) -> No
 def test_all_cases_run_against_exactly_the_selected_units(checkout: Checkout) -> None:
     """Every case compiles with the three library units and nothing else."""
     message = check_types.check(checkout.root)
-    assert message == "PASS: public API (5 positive and 15 intended negative compilation cases)"
+    assert message == "PASS: public API (5 positive and 16 intended negative compilation cases)"
     calls = checkout.calls()
     assert [call[-1] for call in calls] == [
         *check_types.ACCEPTED,

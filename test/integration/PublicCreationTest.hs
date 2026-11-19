@@ -10,6 +10,7 @@ import Data.Text qualified as Text
 import Data.Text (Text)
 import Fixture qualified
 import LibTmux qualified as Tmux
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Creation qualified as Creation
 import System.Exit (ExitCode (..))
 import System.OsString.Posix qualified as Os
@@ -88,20 +89,20 @@ tests = testGroup "public session creation"
         first <- Tmux.createSession server (options "duplicate-public")
         withCreated fixture first $ Tmux.tryTmux (Tmux.createSession server (options "duplicate-public")) >>= \case
           Left (ExceptionWithContext context (Tmux.MutationRejected _)) -> do
-            recovery <- one (Tmux.creationRecoveries context)
-            Tmux.creationReceipt recovery >>= (@?= Nothing)
-            Tmux.awaitCreationRecovery recovery >>= \status -> status.logical.retained @?= False
+            recovery <- one (Recovery.creationRecoveries context)
+            Recovery.creationReceipt recovery >>= (@?= Nothing)
+            Recovery.awaitCreationRecovery recovery >>= \status -> status.logical.retained @?= False
           _ -> assertFailure "duplicate session was not rejected"
         withHook fixture "has-session -t =missing-public-created" $
           Tmux.tryTmux (Tmux.createSession server (options "hook-public")) >>= \case
             Left (ExceptionWithContext context (Tmux.MutationAppliedWithErrors _)) -> do
-              recovery <- one (Tmux.creationRecoveries context)
-              created <- Tmux.creationReceipt recovery >>= maybe (fail "hook error lost creation IDs") pure
+              recovery <- one (Recovery.creationRecoveries context)
+              created <- Recovery.creationReceipt recovery >>= maybe (fail "hook error lost creation IDs") pure
               withCreated fixture created $ do
                 snapshot <- Tmux.capture server
                 _ <- require (Tmux.lookupSession snapshot created.session)
-                Tmux.creationGeneration recovery @?= Tmux.serverGeneration server
-                Tmux.awaitCreationRecovery recovery >>= \status -> status.logical.retained @?= False
+                Recovery.creationGeneration recovery @?= Tmux.serverGeneration server
+                Recovery.awaitCreationRecovery recovery >>= \status -> status.logical.retained @?= False
             _ -> assertFailure "hook failure lost the applied creation outcome"
 
   , testCase "deletion after creation leaves a historical receipt, not an observation" $
@@ -131,15 +132,15 @@ tests = testGroup "public session creation"
             flip finally (configured fixture ["wait-for", "-S", "public-creation-release"]) $ do
               Tmux.tryTmux (Tmux.createSessionWith (Tmux.MutationOptions 0.25) server (options "expired-public")) >>= \case
                 Left (ExceptionWithContext context Tmux.MutationTimedOut) -> do
-                  recovery <- one (Tmux.creationRecoveries context)
-                  created <- Tmux.creationReceipt recovery >>= maybe (fail "timeout lost observed creation IDs") pure
+                  recovery <- one (Recovery.creationRecoveries context)
+                  created <- Recovery.creationReceipt recovery >>= maybe (fail "timeout lost observed creation IDs") pure
                   withCreated fixture created $ do
                     snapshot <- Tmux.capture server
                     _ <- require (Tmux.lookupSession snapshot created.session)
-                    status <- bounded (Tmux.awaitCreationRecovery recovery)
-                    status.logical.outcome @?= Just Tmux.OutcomeUnknown
+                    status <- bounded (Recovery.awaitCreationRecovery recovery)
+                    status.logical.outcome @?= Just Recovery.OutcomeUnknown
                     status.logical.retained @?= True
-                    Tmux.detachCreationRecovery recovery >>= (@?= True)
+                    Recovery.detachCreationRecovery recovery >>= (@?= True)
                 _ -> assertFailure "waiting creation did not time out"
               configured fixture ["wait-for", "-S", "public-creation-release"]
               configured fixture ["set-hook", "-gu", "after-new-session"]
@@ -159,12 +160,12 @@ tests = testGroup "public session creation"
                     bounded (wait worker) >>= \case
                       Left (ExceptionWithContext context problem) -> do
                         fromException @AsyncException problem @?= Just ThreadKilled
-                        recovery <- one (Tmux.creationRecoveries context)
-                        Tmux.creationGeneration recovery @?= Tmux.serverGeneration server
-                        status <- bounded (Tmux.awaitCreationRecovery recovery)
-                        status.logical.outcome @?= Just Tmux.OutcomeUnknown
+                        recovery <- one (Recovery.creationRecoveries context)
+                        Recovery.creationGeneration recovery @?= Tmux.serverGeneration server
+                        status <- bounded (Recovery.awaitCreationRecovery recovery)
+                        status.logical.outcome @?= Just Recovery.OutcomeUnknown
                         status.logical.retained @?= True
-                        Tmux.detachCreationRecovery recovery >>= (@?= True)
+                        Recovery.detachCreationRecovery recovery >>= (@?= True)
                       Right _ -> assertFailure "cancelled creation returned success"
 
   , testCase "invalid creation options fail before changing the graph" $
@@ -172,8 +173,8 @@ tests = testGroup "public session creation"
         before <- Tmux.capture server
         Tmux.tryTmux (Tmux.createSession server (options "bad") {Creation.name = Just "bad\NULname"}) >>= \case
           Left (ExceptionWithContext context (Tmux.InvalidMutationArgument _)) -> do
-            assertBool "invalid creation retained a creation operation" (null (Tmux.creationRecoveries context))
-            assertBool "invalid creation retained a mutation operation" (null (Tmux.mutationRecoveries context))
+            assertBool "invalid creation retained a creation operation" (null (Recovery.creationRecoveries context))
+            assertBool "invalid creation retained a mutation operation" (null (Recovery.mutationRecoveries context))
           _ -> assertFailure "invalid creation options were dispatched"
         after <- Tmux.capture server
         map (.ref) (Tmux.sessions after) @?= map (.ref) (Tmux.sessions before)

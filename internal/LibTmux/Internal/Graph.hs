@@ -163,7 +163,7 @@ type CreatedSession = CreatedEntities
 -- * Create: 'LibTmux.Server.createSession', 'LibTmux.Server.createSessionWith'
 -- * Describe: 'LibTmux.Creation.defaultSessionOptions',
 --   t'LibTmux.Creation.SessionOptions', t'LibTmux.Creation.CreatedSession'
--- * After a failure: 'LibTmux.Server.creationReceipt'
+-- * After a failure: 'LibTmux.Recovery.creationReceipt'
 --
 -- __Rename a session.__ The name is literal text, and snapshots you already
 -- hold keep the old name. A reference from another Server or an offline
