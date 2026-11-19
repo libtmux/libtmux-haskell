@@ -16,8 +16,9 @@ $ cabal run --verbose=0 create-session -- \
     "$(command -v tmux)"
 ```
 
-The program adds a window and splits an explicit pane. The new pane
-disables terminal echo, prints a readiness marker and starts `/bin/cat -`.
+The program adds a window and splits an explicit pane. It links that window
+at a second index, selects an exact pane, tiles the window and removes the
+extra link. The new pane disables terminal echo, prints a readiness marker and starts `/bin/cat -`.
 The caller waits for the marker and [captures a baseline](mutations.md#read-pane-text).
 It [sends literal text and a named Enter](mutations.md#send-input-to-a-pane),
 then [waits for fresh text](mutations.md#wait-for-pane-text) from the pane.
@@ -50,6 +51,7 @@ main = getArgs >>= \case
     socket <- Path.encodeFS socketArgument
     executable <- Path.encodeFS executableArgument
     width <- require "Width" (Tmux.mkDimension 120)
+    extraIndex <- require "Second link index" (Tmux.mkWindowIndex 4)
     let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
         options = Creation.defaultSessionOptions
           { Creation.name = Just "created-workspace"
@@ -64,14 +66,23 @@ main = getArgs >>= \case
       Tmux.setPaneTitle server created.pane "editor-ready"
       added <- Tmux.createWindow server (Creation.NextFree created.session)
         Creation.defaultWindowOptions {Creation.windowLabel = Just "worker", Creation.windowProcess = options.process}
-      split <- Tmux.splitPane server
-        (Creation.WindowSlot added.session added.windowIndex) added.pane
+      let workerSlot = Creation.WindowSlot added.session added.windowIndex
+          secondLink = Creation.WindowSlot added.session extraIndex
+      split <- Tmux.splitPane server workerSlot added.pane
         Creation.defaultSplitOptions
           { Creation.direction = Creation.LeftRight
           , Creation.size = Creation.SplitPercent 25
           , Creation.splitProcess = Creation.ShellCommand
               "stty -echo; printf 'input-ready\\n'; exec /bin/cat -"
           }
+      Tmux.linkWindow server workerSlot secondLink
+      Tmux.selectWindowLink server secondLink
+      Tmux.selectExactPane server secondLink split.pane
+      Tmux.selectLayout server secondLink Tmux.Tiled
+      linked <- Tmux.capture server
+      linkedSlots <- require "Worker links" (Tmux.linksForSession linked added.session)
+      let workerIndices = [Tmux.windowIndexValue link.index | link <- linkedSlots, link.window == added.window]
+      Tmux.unlinkWindow server secondLink
       _ <- awaitText server split.pane Tmux.defaultPaneWait "input-ready"
       baseline <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
       Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
@@ -91,10 +102,10 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, added, split, before, after, screen, rejected, remaining)
+      pure (created, added, split, before, after, screen, workerIndices, rejected, remaining)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, added, split, before, after, screen, rejected, remaining) -> do
+      Right (created, added, split, before, after, screen, workerIndices, rejected, remaining) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
@@ -112,6 +123,7 @@ main = getArgs >>= \case
         putStrLn $ "created session links: " <> show (length links)
         putStrLn $ "new window: " <> Text.unpack workerLabel
         putStrLn $ "new window panes: " <> show (length panes)
+        putStrLn $ "same worker window at indices: " <> show workerIndices
         putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
         putStrLn $ "captured pane rows match height: " <> show
           (toInteger (length (Text.lines (Tmux.paneText screen))) == Tmux.dimensionValue splitPane.height)
@@ -145,6 +157,7 @@ captured sessions: 1 -> 2
 created session links: 2
 new window: worker
 new window panes: 2
+same worker window at indices: [1,4]
 split exact target: True
 captured pane rows match height: True
 captured pane text
@@ -153,6 +166,23 @@ Enter
 duplicate name rejected: True
 original sessions after removal: True
 ```
+
+## Link, select and arrange windows
+
+[`linkWindow`](../src/LibTmux/Server.hs) takes a source slot and a vacant
+destination slot. The new slot points to the same physical window and starts
+unselected. Use [`selectWindowLink`](../src/LibTmux/Server.hs) to activate a
+specific session/index, even when the same window appears at two indices.
+
+[`selectExactPane`](../src/LibTmux/Server.hs) takes a window slot and an exact
+pane reference. The pane must belong to that slot's current window.
+[`selectLayout`](../src/LibTmux/Server.hs) applies one of the five layout names
+shared by tmux 3.3a and 3.8. It affects the physical window seen through every
+link and can unzoom it. Capture again to read the active pane and geometry.
+
+[`unlinkWindow`](../src/LibTmux/Server.hs) removes only the named link and
+refuses to remove the last one. Native session groups can propagate link
+changes to their members. Use the `With` variants for explicit deadlines.
 
 ## Remove a target
 

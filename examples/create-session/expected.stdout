@@ -6,6 +6,7 @@ captured sessions: 1 -> 2
 created session links: 2
 new window: worker
 new window panes: 2
+same worker window at indices: [1,4]
 split exact target: True
 captured pane rows match height: True
 captured pane text
