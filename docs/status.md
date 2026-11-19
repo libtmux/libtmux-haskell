@@ -37,7 +37,8 @@ generation and retain recovery.
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
 interface. Additional commands, interchange and event contracts remain separate
 qualification work.
-The [contract notes](contracts/README.md) propose the remaining operations.
+The repository's [contract notes](https://github.com/libtmux/libtmux-haskell/tree/master/docs/contracts)
+record the remaining native operations.
 
 ## Package policy
 

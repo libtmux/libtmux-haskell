@@ -24,8 +24,8 @@ and the [API guide](api.md).
 
 For maintainers:
 
-- [Behavior contracts](contracts/README.md): implementation scope, including
-  operations that are not public APIs yet.
+- Planned native behavior and implementation evidence live in the repository's
+  [behavior contracts](https://github.com/libtmux/libtmux-haskell/tree/master/docs/contracts).
 - [Native domain model ADR](decisions/0001-native-domain-model.md): physical
   graph, naming, lifecycle and public API decisions.
 - [Contributing](../.github/CONTRIBUTING.md) and

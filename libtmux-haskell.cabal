@@ -61,18 +61,6 @@ extra-doc-files:
   docs/status.md
   docs/decisions/0001-native-domain-model.md
   docs/decisions/native-domain-model-qualification.md
-  docs/contracts/README.md
-  docs/contracts/environment.md
-  docs/contracts/observations.md
-  docs/contracts/interactive.md
-  docs/contracts/creation.md
-  docs/contracts/options-hooks.md
-  docs/contracts/buffers-config.md
-  docs/contracts/framing.md
-  docs/contracts/socket-pin.md
-  docs/contracts/process.md
-  docs/contracts/acquisition.md
-  docs/contracts/pane-commands.md
 extra-source-files:
   examples/resize-geometry/Main.hs
   examples/resize-geometry/README.md
