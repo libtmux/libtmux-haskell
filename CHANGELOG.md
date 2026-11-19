@@ -25,6 +25,9 @@
   `killWindow` or `killPane`. A physical window is removed from every session
   that links it. The `With` variants accept an explicit deadline. ([#28])
 
+- Send literal text or a validated sequence of named keys to a `PaneRef`
+  with `sendKeys`. Use `sendKeysWith` for an explicit deadline. ([#24])
+
 ### Changed
 
 - Admit tmux 3.3a and every newer release in `LibTmux.Version.requireSupported`,
@@ -144,3 +147,4 @@
 
 [#41]: https://github.com/libtmux/libtmux-haskell/issues/41
 [#28]: https://github.com/libtmux/libtmux-haskell/issues/28
+[#24]: https://github.com/libtmux/libtmux-haskell/issues/24
