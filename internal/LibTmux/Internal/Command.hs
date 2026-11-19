@@ -81,7 +81,7 @@ compileCreation :: Frame.Nonce -> CreationCommand -> Either ArgumentError [ByteS
 compileCreation nonce (NewSession options) = compileSessionCreation nonce options
 compileCreation nonce (NewWindow placement options) = do
   (target, insertion) <- case placement of
-    Creation.NextFree session -> Right (sessionBytes session <> ":", [])
+    Creation.NextFree session -> Right (creationSessionTarget session <> ":", [])
     Creation.At slot -> (, []) <$> slotBytes slot
     Creation.Before slot -> (, ["-b"]) <$> slotBytes slot
     Creation.After slot -> (, ["-a"]) <$> slotBytes slot
@@ -116,14 +116,14 @@ compileCreation nonce (SplitPane slot (G.PaneRef _ pane) options) = do
      <> optional "workingDirectory" "-c" osBytes options.workingDirectory)
     options.environment options.process
 
-sessionBytes :: G.SessionRef -> ByteString
-sessionBytes (G.SessionRef _ session) = Utf8.encodeUtf8 (Id.renderSessionId session)
+creationSessionTarget :: G.SessionRef -> ByteString
+creationSessionTarget (G.SessionRef _ session) = Utf8.encodeUtf8 (Id.renderSessionId session)
 
 slotBytes :: Creation.WindowSlot -> Either ArgumentError ByteString
 slotBytes (Creation.WindowSlot session index) = do
   when (Value.windowIndexValue index > 2147483647)
     (Left (InvalidOperand "window.index" "index exceeds 2147483647"))
-  pure (sessionBytes session <> ":" <> Ascii.pack (show (Value.windowIndexValue index)))
+  pure (creationSessionTarget session <> ":" <> Ascii.pack (show (Value.windowIndexValue index)))
 
 -- | Validate and lower one detached creation, including its receipt format.
 -- Command argv must fit one native tmux message, including NUL terminators.
