@@ -21,6 +21,9 @@
   failing hooks. `CreationRecovery` exposes the original operation and
   generation, receipt inspection and explicit cleanup recovery without
   replaying creation. ([#19])
+- Remove a generation-bound session, window or pane with `killSession`,
+  `killWindow` or `killPane`. A physical window is removed from every session
+  that links it. The `With` variants accept an explicit deadline. ([#28])
 
 ### Changed
 
@@ -140,3 +143,4 @@
 [#15]: https://github.com/libtmux/libtmux-haskell/issues/15
 
 [#41]: https://github.com/libtmux/libtmux-haskell/issues/41
+[#28]: https://github.com/libtmux/libtmux-haskell/issues/28
