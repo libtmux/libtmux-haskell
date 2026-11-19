@@ -97,6 +97,111 @@ instance NFData CreatedEntities where
 type CreatedSession = CreatedEntities
 
 -- | Detached physical session. Navigate its appearances through t'WindowLink'.
+--
+-- == What is on here
+--
+-- Calls that find, read or change a session, by job. The calls that take a
+-- @Server@ contact tmux; the rest read values you already hold.
+--
+-- __Get the sessions in a snapshot.__ Capture a snapshot through a Server,
+-- then list its sessions in ID order or start a query from them.
+--
+-- * From a Server: 'LibTmux.Server.capture'
+-- * From a snapshot: 'LibTmux.Snapshot.sessions'
+-- * As a query source: 'LibTmux.Query.sessions'
+--
+-- __Find a session by reference or ID.__ A lookup reads the snapshot you pass
+-- and returns a lookup error for a missing or foreign reference. An ID selects
+-- whichever session holds it in that snapshot, with no continuity with an
+-- earlier Server.
+--
+-- 'LibTmux.Snapshot.lookupSession', 'LibTmux.Snapshot.lookupSessionId',
+-- t'SessionRef', t'LookupError'
+--
+-- __Parse and print session IDs.__ Parsing and rendering are pure. An ID
+-- carries no endpoint or liveness evidence.
+--
+-- 'LibTmux.Id.parseSessionId', 'LibTmux.Id.renderSessionId',
+-- 'LibTmux.Id.sessionIdValue', 'LibTmux.Snapshot.sessionId', t'SessionId'
+--
+-- __Read a session's fields.__ Use record dot on the value, or a field token
+-- in a query. Field tokens describe captured values and never contact tmux.
+--
+-- 'LibTmux.Query.Session.id', 'LibTmux.Query.Session.name',
+-- 'LibTmux.Query.Session.attached'
+--
+-- __Follow a session to its windows and clients, or back.__ A session reaches
+-- its windows through links, and one window can be linked more than once. A
+-- window link and a client attachment each name a session; resolve it in a
+-- query.
+--
+-- * From a snapshot: 'LibTmux.Snapshot.linksForSession'
+-- * From a session in a query: 'LibTmux.Query.Session.windowLinks',
+--   'LibTmux.Query.Session.clients'
+-- * Test its links or clients: 'LibTmux.Query.some', 'LibTmux.Query.every',
+--   'LibTmux.Query.none'
+-- * From a window link: 'LibTmux.Query.Link.sessionId',
+--   'LibTmux.Query.Link.session'
+-- * From a client attachment: 'LibTmux.Query.ClientAttachment.sessionId',
+--   'LibTmux.Query.ClientAttachment.session'
+-- * Resolve the session: 'LibTmux.Query.related'
+--
+-- __Select sessions with a query.__ Match the name by equality or an exact
+-- substring and the attached count by a threshold, then run the query on a
+-- snapshot you hold or fetch a fresh one. @exactlyOne@ turns a result into one
+-- session or an error.
+--
+-- 'LibTmux.Query.sessions', 'LibTmux.Query.matching', 'LibTmux.Query.eq',
+-- 'LibTmux.Query.contains', 'LibTmux.Query.ge', 'LibTmux.Query.runQuery',
+-- 'LibTmux.Query.fetch', 'LibTmux.Query.exactlyOne'
+--
+-- __Create a session.__ Creation returns the references tmux printed, not an
+-- observed session. Capture again to see the new session. A failed creation
+-- can leave a receipt in its recovery, and a missing receipt does not mean no
+-- session exists.
+--
+-- * Create: 'LibTmux.Server.createSession', 'LibTmux.Server.createSessionWith'
+-- * Describe: 'LibTmux.Creation.defaultSessionOptions',
+--   t'LibTmux.Creation.SessionOptions', t'LibTmux.Creation.CreatedSession'
+-- * After a failure: 'LibTmux.Server.creationReceipt'
+--
+-- __Rename a session.__ The name is literal text, and snapshots you already
+-- hold keep the old name. A reference from another Server or an offline
+-- fixture is refused before the command runs. The @With@ variant takes a
+-- deadline.
+--
+-- 'LibTmux.Server.renameSession', 'LibTmux.Server.renameSessionWith'
+--
+-- __Add a window to a session.__ A placement names the session and where the
+-- window goes: the next free index or a slot. The result holds the references
+-- tmux printed, so capture again to observe the window.
+--
+-- * Create: 'LibTmux.Server.createWindow', 'LibTmux.Server.createWindowWith'
+-- * Place: t'LibTmux.Creation.WindowPlacement', t'LibTmux.Creation.WindowSlot'
+--
+-- __Remove a session.__ A window that another session links survives. tmux may
+-- exit when its last session closes, so observe the daemon separately.
+--
+-- 'LibTmux.Server.killSession', 'LibTmux.Server.killSessionWith'
+--
+-- __Change which windows a session links.__ A slot names the session and the
+-- index of one link. Select a link, link a window into a vacant slot, or remove
+-- one link; tmux refuses to remove a window's last link, and session groups can
+-- propagate links.
+--
+-- * Select: 'LibTmux.Server.selectWindowLink',
+--   'LibTmux.Server.selectWindowLinkWith'
+-- * Link: 'LibTmux.Server.linkWindow', 'LibTmux.Server.linkWindowWith'
+-- * Unlink: 'LibTmux.Server.unlinkWindow', 'LibTmux.Server.unlinkWindowWith'
+-- * Slot: t'LibTmux.Creation.WindowSlot'
+--
+-- __Build a session offline.__ Fixture references belong to a named offline
+-- origin, never to a live Server. Validation checks a fixture before it
+-- becomes a snapshot.
+--
+-- 'LibTmux.Snapshot.Fixture.sessionRef',
+-- 'LibTmux.Snapshot.Fixture.validateFixture',
+-- t'LibTmux.Snapshot.Fixture.Fixture'
 data Session = Session
   { ref :: !SessionRef -- ^ Target identity in the observation's generation.
   , name :: !Text -- ^ Session name as reported and decoded by tmux.
@@ -107,6 +212,141 @@ instance NFData Session where
   rnf (Session ref name attached) = rnf (ref, name, attached)
 
 -- | Detached physical window, independent of its session and index appearances.
+--
+-- == What is on here
+--
+-- Calls that find, read or change a window, by job. The calls that take a
+-- @Server@ contact tmux; the rest read values you already hold.
+--
+-- __Get the windows in a snapshot.__ A physical window is listed once, however
+-- many sessions link it; the link lists show every appearance instead.
+--
+-- * From a Server: 'LibTmux.Server.capture'
+-- * From a snapshot: 'LibTmux.Snapshot.windows',
+--   'LibTmux.Snapshot.windowLinks'
+-- * As a query source: 'LibTmux.Query.windows', 'LibTmux.Query.windowLinks'
+--
+-- __Find a window by reference or ID.__ A lookup reads the snapshot you pass
+-- and returns a lookup error for a missing or foreign reference. An ID selects
+-- whichever window holds it in that snapshot.
+--
+-- 'LibTmux.Snapshot.lookupWindow', 'LibTmux.Snapshot.lookupWindowId',
+-- t'WindowRef', t'LookupError'
+--
+-- __Parse and print window IDs.__ Parsing and rendering are pure. An ID is
+-- independent of a session's link index.
+--
+-- 'LibTmux.Id.parseWindowId', 'LibTmux.Id.renderWindowId',
+-- 'LibTmux.Id.windowIdValue', 'LibTmux.Snapshot.windowId', t'WindowId'
+--
+-- __Read a window's fields.__ Use record dot on the value, or a field token in
+-- a query. The name keeps the bytes tmux reports, because older supported
+-- releases can retain names that are not valid UTF-8; decode it as UTF-8 when
+-- you need text.
+--
+-- * Field tokens: 'LibTmux.Query.Window.id', 'LibTmux.Query.Window.name',
+--   'LibTmux.Query.Window.width', 'LibTmux.Query.Window.height'
+-- * The name as bytes: t'TmuxText', 'LibTmux.Snapshot.labelText',
+--   'LibTmux.Snapshot.labelBytes', 'LibTmux.Snapshot.labelFromBytes'
+--
+-- __Follow a window to its panes and links.__ Panes come in pane-index order.
+-- One window can have several links, and its name and pane set are shared
+-- across them.
+--
+-- * From a snapshot: 'LibTmux.Snapshot.panesForWindow'
+-- * From a window in a query: 'LibTmux.Query.Window.panes',
+--   'LibTmux.Query.Window.windowLinks'
+-- * Test its panes or links: 'LibTmux.Query.some', 'LibTmux.Query.every',
+--   'LibTmux.Query.none'
+-- * From a window link: 'LibTmux.Query.Link.panes'
+--
+-- __Reach a window from a link, a pane or a client.__ Each names one window;
+-- resolve it in a query.
+--
+-- * From a window link: 'LibTmux.Query.Link.windowId',
+--   'LibTmux.Query.Link.window'
+-- * From a pane: 'LibTmux.Query.Pane.windowId', 'LibTmux.Query.Pane.window'
+-- * From a client attachment: 'LibTmux.Query.ClientAttachment.windowId',
+--   'LibTmux.Query.ClientAttachment.window'
+-- * Resolve the window: 'LibTmux.Query.related'
+--
+-- __Read where a window sits in a session.__ A window's index belongs to a
+-- link in one session, not to the window, and reindexing can change it.
+--
+-- * Index type: t'WindowIndex', 'LibTmux.Value.mkWindowIndex',
+--   'LibTmux.Value.windowIndexValue'
+-- * Field tokens: 'LibTmux.Query.Link.index',
+--   'LibTmux.Query.ClientAttachment.windowIndex'
+-- * Thresholds: 'LibTmux.Query.windowIndexAtLeast',
+--   'LibTmux.Query.windowIndexAtMost'
+--
+-- __Select windows with a query.__ Compare sizes with a dimension threshold.
+-- Names are bytes, so match them with exact equality rather than a substring.
+--
+-- 'LibTmux.Query.windows', 'LibTmux.Query.matching', 'LibTmux.Query.eq',
+-- 'LibTmux.Query.dimensionAtLeast', 'LibTmux.Query.dimensionAtMost',
+-- 'LibTmux.Query.runQuery', 'LibTmux.Query.fetch'
+--
+-- __Create a window.__ A placement says where it goes, and the options set a
+-- label, a directory, an environment, whether to select it and what to do with
+-- an occupied slot, which is refused by default. The result holds the
+-- references tmux printed, so capture again to observe the window.
+--
+-- * Create: 'LibTmux.Server.createWindow', 'LibTmux.Server.createWindowWith'
+-- * Place: t'LibTmux.Creation.WindowPlacement', t'LibTmux.Creation.WindowSlot',
+--   t'LibTmux.Creation.WindowCollision'
+-- * Options: t'LibTmux.Creation.WindowOptions',
+--   'LibTmux.Creation.defaultWindowOptions'
+-- * Result: t'LibTmux.Creation.CreatedWindow'
+--
+-- __Get the window a new session starts with.__ Creating a session returns
+-- the reference and link index of its first window. Capture again to observe
+-- the window.
+--
+-- 'LibTmux.Server.createSession', 'LibTmux.Server.createSessionWith',
+-- t'LibTmux.Creation.CreatedSession'
+--
+-- __Rename a window.__ One rename changes the physical window across all its
+-- session links. The label keeps its bytes, and tmux may reject names its
+-- release does not accept. A reference from another Server or an offline
+-- fixture is refused before the command runs.
+--
+-- 'LibTmux.Server.renameWindow', 'LibTmux.Server.renameWindowWith'
+--
+-- __Link a window into another slot, or remove a link.__ A slot names a session
+-- and a link index. Linking puts the window in a vacant slot; existing links
+-- remain and the new link starts unselected. tmux refuses to remove a window's
+-- last link, and session groups can propagate either change.
+--
+-- * Link: 'LibTmux.Server.linkWindow', 'LibTmux.Server.linkWindowWith'
+-- * Unlink: 'LibTmux.Server.unlinkWindow', 'LibTmux.Server.unlinkWindowWith'
+-- * Slot: t'LibTmux.Creation.WindowSlot'
+--
+-- __Select a window link.__ Selection works on a link, so it can pick one of
+-- several links to the same physical window. Capture again to observe it.
+--
+-- 'LibTmux.Server.selectWindowLink', 'LibTmux.Server.selectWindowLinkWith',
+-- t'LibTmux.Creation.WindowSlot'
+--
+-- __Arrange a window's panes with a named layout.__ Every link to the window
+-- sees the new layout, and tmux can unzoom the window. Capture again to observe
+-- the pane geometry.
+--
+-- 'LibTmux.Server.selectLayout', 'LibTmux.Server.selectLayoutWith',
+-- t'LibTmux.Server.NamedLayout'
+--
+-- __Remove a window.__ One removal closes the physical window across all its
+-- links, and tmux closes a session left without windows.
+--
+-- 'LibTmux.Server.killWindow', 'LibTmux.Server.killWindowWith'
+--
+-- __Build a window offline.__ Fixture references belong to a named offline
+-- origin, never to a live Server. Validation checks a fixture before it
+-- becomes a snapshot.
+--
+-- 'LibTmux.Snapshot.Fixture.windowRef',
+-- 'LibTmux.Snapshot.Fixture.validateFixture',
+-- t'LibTmux.Snapshot.Fixture.Fixture'
 data Window = Window
   { ref :: !WindowRef -- ^ Shared identity across this snapshot's window links.
   , name :: !TmuxText -- ^ Reported bytes, including non-text names on older tmux.
@@ -119,6 +359,161 @@ instance NFData Window where
 
 -- | Detached physical pane. Its window can appear in several session contexts;
 -- t'PaneOccurrence' preserves an appearance without duplicating physical identity.
+--
+-- == What is on here
+--
+-- Calls that find, read or change a pane, by job. The calls that take a
+-- @Server@ contact tmux; the rest read values you already hold.
+--
+-- __Get the panes in a snapshot.__ The pane lists show each physical pane
+-- once; the occurrence lists keep every appearance, including repeats through
+-- several links.
+--
+-- * From a Server: 'LibTmux.Server.capture'
+-- * From a snapshot: 'LibTmux.Snapshot.panes',
+--   'LibTmux.Snapshot.paneOccurrences'
+-- * As a query source: 'LibTmux.Query.panes', 'LibTmux.Query.paneOccurrences'
+--
+-- __Find a pane by reference or ID.__ A lookup reads the snapshot you pass and
+-- returns a lookup error for a missing or foreign reference. An ID selects
+-- whichever pane holds it in that snapshot.
+--
+-- 'LibTmux.Snapshot.lookupPane', 'LibTmux.Snapshot.lookupPaneId', t'PaneRef',
+-- t'LookupError'
+--
+-- __Parse and print pane IDs.__ Parsing and rendering are pure. An ID carries
+-- no endpoint or liveness evidence.
+--
+-- 'LibTmux.Id.parsePaneId', 'LibTmux.Id.renderPaneId',
+-- 'LibTmux.Id.paneIdValue', 'LibTmux.Snapshot.paneId', t'PaneId'
+--
+-- __Read a pane's fields.__ Use record dot on the value, or a field token in a
+-- query. The title is UTF-8 text; the command and path keep the POSIX bytes
+-- from the endpoint.
+--
+-- 'LibTmux.Query.Pane.id', 'LibTmux.Query.Pane.windowId',
+-- 'LibTmux.Query.Pane.index', 'LibTmux.Query.Pane.width',
+-- 'LibTmux.Query.Pane.height', 'LibTmux.Query.Pane.active',
+-- 'LibTmux.Query.Pane.dead', 'LibTmux.Query.Pane.title',
+-- 'LibTmux.Query.Pane.currentCommand', 'LibTmux.Query.Pane.currentPath'
+--
+-- __Follow a pane to its window and back.__ A window's panes come in
+-- pane-index order. Resolve a pane's window in a query.
+--
+-- * From a pane in a query: 'LibTmux.Query.Pane.window'
+-- * Resolve the window: 'LibTmux.Query.related'
+-- * From a snapshot: 'LibTmux.Snapshot.panesForWindow'
+-- * From a window in a query: 'LibTmux.Query.Window.panes'
+-- * From a window link: 'LibTmux.Query.Link.panes'
+-- * Test a window's panes: 'LibTmux.Query.some', 'LibTmux.Query.every',
+--   'LibTmux.Query.none'
+--
+-- __Keep the context a pane appears in.__ An occurrence pairs a physical pane
+-- with one window link, and a client attachment selects a pane in its actual
+-- session and index.
+--
+-- * From a pane occurrence: 'LibTmux.Query.Occurrence.pane',
+--   'LibTmux.Query.Occurrence.link'
+-- * From a client attachment: 'LibTmux.Query.ClientAttachment.paneId',
+--   'LibTmux.Query.ClientAttachment.pane'
+-- * Occurrence type: t'PaneOccurrence'
+--
+-- __Select panes with a query.__ Compare sizes and indices with thresholds,
+-- and match the title by equality or an exact substring.
+--
+-- 'LibTmux.Query.panes', 'LibTmux.Query.matching', 'LibTmux.Query.eq',
+-- 'LibTmux.Query.contains', 'LibTmux.Query.dimensionAtLeast',
+-- 'LibTmux.Query.dimensionAtMost', 'LibTmux.Query.paneIndexAtLeast',
+-- 'LibTmux.Query.paneIndexAtMost', 'LibTmux.Query.runQuery',
+-- 'LibTmux.Query.fetch'
+--
+-- __Validate a pane index or size.__ Construction checks the mathematical
+-- domain, and the accessors return integers.
+--
+-- * Pane index: t'PaneIndex', 'LibTmux.Value.mkPaneIndex',
+--   'LibTmux.Value.paneIndexValue'
+-- * Size: t'Dimension', 'LibTmux.Value.mkDimension',
+--   'LibTmux.Value.dimensionValue'
+--
+-- __Get the first pane of a new session or window.__ Creating one returns the
+-- reference of its first pane. Capture again to observe the pane.
+--
+-- 'LibTmux.Server.createSession', 'LibTmux.Server.createSessionWith',
+-- 'LibTmux.Server.createWindow', 'LibTmux.Server.createWindowWith',
+-- t'LibTmux.Creation.CreatedEntities'
+--
+-- __Split a pane.__ Name the pane and the session slot that holds its window,
+-- then choose a direction and a size. The slot must hold that pane's window
+-- when tmux runs the command, and the size is a request that tmux can clamp or
+-- refuse. The result records the new pane and the context it was split in.
+--
+-- * Split: 'LibTmux.Server.splitPane', 'LibTmux.Server.splitPaneWith'
+-- * Options: t'LibTmux.Creation.SplitOptions',
+--   'LibTmux.Creation.defaultSplitOptions', t'LibTmux.Creation.SplitDirection',
+--   t'LibTmux.Creation.SplitSize'
+-- * Slot and result: t'LibTmux.Creation.WindowSlot',
+--   t'LibTmux.Creation.CreatedPane'
+--
+-- __Select a pane.__ Name the pane and the window link that holds it. tmux
+-- rejects a pane that no longer belongs to that link's current window.
+--
+-- 'LibTmux.Server.selectExactPane', 'LibTmux.Server.selectExactPaneWith',
+-- t'LibTmux.Creation.WindowSlot'
+--
+-- __Arrange the panes of a window.__ A named layout applies to the physical
+-- window at a slot and changes the geometry of its panes. Capture again to
+-- observe the result.
+--
+-- 'LibTmux.Server.selectLayout', 'LibTmux.Server.selectLayoutWith',
+-- t'LibTmux.Server.NamedLayout', t'LibTmux.Creation.WindowSlot'
+--
+-- __Set a pane's title.__ The title is literal text, and the pane's
+-- application can replace it later. A reference from another Server or an
+-- offline fixture is refused before the command runs.
+--
+-- 'LibTmux.Server.setPaneTitle', 'LibTmux.Server.setPaneTitleWith'
+--
+-- __Send input to a pane.__ Send literal text, or named tmux keys such as
+-- @Enter@ in order. Nothing appends Enter, and success confirms that tmux
+-- processed the request, not that the application responded. An invalid key
+-- name raises an error before any key is typed.
+--
+-- 'LibTmux.Server.sendKeys', 'LibTmux.Server.sendKeysWith',
+-- t'LibTmux.Server.PaneInput'
+--
+-- __Read a pane's text.__ Capture the visible rows or a range, as plain text or
+-- with ANSI styling, within a byte limit. The result is a detached observation,
+-- and reading its text contacts no daemon.
+--
+-- * Capture: 'LibTmux.Server.capturePane'
+-- * Options: t'LibTmux.Pane.PaneCaptureOptions',
+--   'LibTmux.Pane.defaultPaneCapture', t'LibTmux.Pane.PaneRows',
+--   t'LibTmux.Pane.PaneRendering'
+-- * Read: t'LibTmux.Server.PaneText', 'LibTmux.Server.paneText'
+--
+-- __Wait for text in a pane.__ Poll one exact pane for a case-sensitive
+-- substring under a single deadline of at most ten seconds. Presence can match
+-- text already on screen; a fresh match compares with a capture taken before
+-- the input and ignores that text. A timeout or the pane's exit still returns
+-- the last capture when one completed.
+--
+-- 'LibTmux.Server.waitForText', t'LibTmux.Server.PaneWaitOptions',
+-- 'LibTmux.Server.defaultPaneWait', t'LibTmux.Server.PaneMatch',
+-- t'LibTmux.Server.PaneWaitResult'
+--
+-- __Remove a pane.__ Removing the last pane also closes its window. Success
+-- confirms that tmux removed the pane, so observe its processes' exit
+-- separately.
+--
+-- 'LibTmux.Server.killPane', 'LibTmux.Server.killPaneWith'
+--
+-- __Build a pane offline.__ Fixture references belong to a named offline
+-- origin, never to a live Server. Validation checks a fixture before it
+-- becomes a snapshot.
+--
+-- 'LibTmux.Snapshot.Fixture.paneRef',
+-- 'LibTmux.Snapshot.Fixture.validateFixture',
+-- t'LibTmux.Snapshot.Fixture.Fixture'
 data Pane = Pane
   { ref :: !PaneRef -- ^ Pane identity in the observation's generation.
   , window :: !WindowRef -- ^ Containing physical window, resolved against a snapshot.

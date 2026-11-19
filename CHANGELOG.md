@@ -47,6 +47,13 @@
 - Load and read named binary buffers with a 64 KiB limit. Paste into an
   exact pane with an explicit line-feed policy. ([#12])
 
+### Documentation
+
+- Find the calls that act on a session, window or pane from its reference
+  page. `Session`, `Window` and `Pane` each open with a "What is on here"
+  directory that groups the calls that list, read, create, change, select and
+  remove it by job, with guidance for each job. ([#52])
+
 ### Changed
 
 - Share opaque creation identities through `CreatedEntities`; `CreatedSession`,
@@ -179,3 +186,4 @@
 [#25]: https://github.com/libtmux/libtmux-haskell/issues/25
 [#47]: https://github.com/libtmux/libtmux-haskell/issues/47
 [#12]: https://github.com/libtmux/libtmux-haskell/issues/12
+[#52]: https://github.com/libtmux/libtmux-haskell/issues/52
