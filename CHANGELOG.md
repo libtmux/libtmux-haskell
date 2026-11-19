@@ -4,6 +4,10 @@
 
 ### Added
 
+- Open `withControl` on an explicit session and read bounded native events
+  in STM. The scope reports queue overflow, daemon exit and framing failure
+  and retains an owner when cleanup cannot finish. ([#48])
+
 - Set, read or remove scalar options at an explicit scope. `LocalOption`
   and `EffectiveOption` distinguish an override from inherited values. ([#29])
 - Set individual numeric entries for built-in hooks, read their native
@@ -214,3 +218,4 @@
 [#32]: https://github.com/libtmux/libtmux-haskell/issues/32
 [#29]: https://github.com/libtmux/libtmux-haskell/issues/29
 [#30]: https://github.com/libtmux/libtmux-haskell/issues/30
+[#48]: https://github.com/libtmux/libtmux-haskell/issues/48
