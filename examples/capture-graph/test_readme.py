@@ -26,7 +26,7 @@ def readme_programs() -> dict[str, str]:
 def test_readme_examples_share_one_server(
     tmux_binary: str, readme_programs: dict[str, str]
 ) -> None:
-    with fixture(tmux_binary, expected_panes=2) as (socket, environment):
+    with fixture(tmux_binary, expected_panes=1) as (socket, environment):
         for name, program in readme_programs.items():
             result = subprocess.run(
                 [program, socket, tmux_binary],
