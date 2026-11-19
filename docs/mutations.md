@@ -140,6 +140,7 @@ style escapes. Empty rows remain in either format.
 The byte limit applies before UTF-8 decoding. An oversized capture raises
 `PaneTextTooLarge` instead of returning clipped text. The transport limit
 also covers the enclosing reply and any hook output.
+An after-hook failure raises `PaneCaptureHookFailed` with its diagnostic.
 
 ## Targets, names and deadlines
 
