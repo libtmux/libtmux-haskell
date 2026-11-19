@@ -56,7 +56,8 @@ main = getArgs >>= \case
           putStrLn $ label <> ": " <> show (Tmux.dimensionValue window.width, Tmux.dimensionValue window.height)
         invalid <- Tmux.tryTmux (Tmux.resizePane server created.pane (Tmux.ResizeBoth paneWidth oversized))
         refused <- case invalid of
-          Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument _)) -> pure True
+          Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument (Tmux.InvalidOperand "pane.height" _))) ->
+            pure True
           Left problem -> rethrowIO problem
           Right () -> die "Oversized resize unexpectedly succeeded"
         after <- Tmux.capture server

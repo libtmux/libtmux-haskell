@@ -219,6 +219,11 @@ Deadlines:
 with their context. It lets application exceptions and asynchronous
 cancellation propagate.
 
+- `InvalidConfiguration` identifies the invalid setting, such as a mutation
+  deadline outside its supported range.
+- `InvalidMutationArgument` carries the typed operand failure and its field
+  key. The [resizing program](resizing.md) checks the refused pane height.
+- `InvalidTarget` reports a foreign generation or offline reference.
 - `MutationRejected` means tmux rejected the primary command.
 - `MutationAppliedWithErrors` means the primary command ran and a later hook
   failed. The failure does not imply rollback.
@@ -229,6 +234,9 @@ cancellation propagate.
 Use the exception constructor to distinguish rejection from an applied hook
 error; both have a completed `Failed` operation status. A successful response
 does not establish that background jobs started by a hook have finished.
+
+`OperationFailed` retains the original synchronous backend exception. The
+scope preserves application exceptions and asynchronous cancellation.
 
 ## Keep recovery ownership reachable
 
