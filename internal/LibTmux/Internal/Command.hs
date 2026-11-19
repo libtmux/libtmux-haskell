@@ -349,11 +349,15 @@ decodeControlReply exit output errors
           Right (Rejected (Bytes.copy (diagnostic <> tailBytes)))
         Nothing -> Left UnexpectedReply
 
-data PaneCaptureReply = CapturedPaneText !ByteString | CaptureRejected !ByteString
+data PaneCaptureReply
+  = CapturedPaneText !ByteString
+  | CaptureExceedsLimit
+  | CaptureRejected !ByteString
   deriving stock (Eq, Show)
 
 instance NFData PaneCaptureReply where
   rnf (CapturedPaneText bytes) = rnf bytes
+  rnf CaptureExceedsLimit = ()
   rnf (CaptureRejected diagnostic) = rnf diagnostic
 
 compilePaneCapture :: Id.PaneId -> PaneCaptureOptions -> Either ArgumentError [ByteString]
@@ -363,9 +367,9 @@ compilePaneCapture pane options = do
   selection <- case options.rows of
     VisibleRows -> Right []
     RowsBetween first lastRow
-      | first <= lastRow && first >= -2147483648 && lastRow <= 2147483647 ->
+      | first <= lastRow && first >= -2147483647 && lastRow <= 32767 ->
           Right ["-S", Ascii.pack (show first), "-E", Ascii.pack (show lastRow)]
-      | otherwise -> Left (InvalidOperand "pane.capture.rows" "expected ordered signed 32-bit offsets")
+      | otherwise -> Left (InvalidOperand "pane.capture.rows" "expected ordered offsets from -2147483647 through 32767")
   pure (["capture-pane", "-p", "-t", Utf8.encodeUtf8 (Id.renderPaneId pane)] <> selection
     <> ["-e" | options.rendering == AnsiStyled])
 
@@ -383,7 +387,7 @@ decodePaneCapture limit exit output errors
       (success, count) <- paneBoundary stamp body
       case (success, exit) of
         (True, Just 0)
-          | count > limit -> Left ReplyTooLarge
+          | count > limit -> Right CaptureExceedsLimit
           | otherwise -> Right (CapturedPaneText (Bytes.copy (Bytes.take count body)))
         (False, Just 1) -> Right (CaptureRejected (Bytes.copy (Bytes.take count body)))
         _ -> Left UnexpectedReply
