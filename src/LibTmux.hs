@@ -18,6 +18,7 @@ module LibTmux
   , module LibTmux.Program
   , module LibTmux.Snapshot
   , module LibTmux.Id
+  , module LibTmux.Pane
   , module LibTmux.Value
   , module LibTmux.Version
   ) where
@@ -25,6 +26,7 @@ module LibTmux
 import LibTmux.Capabilities
 import LibTmux.Creation
 import LibTmux.Id
+import LibTmux.Pane
 import LibTmux.Server
 import LibTmux.Program
   ( Program, ProgramOptions, programOptions

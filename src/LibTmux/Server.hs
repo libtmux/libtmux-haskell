@@ -36,6 +36,8 @@ module LibTmux.Server
   , killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
     -- * Pane input
   , PaneInput (..), sendKeys, sendKeysWith
+    -- * Pane text
+  , PaneText, capturePane, paneText
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
@@ -69,6 +71,7 @@ import Data.ByteString qualified as Bytes
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Utf8
 import Data.Time.Clock (NominalDiffTime)
 import Data.Type.Coercion (coerceWith, sym)
 import LibTmux.Internal.Budget qualified as B
@@ -96,6 +99,7 @@ import LibTmux.Internal.Scope
   )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
+import LibTmux.Pane (PaneCaptureOptions (..))
 import LibTmux.Version qualified as Version
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
 import System.Directory.OsPath qualified as Directory
@@ -414,14 +418,50 @@ sendKeysWith options server (G.PaneRef generation ident) input =
     LiteralText text -> Command.SendPaneText ident text
     NamedKeys names -> Command.SendPaneKeys ident names
 
+-- | A detached pane observation. It retains its target, range and rendering
+-- with the text. Use 'paneText' to read the content.
+data PaneText = PaneText !PaneRef !PaneCaptureOptions !Text.Text
+  deriving stock (Eq)
+
+-- | Read the pane's visible rows or an explicit range from the pinned daemon.
+-- Blank rows and line endings are retained. ANSI rendering uses tmux's
+-- escape sequences. The Server capture deadline covers the request.
+-- Oversized text raises 'PaneTextTooLarge'. A missing target raises
+-- 'PaneCaptureRejected'. Earlier captures stay readable.
+capturePane :: Server -> PaneRef -> PaneCaptureOptions -> IO PaneText
+capturePane server@(Server runtime handle executable duration _) pane@(G.PaneRef generation ident) options =
+  operational $ do
+    checkTarget server generation
+    let acquire = C.capturePaneWith runtime handle executable duration ident options
+    (_, _, reply) <- catchNoPropagate acquire $ \original@(ExceptionWithContext context problem) ->
+      case problem of
+        R.InvalidCommandOperands (Command.InvalidOperand field reason) ->
+          rethrowIO (ExceptionWithContext context (InvalidConfiguration (field <> ": " <> reason)))
+        R.InvalidCommandReply Command.ReplyTooLarge ->
+          rethrowIO (ExceptionWithContext context (PaneTextTooLarge options.byteLimit))
+        _ -> rethrowIO original
+    case reply of
+      Command.CaptureRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
+      Command.CapturedPaneText bytes ->
+        either (const (throwIO (InvalidObservation "pane text is not valid UTF-8")))
+          (pure . PaneText pane options) (Utf8.decodeUtf8' bytes)
+
+-- | Read the captured Unicode text without contacting tmux.
+paneText :: PaneText -> Text.Text
+paneText (PaneText _ _ text) = text
+
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server@(Server runtime handle executable _ _) generation command = operational $ do
   duration <- mutationDuration options
+  checkTarget server generation
+  M.performMutation P.defaultHooks duration runtime handle executable command
+
+checkTarget :: Server -> Generation -> IO ()
+checkTarget server@(Server _ handle _ _ _) generation = do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   unless (generation == serverGeneration server)
     (throwIO (InvalidTarget "reference belongs to a different Server generation or an offline fixture"))
-  M.performMutation P.defaultHooks duration runtime handle executable command
 
 mutationDuration :: MutationOptions -> IO Int
 mutationDuration options = do
