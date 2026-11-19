@@ -40,6 +40,7 @@ main = getArgs >>= \case
           Creation.size = Creation.SplitPercent 25, Creation.splitProcess = options.process}
       Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
       Tmux.sendKeys server split.pane (Tmux.NamedKeys ("Enter" :| []))
+      screen <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -53,10 +54,10 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, added, split, before, after, rejected, remaining)
+      pure (created, added, split, before, after, screen, rejected, remaining)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, added, split, before, after, rejected, remaining) -> do
+      Right (created, added, split, before, after, screen, rejected, remaining) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
@@ -75,6 +76,8 @@ main = getArgs >>= \case
         putStrLn $ "new window: " <> Text.unpack workerLabel
         putStrLn $ "new window panes: " <> show (length panes)
         putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
+        putStrLn $ "captured pane rows match height: " <> show
+          (toInteger (length (Text.lines (Tmux.paneText screen))) == Tmux.dimensionValue splitPane.height)
         putStrLn $ "duplicate name rejected: " <> show rejected
         putStrLn $ "original sessions after removal: " <> show
           (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))

@@ -18,7 +18,8 @@ $ cabal run --verbose=0 create-session -- \
 
 The program starts `/bin/cat -`, adds a window, splits an explicit pane and uses
 [`sendKeys`](mutations.md#send-input-to-a-pane) to send literal text followed
-by a named Enter. It checks duplicate-name rejection, removes its targets and
+by a named Enter. [`capturePane`](mutations.md#read-pane-text) reads the new
+pane's visible rows. The program checks duplicate-name rejection, removes its targets and
 checks that the original sessions survive. Captures remain readable after
 the handle closes. Follow the [README's teardown](../README.md#clean-up)
 for the borrowed demonstration server.
@@ -67,6 +68,7 @@ main = getArgs >>= \case
           Creation.size = Creation.SplitPercent 25, Creation.splitProcess = options.process}
       Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
       Tmux.sendKeys server split.pane (Tmux.NamedKeys ("Enter" :| []))
+      screen <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -80,10 +82,10 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, added, split, before, after, rejected, remaining)
+      pure (created, added, split, before, after, screen, rejected, remaining)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, added, split, before, after, rejected, remaining) -> do
+      Right (created, added, split, before, after, screen, rejected, remaining) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
@@ -102,6 +104,8 @@ main = getArgs >>= \case
         putStrLn $ "new window: " <> Text.unpack workerLabel
         putStrLn $ "new window panes: " <> show (length panes)
         putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
+        putStrLn $ "captured pane rows match height: " <> show
+          (toInteger (length (Text.lines (Tmux.paneText screen))) == Tmux.dimensionValue splitPane.height)
         putStrLn $ "duplicate name rejected: " <> show rejected
         putStrLn $ "original sessions after removal: " <> show
           (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))
@@ -124,6 +128,7 @@ created session links: 2
 new window: worker
 new window panes: 2
 split exact target: True
+captured pane rows match height: True
 duplicate name rejected: True
 original sessions after removal: True
 ```

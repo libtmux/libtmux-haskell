@@ -90,7 +90,7 @@ index-state: 2026-11-06T00:00:00Z
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: cc2d94ae7257d05c638016ca556ae918e4de00e0
+  tag: b7531729f4643678be17f1623f4b588fc1d77fe3
 ```
 
 <!-- example-package: shared-runtime -->
