@@ -252,8 +252,7 @@ def source_identity(program: str, reports: list[dict[str, Any]]) -> dict[str, An
         "platform": platform.platform(),
         "cases": reports,
         "limits": (
-            "Small fixed sample count on a shared host; Haskell CPU excludes daemon/client CPU; "
-            "no allocation or concurrency qualification."
+            "Small fixed sample count on a shared host. CPU time covers the Haskell process."
         ),
     }
 

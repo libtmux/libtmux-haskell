@@ -16,9 +16,9 @@ $ uv run scripts/capture_benchmark/capture_benchmark.py \
     --output .cache/capture-benchmark
 ```
 
-Each case has 120 seconds for setup, samples and teardown. The driver retains
-the raw streams even when the case fails. Cabal build and tool probes also
-have explicit bounds. See [bounded subprocesses](../bounded/README.md).
+Each case has 120 seconds for setup, samples and teardown. After a timeout
+or nonzero exit, the driver saves the bytes captured from both streams.
+Cabal and tool probes have their own [subprocess bounds](../bounded/README.md).
 
 Read setup and case durations from the output:
 
