@@ -34,6 +34,7 @@ extra-doc-files:
   docs/resizing.md
   docs/programs.md
   docs/buffers.md
+  docs/options.md
   docs/mutations.md
   docs/fixtures.md
   docs/performance.md
