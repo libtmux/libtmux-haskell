@@ -28,7 +28,8 @@
 - Send literal text or a validated sequence of named keys to a `PaneRef`
   with `sendKeys`. Use `sendKeysWith` for an explicit deadline. ([#24])
 - Read visible or historical rows through `capturePane`. Plain and ANSI
-  captures preserve empty rows and reject text over the byte limit. ([#25])
+  captures preserve empty rows and reject text over the byte limit. Report a
+  failed after-hook separately from rejection of the capture. ([#25])
 
 ### Changed
 
