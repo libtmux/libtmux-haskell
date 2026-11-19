@@ -232,7 +232,7 @@ does not establish that background jobs started by a hook have finished.
 
 ## Keep recovery ownership reachable
 
-Read [`mutationRecoveries`](../src/LibTmux/Server.hs) from the exception
+Read [`mutationRecoveries`](../src/LibTmux/Recovery.hs) from the exception
 context that `tryTmux` or
 [`Control.Exception.tryWithContext`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Control-Exception.html#v:tryWithContext)
 returns.
@@ -243,7 +243,7 @@ returns.
 
 Then:
 
-- [`inspectMutationRecovery`](../src/LibTmux/Server.hs) reads the status and
+- [`inspectMutationRecovery`](../src/LibTmux/Recovery.hs) reads the status and
   native ownership locally.
 - `resumeMutationRecovery` resumes cleanup without resending the command.
 - `awaitMutationRecovery` waits for the local owners to retire. If cleanup may
