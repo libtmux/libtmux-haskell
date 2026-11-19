@@ -4,6 +4,11 @@
 
 ### Added
 
+- Set, read or remove scalar options at an explicit scope. `LocalOption`
+  and `EffectiveOption` distinguish an override from inherited values. ([#29])
+- Set individual numeric entries for built-in hooks, read their native
+  listing and remove a local hook override. ([#30])
+
 - Resize physical panes and windows with `resizePane`, `resizeWindow` and
   their `With` variants. `ResizeWidth`, `ResizeHeight` and `ResizeBoth` use
   checked dimensions and refuse axes above 10000 cells before native effects.
@@ -197,3 +202,5 @@
 [#27]: https://github.com/libtmux/libtmux-haskell/issues/27
 [#31]: https://github.com/libtmux/libtmux-haskell/issues/31
 [#32]: https://github.com/libtmux/libtmux-haskell/issues/32
+[#29]: https://github.com/libtmux/libtmux-haskell/issues/29
+[#30]: https://github.com/libtmux/libtmux-haskell/issues/30
