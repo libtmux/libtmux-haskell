@@ -178,6 +178,119 @@ tests = testGroup "public mutation API"
           Left (ExceptionWithContext _ (Tmux.PaneCaptureRejected _)) -> pure ()
           _ -> assertFailure "a vanished pane was accepted"
 
+  , testCase "waits for new pane text with witnessed freshness and retains the last capture" $
+      Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+        let run = configured fixture
+            await event = bounded (run ["wait-for", event])
+            application = unlines
+              [ "set -eu"
+              , "stty -echo"
+              , "signal() { \"$1\" -N -S \"$2\" wait-for -S \"$3\"; }"
+              , "printf 'READY\\n'"
+              , "signal \"$1\" \"$2\" text-wait-ready"
+              , "while IFS= read -r action; do"
+              , "  case \"$action\" in"
+              , "    edit) printf '\\033[2J\\033[Hchanged\\nREADY\\n' ;;"
+              , "    add) printf 'READY\\n' ;;"
+              , "    clear) printf '\\033[2J\\033[Hwaiting\\n' ;;"
+              , "    show) printf 'READY\\n' ;;"
+              , "    finish) exit 0 ;;"
+              , "  esac"
+              , "  signal \"$1\" \"$2\" text-wait-written"
+              , "done"
+              ]
+        earlier <- Tmux.capture server
+        bystander <- one (Tmux.panes earlier)
+        run ["split-window", "-d", "/bin/sh", "-c", application, "sh", fixture.executable, fixture.socket]
+        await "text-wait-ready"
+        observed <- Tmux.capture server
+        target <- one [pane.ref | pane <- Tmux.panes observed, pane.ref /= bystander.ref]
+        let readText = Tmux.capturePane server target Tmux.defaultPaneCapture
+            update action = do
+              Tmux.sendKeys server target (Tmux.LiteralText action)
+              Tmux.sendKeys server target (Tmux.NamedKeys ("Enter" :| []))
+              await "text-wait-written"
+            waitText = \options -> Tmux.waitForText server target options "READY"
+            checkMatched expected result = case result of
+              Tmux.PaneTextMatched value ->
+                Text.count "READY" (Tmux.paneText value) @?= expected
+              _ -> assertFailure "expected a pane text match"
+        baseline <- readText
+        let transition action = do
+              run ["set-hook", "-g", "after-capture-pane", "wait-for -S text-wait-read"]
+              flip finally (run ["set-hook", "-gu", "after-capture-pane"]) $
+                withAsync (waitText fresh) $ \worker -> do
+                  await "text-wait-read"
+                  update action
+                  bounded (wait worker)
+            fresh = Tmux.defaultPaneWait {Tmux.waitMatch = Tmux.FreshSince baseline}
+        waitText Tmux.defaultPaneWait >>= checkMatched 1
+
+        update "edit"
+        waitText (fresh {Tmux.waitTimeout = 0.16}) >>= \case
+          Tmux.PaneTextTimedOut (Just latest) Nothing ->
+            assertBool "deadline did not retain the moved old occurrence"
+              ("changed\nREADY\n" `Text.isPrefixOf` Tmux.paneText latest)
+          _ -> assertFailure "an unrelated edit or moved old text ended the wait"
+
+        transition "add" >>= checkMatched 2
+        update "clear"
+        absent <- readText
+        assertBool "expected a baseline without READY" (not ("READY" `Text.isInfixOf` Tmux.paneText absent))
+        transition "show" >>= checkMatched 1
+        waitText (fresh {Tmux.waitMatch = Tmux.FreshSince absent}) >>= checkMatched 1
+
+        let otherRendering = Tmux.defaultPaneCapture {Tmux.rendering = Tmux.AnsiStyled}
+        Tmux.tryTmux (waitText (fresh {Tmux.waitCapture = otherRendering})) >>= \case
+          Left (ExceptionWithContext _ (Tmux.InvalidConfiguration _)) -> pure ()
+          _ -> assertFailure "wait admitted a baseline with a different rendering"
+        Tmux.withServer (config fixture) $ \other ->
+          Tmux.tryTmux (Tmux.waitForText other target Tmux.defaultPaneWait "READY") >>= \case
+            Left (ExceptionWithContext _ (Tmux.InvalidTarget _)) -> pure ()
+            _ -> assertFailure "wait admitted a foreign PaneRef"
+
+        run ["set-hook", "-g", "pane-died", "wait-for -S text-wait-exited"]
+        run ["set-option", "-gw", "remain-on-exit", "on"]
+        Tmux.sendKeys server target (Tmux.LiteralText "finish")
+        Tmux.sendKeys server target (Tmux.NamedKeys ("Enter" :| []))
+        await "text-wait-exited"
+        Tmux.waitForText server target Tmux.defaultPaneWait "never-sent" >>= \case
+          Tmux.PaneTextExited (Just _) -> pure ()
+          _ -> assertFailure "a retained dead pane did not end the wait"
+        Tmux.killPane server target
+        Tmux.waitForText server target Tmux.defaultPaneWait "never-sent" >>= \case
+          Tmux.PaneTextExited Nothing -> pure ()
+          _ -> assertFailure "a removed pane did not end the wait"
+
+  , testCase "cancelling a pane text wait retains its blocked capture owner" $
+      Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+        snapshot <- Tmux.capture server
+        pane <- one (Tmux.panes snapshot)
+        let run = configured fixture
+            release = do
+              run ["wait-for", "-S", "text-wait-release"]
+              run ["set-hook", "-gu", "after-capture-pane"]
+        run ["set-hook", "-g", "after-capture-pane",
+          "wait-for -S text-wait-blocked ; wait-for text-wait-release"]
+        flip finally release $
+          withAsync (run ["wait-for", "text-wait-blocked"]) $ \entered ->
+            withAsync (tryWithContext @SomeException
+              (Tmux.waitForText server pane.ref Tmux.defaultPaneWait "not-present")) $ \worker -> do
+                bounded (wait entered)
+                throwTo (asyncThreadId worker) ThreadKilled
+                bounded (wait worker) >>= \case
+                  Left (ExceptionWithContext context problem) -> do
+                    fromException @AsyncException problem @?= Just ThreadKilled
+                    case Tmux.captureRecoveries context of
+                      [recovery] -> do
+                        Tmux.recoveryGeneration recovery @?= Tmux.serverGeneration server
+                        release
+                        Tmux.resumeCaptureRecovery recovery
+                        _ <- Tmux.detachCaptureRecovery recovery
+                        pure ()
+                      _ -> assertFailure "cancelled text wait lost its exact capture owner"
+                  Right _ -> assertFailure "cancelled text wait returned a result"
+
   , testCase "refuses foreign and offline references before changing the daemon" $
       Fixture.withFixture $ \fixture -> do
         configured fixture ["rename-window", "-t", "@0", "original-window"]
