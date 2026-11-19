@@ -23,6 +23,7 @@ module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration, serverCapabilities
   , withControl
+  , OwnedServerConfig (..), defaultOwnedServerConfig, withOwnedServer
     -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
     -- * Session, window and pane creation
@@ -62,11 +63,14 @@ module LibTmux.Server
 
 import Control.Concurrent.STM (atomically, readTVar)
 import Control.DeepSeq (force)
+import Control.Exception.Context qualified as Context
 import Control.Exception
   ( ExceptionWithContext (..)
-  , catchNoPropagate, evaluate, mask, rethrowIO, throwIO, tryWithContext
+  , catchNoPropagate, evaluate, fromException, mask, onException, rethrowIO, SomeAsyncException, throwIO, toException, tryWithContext
   )
 import Control.Monad (unless, when)
+import Data.IORef
+import Data.Maybe (isJust)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -95,6 +99,7 @@ import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
+import LibTmux.Internal.OwnedServer qualified as Owned
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Program qualified as Program
 import LibTmux.Program (Program, ProgramOptions, ProgramResult)
@@ -200,6 +205,46 @@ withServer config action = do
     handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
     version <- operational (qualifyVersion runtime handle executable duration)
     action (Server runtime handle executable duration (Capabilities.capabilitiesFor version))
+
+-- | Start an empty daemon in a fresh private directory. The executable is
+-- resolved once; the scope chooses and owns its endpoint.
+data OwnedServerConfig = OwnedServerConfig
+  { tmuxExecutable :: !PosixPath
+  , operationTimeout :: !NominalDiffTime
+  } deriving stock (Eq, Show)
+
+defaultOwnedServerConfig :: OwnedServerConfig
+defaultOwnedServerConfig = OwnedServerConfig (Os.fromBytestring "tmux") 2
+
+-- | Run with a private foreground daemon. Cleanup includes every descendant
+-- of its native clients and terminal applications. Helper loss or replaced
+-- endpoint names retain a cleanup owner through "LibTmux.Recovery".
+withOwnedServer :: OwnedServerConfig -> (Server -> IO a) -> IO a
+withOwnedServer config action = do
+  duration <- limitedDuration OwnedOperationTimeout config.operationTimeout
+  executable <- operational (resolveExecutable config.tmuxExecutable)
+  lifecycle $ \tracked ->
+    Owned.withOwnedServerWith Owned.defaultProbe {Owned.versionMicros=duration} executable $ \owned ->
+      tracked (action (Server owned.runtime owned.handle executable duration
+        (Capabilities.capabilitiesFor owned.version)))
+
+data Callback = NotEntered | Returned | Raised
+
+lifecycle :: ((IO a -> IO a) -> IO a) -> IO a
+lifecycle scope = do
+  state <- newIORef NotEntered
+  let tracked body = (body >>= \value -> value <$ writeIORef state Returned)
+        `onException` writeIORef state Raised
+  catchNoPropagate (scope tracked) $ \original -> do
+    retained@(ExceptionWithContext context cause) <- Owned.promoteRecoveries original
+    readIORef state >>= \case
+      Raised -> rethrowIO retained
+      Returned
+        | isJust (fromException @SomeAsyncException cause) -> rethrowIO retained
+        | recovery : _ <- Context.getExceptionAnnotations context ->
+            rethrowIO (ExceptionWithContext context (toException
+              (CleanupFailed (Scope.cleanupObservation recovery) (Just cause))))
+      _ -> operational (rethrowIO retained)
 
 qualifyVersion :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO Version.TmuxVersion
 qualifyVersion runtime handle executable duration = do
