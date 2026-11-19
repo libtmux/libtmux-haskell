@@ -508,7 +508,7 @@ def clients_panes(world: World) -> dict[str, Any]:
     _, daemon = guardian.launch(names, "extra-exec", "daemon-extra")
     guardian.qualify(names)
     daemon_extra = world.witness("daemon-extra")
-    pane_command = shlex.join([sys.executable, str(HERE / "workload.py"), "witness",
+    pane_command = shlex.join([sys.executable, str(HERE / "workload.py"), "pane-witness",
                               str(world.root / "w"), "pane"])
     client = guardian.spawn(guardian.command("extra-exec", "client-extra", ["-S", str(names.socket),
                              "new-session", "-d", "-s", "owned", pane_command]))

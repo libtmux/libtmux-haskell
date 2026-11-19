@@ -9,9 +9,10 @@ import sys
 import threading
 
 
-def witness(address: str, tag: str, gate: int | None = None) -> None:
-    for fd in (0, 1, 2):
-        os.close(fd)
+def witness(address: str, tag: str, gate: int | None = None, close_stdio: bool = True) -> None:
+    if close_stdio:
+        for fd in (0, 1, 2):
+            os.close(fd)
     peer = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     peer.connect(address)
     own = os.pidfd_open(os.getpid())
@@ -25,8 +26,8 @@ def witness(address: str, tag: str, gate: int | None = None) -> None:
 
 
 def main() -> None:
-    if sys.argv[1] == "witness":
-        witness(sys.argv[2], sys.argv[3])
+    if sys.argv[1] in ("witness", "pane-witness"):
+        witness(sys.argv[2], sys.argv[3], close_stdio=sys.argv[1] == "witness")
     shape, tmux, address, tag = sys.argv[2:6]
     argv = [tmux, *sys.argv[6:]]
     if shape in ("early-exit", "extra-exec"):
