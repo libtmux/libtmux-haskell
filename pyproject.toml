@@ -30,6 +30,7 @@ pythonpath = [
   "scripts/check_docs",
   "scripts/check_sdist",
   "scripts/check_types",
+  "scripts/generate_options",
   "scripts/prepare_haddock",
   "scripts/release",
 ]
@@ -52,6 +53,7 @@ src = [
   "scripts/check_docs",
   "scripts/check_sdist",
   "scripts/check_types",
+  "scripts/generate_options",
   "scripts/prepare_haddock",
   "scripts/release",
 ]
@@ -68,6 +70,7 @@ extra-paths = [
   "scripts/check_docs",
   "scripts/check_sdist",
   "scripts/check_types",
+  "scripts/generate_options",
   "scripts/prepare_haddock",
   "scripts/release",
 ]
