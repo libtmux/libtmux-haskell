@@ -10,7 +10,8 @@
 -- 'capture' returns fully decoded, validated values. Field access and graph
 -- navigation are pure. Captures use an observation interval, not an atomic
 -- transaction over tmux and operating-system state.
--- 'createSession' returns historical created identities. 'renameSession',
+-- 'createSession', 'createWindow' and 'splitPane' return historical identities.
+-- 'renameSession',
 -- 'renameWindow' and 'setPaneTitle' perform explicit mutations
 -- against generation-bound references. Earlier observations stay detached.
 --
@@ -23,8 +24,9 @@ module LibTmux.Server
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration, serverCapabilities
     -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
-    -- * Detached session creation
+    -- * Session, window and pane creation
   , createSession, createSessionWith
+  , createWindow, createWindowWith, splitPane, splitPaneWith
     -- * Owned terminal applications
   , withProgram, runProgram
     -- * Rename and title
@@ -261,11 +263,55 @@ createSession = createSessionWith defaultMutationOptions
 -- environment beyond the native launch budget raises 'InvalidConfiguration'
 -- without admitting an operation.
 createSessionWith :: MutationOptions -> Server -> Creation.SessionOptions -> IO Creation.CreatedSession
-createSessionWith options (Server runtime handle executable _ _) settings = operational $ do
+createSessionWith options server settings = create options server [] (Command.NewSession settings)
+
+-- | Create a window at an explicit session placement. The default options
+-- request no selection and refuse an occupied slot. tmux prints the actual
+-- session, index, window and pane before after-hooks. Capture again to observe
+-- geometry and liveness; hooks may already have removed the new entities.
+createWindow :: Server -> Creation.WindowPlacement -> Creation.WindowOptions -> IO Creation.CreatedWindow
+createWindow = createWindowWith defaultMutationOptions
+
+-- | 'createWindow' with one deadline covering caller context, admission and
+-- completion. Generation checks precede dispatch. Insertion and replacement
+-- can affect existing links before a later failure; no rollback or replay is
+-- promised. See 'creationReceipt' for known IDs after uncertain completion.
+createWindowWith :: MutationOptions -> Server -> Creation.WindowPlacement -> Creation.WindowOptions -> IO Creation.CreatedWindow
+createWindowWith options server placement settings =
+  create options server [placementGeneration placement] (Command.NewWindow placement settings)
+  where
+    placementGeneration (Creation.NextFree (G.SessionRef generation _)) = generation
+    placementGeneration (Creation.At slot) = slotGeneration slot
+    placementGeneration (Creation.Before slot) = slotGeneration slot
+    placementGeneration (Creation.After slot) = slotGeneration slot
+
+-- | Split one explicit pane in an exact session/index link. The slot must
+-- contain that pane's physical window when tmux executes the command; an
+-- inactive pane stays the target. No ambient active-pane lookup occurs.
+-- The result records the new pane and its historical execution context.
+splitPane :: Server -> Creation.WindowSlot -> PaneRef -> Creation.SplitOptions -> IO Creation.CreatedPane
+splitPane = splitPaneWith defaultMutationOptions
+
+-- | 'splitPane' with one deadline. Both references must belong to this Server
+-- generation. Missing panes and mismatched link occupants are native
+-- 'MutationRejected' outcomes. Invalid sizes fail before admission. Geometry
+-- is a request subject to native constraints; observe it through 'capture'.
+-- Cancellation, hook errors and timeout retain the common 'CreationRecovery'.
+splitPaneWith :: MutationOptions -> Server -> Creation.WindowSlot -> PaneRef -> Creation.SplitOptions -> IO Creation.CreatedPane
+splitPaneWith options server slot pane@(G.PaneRef generation _) settings =
+  create options server [slotGeneration slot, generation] (Command.SplitPane slot pane settings)
+
+slotGeneration :: Creation.WindowSlot -> Generation
+slotGeneration (Creation.WindowSlot (G.SessionRef generation _) _) = generation
+
+create :: MutationOptions -> Server -> [Generation] -> Command.CreationCommand -> IO Creation.CreatedEntities
+create options server@(Server runtime handle executable _ _) generations command = operational $ do
   duration <- mutationDuration options
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
-  Create.performCreation P.defaultHooks duration runtime handle executable settings
+  unless (all (== serverGeneration server) generations)
+    (throwIO (InvalidTarget "reference belongs to a different Server generation or an offline fixture"))
+  Create.performCommandCreation P.defaultHooks duration runtime handle executable command
 
 -- | Rename the session targeted by a reference from this Server generation.
 -- The name is literal text. Earlier t'Snapshot' values keep their old names;
@@ -336,8 +382,8 @@ creationGeneration = R.receiptGeneration . Create.recoveryReceipt
 
 -- | Read any complete historical receipt already observed by the library.
 -- This reads owned metadata without contacting tmux. 'Nothing' does not mean
--- no session was created; unread or incomplete evidence cannot supply IDs.
-creationReceipt :: CreationRecovery -> IO (Maybe Creation.CreatedSession)
+-- no entity was created; unread or incomplete evidence cannot supply IDs.
+creationReceipt :: CreationRecovery -> IO (Maybe Creation.CreatedEntities)
 creationReceipt = atomically . Create.observedReceipt
 
 -- | Inspect logical outcome and native ownership without external operations.

@@ -22,7 +22,7 @@ module LibTmux.Internal.Runtime
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
   , mutateWith, programMutationWith
-  , SessionCreation, CreationJournal, createSessionWith
+  , SessionCreation, CreationJournal, createSessionWith, createWith
   , creationRequest, creationJournal, journalReceipt
   ) where
 
@@ -155,7 +155,7 @@ data NativeCommand value where
   Observe :: !(ReadCommand value) -> NativeCommand value
   Mutate :: !Command.Mutation -> NativeCommand Command.MutationReply
   ProgramMutate :: !Command.ProgramCommand -> NativeCommand Command.MutationReply
-  CreateSession :: !N.Spec -> !Command.SessionOptions -> !CreationJournal
+  Create :: !N.Spec -> !Command.CreationCommand -> !CreationJournal
     -> NativeCommand Command.SessionCreationReply
 
 -- The mutation decoder is nullary so it cannot retain caller operands.
@@ -594,10 +594,18 @@ programMutationWith hooks duration runtime client executable command =
 createSessionWith
   :: P.Hooks -> Int -> Runtime -> ServerHandle -> N.Spec -> Command.SessionOptions
   -> IO SessionCreation
-createSessionWith hooks duration runtime client context options = mask_ $ do
+createSessionWith hooks duration runtime client context options =
+  createWith hooks duration runtime client context (Command.NewSession options)
+
+-- | Share creation admission and the independent identity journal across the
+-- closed session, window and exact-pane split profiles.
+createWith
+  :: P.Hooks -> Int -> Runtime -> ServerHandle -> N.Spec -> Command.CreationCommand
+  -> IO SessionCreation
+createWith hooks duration runtime client context command = mask_ $ do
   journal <- CreationJournal <$> newTVarIO Nothing
   tryWithContext @SomeException
-    (startNative (CreateSession context options journal) hooks duration runtime client context.file ScalarRead) >>= \case
+    (startNative (Create context command journal) hooks duration runtime client context.file ScalarRead) >>= \case
       Right request -> pure (SessionCreation request journal)
       Left (ExceptionWithContext annotations problem) ->
         rethrowIO (ExceptionWithContext (Context.addExceptionAnnotation journal annotations) problem)
@@ -694,7 +702,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
     P.BytesInput bytes -> void (evaluate (force bytes))
     P.KeepInputOpen -> pure ()
   let base = case selected of
-        CreateSession context _ _ -> context
+        Create context _ _ -> context
         _ -> N.spec executable []
       spec = base {N.args = [executable, "-u", "-N", "-S", pinPath (serverPin client)] <> arguments}
       (lane, resourceClass) = case decoder of
@@ -754,8 +762,8 @@ compileNative nonce (ProgramMutate command) = do
   arguments <- Command.compileProgramMutation nonce command
   let guarded = case command of Command.ProgramGuarded {} -> True; _ -> False
   pure (ProgramResult guarded, arguments, P.BytesInput "")
-compileNative nonce (CreateSession _ options journal) = do
-  arguments <- Command.compileSessionCreation nonce options
+compileNative nonce (Create _ command journal) = do
+  arguments <- Command.compileCreation nonce command
   pure (CreationResult journal, "-C" : arguments, P.KeepInputOpen)
 
 remaining :: NativeOwner -> IO Int

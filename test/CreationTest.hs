@@ -17,7 +17,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
 tests :: TestTree
-tests = testGroup "session creation receipts"
+tests = testGroup "creation receipts"
   [ testCase "window placement keeps exact session and index context" $ do
       nonce <- require (F.parseNonce token)
       session <- G.SessionRef (G.FixtureGeneration "creation") <$> require (Id.parseSessionId "$1")
@@ -55,7 +55,7 @@ tests = testGroup "session creation receipts"
       let split size = C.SplitPane (Creation.WindowSlot session index) pane
             Creation.defaultSplitOptions {Creation.direction = Creation.LeftRight,
               Creation.size = size, Creation.before = True, Creation.fullWindow = True,
-              Creation.keepZoom = True}
+              Creation.zoom = True}
           prefix = ["split-window", "-d", "-P", "-F", C.sessionCreationFormat nonce,
             "-t", "$1:4.%3", "-h", "-b", "-f", "-Z", "-l"]
       C.compileCreation nonce (split (Creation.SplitCells cells)) @?= Right (prefix <> ["20", "--"])
