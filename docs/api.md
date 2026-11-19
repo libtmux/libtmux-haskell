@@ -101,28 +101,22 @@ Private graph, framing and transport modules are implementation details.
 The source layout does not define visibility: Cabal's `exposed-modules`
 controls the installed API. See [status](status.md) for remaining work.
 
-## Query field migration for the shared site
+## Migrate query field imports
 
-The Haskell site update in [libtmux/docs#309](https://github.com/libtmux/docs/pull/309)
-needs the new exposed-module list and native Haddock archive. Replace the eight
-field-module pages with `LibTmux.Query.Fields`; keep `LibTmux.Query` for sources,
-predicates and execution. Do not retain the retired imports in site examples.
+Import `LibTmux.Query.Fields` as `F` for field tokens and relationships.
+Keep `LibTmux.Query` as `Q` for sources, predicates and execution.
 
 | Retired module | New token prefix |
 | --- | --- |
-| `LibTmux.Query.Session` | `session`, for example `F.sessionWindowLinks` |
-| `LibTmux.Query.Window` | `window`, for example `F.windowZoomed` |
-| `LibTmux.Query.Pane` | `pane`, for example `F.paneActive` |
-| `LibTmux.Query.Link` | `link`, for example `F.linkFlags` |
-| `LibTmux.Query.Occurrence` | `occurrence`, for example `F.occurrencePane` |
-| `LibTmux.Query.Client` | `client`, for example `F.clientHeight` |
-| `LibTmux.Query.ClientAttachment` | `clientAttachment`, for example `F.clientAttachmentPane` |
-| `LibTmux.Query.ServerInfo` | `serverInfo`, for example `F.serverInfoVersion` |
+| LibTmux.Query.Session | `session`, such as `F.sessionWindowLinks` |
+| LibTmux.Query.Window | `window`, such as `F.windowZoomed` |
+| LibTmux.Query.Pane | `pane`, such as `F.paneActive` |
+| LibTmux.Query.Link | `link`, such as `F.linkFlags` |
+| LibTmux.Query.Occurrence | `occurrence`, such as `F.occurrencePane` |
+| LibTmux.Query.Client | `client`, such as `F.clientHeight` |
+| LibTmux.Query.ClientAttachment | `clientAttachment`, such as `F.clientAttachmentPane` |
+| LibTmux.Query.ServerInfo | `serverInfo`, such as `F.serverInfoVersion` |
 
-Use `F.windowLinks` for a window's appearances and `Q.windowLinks` as a
-query source. Refresh the API sidebar, symbol search and declaration links
-from that archive.
-The native target for `F.paneActive` is
-`LibTmux-Query-Fields.html#v:paneActive`; each token keeps its scalar or
-relationship type and its query requirement name. Copy the current registered
-programs and installation source pins so rendered snippets use the same API.
+Use `F.windowLinks` for one window's appearances and `Q.windowLinks` as a
+query source. Each token keeps its scalar or relationship type and its query
+requirement name. [Typed query example](query.md)
