@@ -11,6 +11,6 @@ An empty child snapshot does not complete cleanup: the final kernel wait must
 report no children. Command output uses files because old daemons retain stdout
 pipes, and each captured stream is limited to 64 KiB.
 
-Build `test:floor` first, then pass its `cabal list-bin test:floor` path as
-`--consumer`, a released daemon as `--daemon`, a compatible client as
-`--client` and the actual daemon release as `--expect`.
+Build `test:floor` first. Run `uv run scripts/check_floor/check_floor.py`
+with a released `--daemon`, a compatible `--client` and the daemon release
+as `--expect`. Use `--consumer` to select a separately built executable.

@@ -234,6 +234,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.0'
+          enable-cache: false
       - uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
         id: haskell
         with:
@@ -273,11 +277,10 @@ jobs:
           RELEASE: ${{ matrix.daemon }}
           LC_ALL: C.UTF-8
         run: >-
-          python3 scripts/check_floor/check_floor.py
+          uv run scripts/check_floor/check_floor.py
           --daemon "$DAEMON"
           --client "$CLIENT"
           --expect "$RELEASE"
-          --consumer "$(cabal list-bin test:floor --offline)"
 
   required:
     if: always()

@@ -23,6 +23,7 @@ from typing import Never
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "bounded"))
 
+from bounded import QUICK, output
 from bounded import run as bounded_run
 
 OUTPUT_LIMIT = 65536
@@ -203,14 +204,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--daemon", type=Path, required=True)
     parser.add_argument("--client", type=Path, required=True)
-    parser.add_argument("--consumer", type=Path, required=True)
+    parser.add_argument("--consumer", type=Path, help="override the built test:floor executable")
     parser.add_argument("--expect", required=True)
     args = parser.parse_args()
+    consumer = args.consumer
+    if consumer is None:
+        checkout = Path(__file__).resolve().parents[2]
+        executable = output(
+            ["cabal", "list-bin", "test:floor", "--offline"], cwd=checkout, timeout=QUICK
+        )
+        consumer = Path(executable.strip())
     with tempfile.TemporaryDirectory(prefix="libtmux-haskell-floor-") as name:
         check(
             args.daemon.resolve(),
             args.client.resolve(),
-            args.consumer.resolve(),
+            consumer.resolve(),
             args.expect,
             Path(name),
         )
