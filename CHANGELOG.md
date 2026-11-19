@@ -73,6 +73,8 @@
 - Publish only defined shared claims in `capabilities.json`, using
   `libtmux-capabilities/1`. Use `capabilityRegistry` for Haskell Program and
   raw-paste requirements, which are outside the shared vocabulary. ([#15])
+- Import `LibTmux.Recovery` to inspect operation owners or resume cleanup.
+  `tryTmux` still catches contextual library failures through `LibTmux`. ([#12])
 - Share opaque creation identities through `CreatedEntities`; `CreatedSession`,
   `CreatedWindow` and `CreatedPane` name each command's result. Window and pane
   receipts include existing parents; cleanup must target the entity created
