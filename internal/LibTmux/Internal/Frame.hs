@@ -15,6 +15,7 @@ module LibTmux.Internal.Frame
   , decodeScalar
   , decodeEscapedScalar
   , isControlStamp
+  , isClientDetachedNotice
   ) where
 
 import Data.ByteString (ByteString)
@@ -40,6 +41,12 @@ isControlStamp stamp
       && case Ascii.readInteger bytes of
         Just (value, "") -> value <= maximumValue
         _ -> False
+
+-- | tmux 3.3a can flush this server notification after the client's exit record.
+isClientDetachedNotice :: ByteString -> Bool
+isClientDetachedNotice line = case Bytes.stripPrefix "%client-detached " line of
+  Just client -> not (Bytes.null client) && not (Bytes.elem 0 client)
+  Nothing -> False
 
 newtype Nonce = Nonce ByteString
   deriving stock (Eq, Show)

@@ -8,7 +8,7 @@ module LibTmux.Internal.ControlFrames
 
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
-import LibTmux.Internal.Frame (isControlStamp)
+import LibTmux.Internal.Frame (isClientDetachedNotice, isControlStamp)
 
 data ReplyDisposition = ReplySucceeded | ReplyRejected
   deriving stock (Eq, Show)
@@ -43,7 +43,6 @@ feed :: Decoder -> ByteString -> Either DecodeError (Decoder, [ControlFrame])
 feed decoder = scan decoder []
   where
     scan current result input | Bytes.null input = Right (current, reverse result)
-    scan (Decoder Ended _ _) _ _ = Left DataAfterExit
     scan (Decoder phase count parts) result input =
       let (fragment, following) = Bytes.break (== 10) input
           lengthSoFar = count + Bytes.length fragment
@@ -70,7 +69,9 @@ processLine Between line
   | Just reason <- Bytes.stripPrefix "%exit " line = Right (Ended, Just (Exit (Bytes.copy reason)))
   | "%" `Bytes.isPrefixOf` line = Right (Between, Just (Notification (Bytes.copy line)))
   | otherwise = Right (Between, Just (Unframed (Bytes.copy line)))
-processLine Ended _ = Left DataAfterExit
+processLine Ended line
+  | isClientDetachedNotice line = Right (Ended, Nothing)
+  | otherwise = Left DataAfterExit
 
 controlWord :: ByteString -> ByteString -> Bool
 controlWord token line = line == token || (token <> " ") `Bytes.isPrefixOf` line

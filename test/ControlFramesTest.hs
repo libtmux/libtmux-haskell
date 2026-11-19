@@ -42,6 +42,11 @@ tests = testGroup "control reply framing"
       decode [line, "\n"] @?= Right [Unframed line]
   , testCase "a terminal record ends the protocol" $ do
       decode ["%exit\n%window-renamed @0 later\n"] @?= Left DataAfterExit
+  , testCase "legacy client retire messages are discarded after exit" $ do
+      let stream = "%exit\n%client-detached client-446254\n"
+      forM_ [0 .. Bytes.length stream] $ \boundary ->
+        let (before, after) = Bytes.splitAt boundary stream
+        in decode [before, after] @?= Right [Exit ""]
   ]
 
 decode :: [ByteString] -> Either DecodeError [ControlFrame]

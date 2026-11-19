@@ -387,9 +387,13 @@ creationField field bytes
   | otherwise = either (const Nothing) Just (Field.decodeField field bytes)
 
 stripControlExit :: ByteString -> Maybe ByteString
-stripControlExit bytes = do
-  packet <- Bytes.stripSuffix "%exit\n" bytes
-  if Bytes.null packet || Bytes.last packet /= 10 then Nothing else Just packet
+stripControlExit bytes = case Bytes.stripSuffix "%exit\n" bytes of
+  Just packet | not (Bytes.null packet) && Bytes.last packet == 10 -> Just packet
+  Just _ -> Nothing
+  Nothing -> do
+    terminated <- Bytes.stripSuffix "\n" bytes
+    let (previous, lastLine) = Bytes.breakEnd (== 10) terminated
+    if Frame.isClientDetachedNotice lastLine then stripControlExit previous else Nothing
 
 -- | Interpret fully drained streams and normal exit status for one t'Mutation'.
 -- This is not a general control-mode decoder or evidence for waiting commands.

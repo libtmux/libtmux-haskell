@@ -135,6 +135,17 @@ tests = testGroup "typed mutation arguments"
       C.decodeControlReply (Just 0) (begin <> ended <> footer) "" @?= Right C.Applied
       C.decodeControlReply (Just 1) (begin <> diagnostic <> failed <> footer) "" @?= Right (C.Rejected diagnostic)
       C.decodeControlReply (Just 1) (begin <> ended <> hook <> footer) "" @?= Right (C.AppliedWithErrors hook)
+  , testCase "legacy client retire messages can follow the native exit" $ do
+      let begin = "%begin 1794000000 27 0\n"
+          ended = "%end 1794000000 27 0\n"
+          tailNotice = "%exit\n%client-detached client-446254\n"
+      C.decodeControlReply (Just 0) (begin <> ended <> tailNotice) "" @?= Right C.Applied
+      C.decodeControlData 128 (Just 0) (begin <> tailNotice <> ended <> tailNotice) ""
+        @?= Right (C.ControlData tailNotice)
+      C.decodeControlReply (Just 0) (begin <> ended <> tailNotice <> "%error 42 1 0\n") ""
+        @?= Left C.UnexpectedReply
+      C.decodeControlReply (Just 0) (begin <> ended <> "%exit\n%client-detached \n") ""
+        @?= Left C.UnexpectedReply
   , testCase "control-shaped hook and error bytes remain data" $ do
       let begin = "%begin 1794000000 27 0\n"
           ended = "%end 1794000000 27 0\n"
