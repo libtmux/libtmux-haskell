@@ -21,7 +21,7 @@ module LibTmux.Internal.Runtime
   , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, receiptOperation, inspectReceipt, resumeReceipt
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
-  , mutateWith, programMutationWith
+  , mutateWith, programMutationWith, validateKeyWith
   , SessionCreation, CreationJournal, createSessionWith
   , creationRequest, creationJournal, journalReceipt
   ) where
@@ -38,6 +38,7 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.IntMap.Strict qualified as Map
 import Data.Maybe (catMaybes)
+import Data.Text (Text)
 import Data.Text.Encoding qualified as Utf8
 import Data.Unique (Unique, newUnique)
 import Data.Word (Word64)
@@ -155,6 +156,7 @@ data NativeCommand value where
   Observe :: !(ReadCommand value) -> NativeCommand value
   Mutate :: !Command.Mutation -> NativeCommand Command.MutationReply
   ProgramMutate :: !Command.ProgramCommand -> NativeCommand Command.MutationReply
+  ValidateKey :: !Text -> NativeCommand Bool
   CreateSession :: !N.Spec -> !Command.SessionOptions -> !CreationJournal
     -> NativeCommand Command.SessionCreationReply
 
@@ -163,6 +165,7 @@ data ResultDecoder value where
   ObservationResult :: !(ReadCommand value) -> ResultDecoder value
   MutationResult :: ResultDecoder Command.MutationReply
   ProgramResult :: !Bool -> ResultDecoder Command.MutationReply
+  KeyProbeResult :: ResultDecoder Bool
   CreationResult :: !CreationJournal -> ResultDecoder Command.SessionCreationReply
 
 -- | Closed scalar acquisition targets; callers cannot supply format fragments.
@@ -585,6 +588,10 @@ programMutationWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -
 programMutationWith hooks duration runtime client executable command =
   startNative (ProgramMutate command) hooks duration runtime client executable ScalarRead
 
+validateKeyWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> Text -> IO (Request Bool)
+validateKeyWith hooks duration runtime client executable name =
+  startNative (ValidateKey name) hooks duration runtime client executable ScalarRead
+
 -- | Create through an existing pin in the serialized mutation lane. The launch
 -- context contributes file, cwd and environment; its argv is replaced by the
 -- closed compiler. Failure before Request handoff retains journal annotations
@@ -701,6 +708,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
         MutationResult -> (S.Mutation, B.Ordinary)
         ProgramResult _ -> (S.Mutation, B.Ordinary)
         CreationResult _ -> (S.Mutation, B.Ordinary)
+        KeyProbeResult -> (S.ScalarRead, B.Ordinary)
         ObservationResult _ -> case allocation of
           InspectionRead -> (S.Inspection, B.Inspection)
           ScalarRead -> (S.ScalarRead, B.Ordinary)
@@ -754,6 +762,10 @@ compileNative nonce (ProgramMutate command) = do
   arguments <- Command.compileProgramMutation nonce command
   let guarded = case command of Command.ProgramGuarded {} -> True; _ -> False
   pure (ProgramResult guarded, arguments, P.BytesInput "")
+
+compileNative nonce (ValidateKey name) = do
+  arguments <- Command.compileKeyProbe nonce name
+  pure (KeyProbeResult, arguments, P.BytesInput "")
 compileNative nonce (CreateSession _ options journal) = do
   arguments <- Command.compileSessionCreation nonce options
   pure (CreationResult journal, "-C" : arguments, P.KeepInputOpen)
@@ -908,6 +920,7 @@ finishRead runtime owner@NativeOwner {decoder, result} ticket completed = do
 forceResult :: ResultDecoder value -> value -> IO ()
 forceResult MutationResult value = void (evaluate (force value))
 forceResult (ProgramResult _) value = void (evaluate (force value))
+forceResult KeyProbeResult value = void (evaluate value)
 forceResult (CreationResult _) value = void (evaluate (force value))
 forceResult (ObservationResult command) value = case command of
   ReadPid -> void (evaluate value)
@@ -919,6 +932,7 @@ forceResult (ObservationResult command) value = case command of
 
 completionEvidence :: ResultDecoder value -> value -> S.Completion
 completionEvidence (ObservationResult _) _ = S.Success
+completionEvidence KeyProbeResult _ = S.Success
 completionEvidence MutationResult Command.Applied = S.Success
 completionEvidence MutationResult _ = S.CommandFailure
 completionEvidence (ProgramResult _) Command.Applied = S.Success
@@ -928,6 +942,14 @@ completionEvidence (CreationResult _) _ = S.CommandFailure
 
 decodeResult :: ResultDecoder value -> F.Nonce -> P.Completion -> Either SomeException value
 decodeResult (ObservationResult command) = decodeRead command
+decodeResult KeyProbeResult = \nonce completed -> case completed.launchFailure of
+  Just problem -> Left (toException problem)
+  Nothing ->
+    let exit = case completed.exit of
+          Just (N.Exited status) -> Just (fromIntegral status)
+          _ -> Nothing
+    in either (Left . toException . InvalidCommandReply) Right
+      (Command.decodeKeyProbe nonce exit completed.output completed.errors)
 decodeResult MutationResult = \_ completed -> case completed.launchFailure of
   Just problem -> Left (toException problem)
   Nothing ->
