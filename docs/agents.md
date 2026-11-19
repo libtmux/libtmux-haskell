@@ -40,6 +40,27 @@ The adapter returns native IDs. Within Haskell, use the `SessionRef` or
 `PaneRef` from a fresh capture on the same `Server`. See [targeting and
 recovery](mutations.md#targets-names-and-deadlines).
 
+## Run a command in an owned pane
+
+For a pane running an interactive POSIX shell on your private daemon, set
+`LIBTMUX_TOOLSETS` to `inspect,execute` and refresh the tool list. Use
+`send_keys` for interactive input and `run_command` for command completion.
+For example, call `run_command` with the pane ID you discovered.
+
+```json
+{
+  "pane_id": "%0",
+  "command": "printf 'agent-%s\\n' operated; exit 7",
+  "timeout": 0.8
+}
+```
+
+The result contains `agent-operated` in `output`, `exit_status` of `7`,
+and `timed_out` of `false`. Keep daemon retirement with `withOwnedServer`.
+[Adapter tool registration](https://github.com/tmux-python/libtmux-mcp/blob/1e0c9bc29b6bda00460a854a9bb69ff28ad7f314/src/libtmux_mcp/tools/pane_tools/__init__.py#L84-L108)
+
+## Work on the Haskell application
+
 For a Haskell code change, start with the [working examples](README.md), check
 [`serverCapabilities`](../src/LibTmux/Server.hs) for release-specific operations,
 and use the [API reference](api.md) for exact types and recovery behavior.
