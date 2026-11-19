@@ -30,7 +30,17 @@ instance Exception BodyFailure
 
 tests :: TestTree
 tests = testGroup "Server scope outcomes"
-  [ testCase "successful callback and cleanup return the callback value" $
+  [ testCase "operational failures keep a typed wrapper and preserve cancellation" $ do
+      result <- try @SomeException (Scope.operational (throwIO BodyFailure :: IO ()))
+      problem <- failed result
+      case fromException problem of
+        Just (Scope.OperationFailed cause) -> fromException cause @?= Just BodyFailure
+        _ -> assertFailure "new backend exception escaped the public failure type"
+      cancelled <- try @SomeException (Scope.operational (throwIO ThreadKilled :: IO ()))
+      interruption <- failed cancelled
+      fromException interruption @?= Just ThreadKilled
+
+  , testCase "successful callback and cleanup return the callback value" $
       bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
         Scope.runScope runtime (pure (42 :: Int)) >>= (@?= 42)
         atomically (R.inspect runtime) >>= \report -> do
