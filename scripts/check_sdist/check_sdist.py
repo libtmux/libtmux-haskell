@@ -17,6 +17,15 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "libtmux-haskell.cabal"
+CONSUMER_PROJECT_SETTINGS = """\
+index-state: 2026-11-06T00:00:00Z
+tests: False
+jobs: 4
+optimization: False
+package libtmux-haskell
+  ghc-options: -j4
+  optimization: False
+"""
 for sibling in ("bounded", "check_docs", "prepare_haddock"):
     sys.path.append(str(SCRIPTS / sibling))
 
@@ -92,7 +101,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="libtmux-haskell-consumer-") as temporary:
         directory = Path(temporary)
         archives = directory / "archives"
-        run(["cabal", "sdist", "all", "--output-directory=" + str(archives)], ROOT)
+        run(["cabal", "sdist", "pkg:libtmux-haskell", "--output-directory=" + str(archives)], ROOT)
         archive = archives / f"libtmux-haskell-{version}.tar.gz"
         with tarfile.open(archive) as source:
             verify_members(source, ROOT)
@@ -170,9 +179,9 @@ def check_example_consumers(
             (consumer / Path(entry[field]).name).write_bytes(read_source(entry[field]))
     packages = " ".join(entry["id"] for entry in examples)
     (workspace / "cabal.project").write_text(
-        f"packages: {library} {packages}\nindex-state: 2026-11-06T00:00:00Z\ntests: False\n"
+        f"packages: {library} {packages}\n" + CONSUMER_PROJECT_SETTINGS
     )
-    run(["cabal", "build", "all", "--offline", "--jobs=2"], workspace, BUILD)
+    run(["cabal", "build", "all", "--offline"], workspace, BUILD)
     floor_runs = 0
     for entry in examples:
         target = "exe:" + entry["executable"]
@@ -228,8 +237,7 @@ def check_public_commands(
         " [PublicMutationTest.tests, PublicCreationTest.tests])))\n"
     )
     (consumer / "cabal.project").write_text(
-        f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"
-        "index-state: 2026-11-06T00:00:00Z\ntests: False\n"
+        f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n" + CONSUMER_PROJECT_SETTINGS
     )
     (consumer / "consumer.cabal").write_text(
         "cabal-version: 3.18\nname: public-mutations-consumer\nversion: 0.0.0\n"

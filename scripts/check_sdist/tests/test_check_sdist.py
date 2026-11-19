@@ -225,13 +225,13 @@ def test_batched_consumers_still_check_each_distinct_output(
             check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
     else:
         check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
-    assert builds == [
-        (["cabal", "build", "all", "--offline", "--jobs=2"], workspace, check_sdist.BUILD)
-    ]
+    assert builds == [(["cabal", "build", "all", "--offline"], workspace, check_sdist.BUILD)]
     assert targets == ["exe:first", "exe:second"]
     assert executed == ["first", "second"]
     project = (workspace / "cabal.project").read_text()
     assert project.startswith("packages: ../core.tar.gz first second\n")
+    assert "\njobs: 4\noptimization: False\n" in project
+    assert "\npackage libtmux-haskell\n  ghc-options: -j4\n  optimization: False\n" in project
     assert all((workspace / entry["id"] / "Main.hs").read_bytes() == b"source" for entry in entries)
 
 
@@ -314,6 +314,9 @@ def test_generated_consumer_ends_through_the_retained_owner_guard(
     runner = (tmp_path / "run-0-0/public-mutations/Main.hs").read_text()
     assert "import Fixture (guardRetained, withSandbox)\n" in runner
     assert "main = withSandbox (guardRetained (defaultMain (testGroup" in runner
+    project = (tmp_path / "run-0-0/public-mutations/cabal.project").read_text()
+    assert "\njobs: 4\noptimization: False\n" in project
+    assert "\npackage libtmux-haskell\n  ghc-options: -j4\n  optimization: False\n" in project
 
 
 @pytest.mark.parametrize(

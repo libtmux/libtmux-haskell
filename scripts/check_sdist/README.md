@@ -18,10 +18,12 @@ It checks that:
   that `cabal.project.vcs` offers for installation, which must be an ancestor
   of `HEAD`.
 
-The archive and installation-pin groups use separate Cabal projects. Each
-builds its declared consumer packages together with at most two parallel jobs,
-then executes and checks every program separately. Components keep their own
-source directories and declared dependencies.
+The archive and installation-pin groups use separate Cabal projects. GHC
+compiles independent modules of the core library in parallel while the example
+packages wait for it. Cabal then builds up to four consumer packages at a time
+and the script checks every program separately. Components keep their own
+source directories and declared dependencies. These isolated consumer builds
+skip optimization. The checkout integration jobs exercise the optimized library.
 
 It first runs the `check_docs` checks. It needs Cabal, a provisioned dependency
 store, the full Git history for the installation pin, and the tmux executable
@@ -33,10 +35,9 @@ $ uv run scripts/check_sdist/check_sdist.py
 
 Each `cabal`, `git` and example run has a time limit from
 [bounded](../bounded/README.md), which also stops the command's children. A hang
-fails with the command's name. The whole step took 82 s at most in CI, which is
-below the 120 s `QUICK` limit and a seventh of the 600 s `BUILD` limit; an
-example's own run follows its catalogue `timeout`. The example runner starts
-under the interpreter that runs this script.
+fails with the command's name. An example's own run follows its catalogue
+`timeout`. The example runner starts under the interpreter that runs this
+script.
 
 The tests cover the archive-member and Haddock-example checks, which need no
 build:
