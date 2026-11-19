@@ -163,6 +163,24 @@ The first capture runs immediately. After a nonmatch, the library checks the
 pane and waits up to 100 ms before reading again. One deadline bounds all these
 steps.
 
+## Read and change the environment
+
+[`getEnvironment`](../src/LibTmux/Server.hs) looks up a name in
+`GlobalEnvironment` or `SessionEnvironment session`. A session lookup reads
+that table directly. A missing name returns `Nothing`. A missing session
+raises `EnvironmentReadRejected`.
+
+[`setEnvironment`](../src/LibTmux/Server.hs) stores literal bytes with
+`Visible` or `Hidden` visibility. Hidden entries stay in tmux and are omitted
+when it starts a process. Names must be nonempty and cannot contain NUL or
+`=`. Values cannot contain NUL. Values can contain newlines and invalid UTF-8.
+
+Use [`markEnvironmentRemoved`](../src/LibTmux/Server.hs) to mask a value
+that a new process would otherwise inherit. Use
+[`unsetEnvironment`](../src/LibTmux/Server.hs) to delete the entry from
+the selected table. The [creation example](creation.md) observes an empty
+value, a removal marker and an absent entry.
+
 ## Targets, names and deadlines
 
 - A reference from another connection generation, or from an

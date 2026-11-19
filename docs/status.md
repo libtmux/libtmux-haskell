@@ -24,6 +24,7 @@ initial Linux Program scope. These operations check the generation and retain re
 | Presence and baseline-qualified waits on pane text | Implemented with `waitForText`; see [text waits](mutations.md#wait-for-pane-text) |
 | Scoped terminal applications, input, rendered output and leader exit | Initial Linux slice through `LibTmux.Program`; [requirements and limits](programs.md) |
 | Contextual links, selection and named layouts | Implemented through `WindowSlot`; see [window links and focus](creation.md#link-select-and-arrange-windows) |
+| Named global and session environment entries | Implemented through `getEnvironment`, `setEnvironment`, `markEnvironmentRemoved` and `unsetEnvironment` |
 | First-server bootstrap | Not implemented |
 | Query interchange and backend optimization | Not implemented |
 | General control-event and byte-stream APIs | Not implemented |

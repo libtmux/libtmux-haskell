@@ -5,6 +5,7 @@
 module Main (main) where
 
 import Control.Exception (ExceptionWithContext (..), rethrowIO)
+import Control.Monad (unless)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
@@ -31,6 +32,17 @@ main = getArgs >>= \case
     result <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
       before <- Tmux.capture server
       created <- Tmux.createSession server options
+      let environment = Tmux.SessionEnvironment created.session
+          key = "LIBTMUX_EXAMPLE_STATE"
+      Tmux.setEnvironment server environment key Tmux.Visible ""
+      empty <- Tmux.getEnvironment server environment key
+      Tmux.markEnvironmentRemoved server environment key
+      removed <- Tmux.getEnvironment server environment key
+      Tmux.unsetEnvironment server environment key
+      absent <- Tmux.getEnvironment server environment key
+      unless (empty == Just (Tmux.EnvironmentValue Tmux.Visible "")
+          && removed == Just (Tmux.EnvironmentRemoved Tmux.Visible) && absent == Nothing)
+        (die "Expected distinct empty, removed and absent entries")
       Tmux.renameWindow server created.window "api"
       Tmux.setPaneTitle server created.pane "editor-ready"
       added <- Tmux.createWindow server (Creation.NextFree created.session)
@@ -85,6 +97,7 @@ main = getArgs >>= \case
         label <- require "Window label" (Tmux.labelText window.name)
         workerLabel <- require "New window label" (Tmux.labelText worker.name)
         putStrLn $ "created session: " <> Text.unpack session.name
+        putStrLn "session environment: empty, removed, absent"
         putStrLn $ "initial window: " <> Text.unpack label
         putStrLn $ "pane title: " <> Text.unpack pane.title
         putStrLn $ "same created targets: " <> show (session.ref == created.session && window.ref == created.window && pane.ref == created.pane)

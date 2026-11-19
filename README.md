@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 7b5e4db7259290c7034b1f43e20c2e89737a6074
+  tag: 8593bef1754e4048b40b753e446da0f90848191f
 ```
 
 Update the package index:
@@ -350,6 +350,12 @@ results.
 The creation example links the worker window at two indices. It selects the
 new link, chooses a pane, applies `Tiled` and removes the extra link. See
 [window links and focus](docs/creation.md#link-select-and-arrange-windows).
+
+### [`getEnvironment`](src/LibTmux/Server.hs) to inspect a session entry
+
+The example sets an empty value, marks it removed and unsets it in the new
+session. [Environment operations](docs/mutations.md#read-and-change-the-environment)
+explain scope, visibility and literal bytes.
 
 ## Run a terminal application
 
