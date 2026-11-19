@@ -242,6 +242,23 @@ tests = testGroup "entity capture"
         length (G.graphPanes (G.entities snapshot)) @?= 1
   , acceptedCapture "cancellation" 1000000 True
   , acceptedCapture "deadline conversion" 50000 False
+  , testCase "converts the scheduler deadline and preserves its receipt" $ do
+      counter <- newIORef (0 :: Int)
+      let fork :: P.Fork
+          fork action = do
+            number <- atomicModifyIORef' counter (\n -> (n + 1, n + 1))
+            if number == 1 then throwIO R.ReadExpired else P.normalFork action
+      withRuntimeUsing fork $ \runtime client fixture -> do
+        failed <- try @SomeException (C.captureSnapshot runtime client (Bytes.pack fixture.executable) 2000000)
+        case failed of
+          Left problem -> do
+            fromException problem @?= Just C.CaptureDeadline
+            recovery <- oneRecovery problem
+            observed <- atomically (C.inspectRecovery recovery)
+            observed.logical @?= S.Status S.Queued (Just S.NotDispatched) False
+            observed.nativeOwned @?= False
+            observed.workerOwned @?= False
+          Right _ -> assertFailure "capture returned after its scheduler refused with a deadline"
   , testCase "capture deadlines retain receipts before request publication" $ do
       entered <- newEmptyTMVarIO
       counter <- newIORef (0 :: Int)
