@@ -11,17 +11,28 @@
 -- "LibTmux.Query" provides qualified typed descriptions over the same
 -- snapshots; query source names are separate from collection access here.
 module LibTmux
-  ( module LibTmux.Creation
+  ( module LibTmux.Capabilities
+  , module LibTmux.Creation
   , module LibTmux.Server
+  , module LibTmux.Program
   , module LibTmux.Snapshot
   , module LibTmux.Id
   , module LibTmux.Value
   , module LibTmux.Version
   ) where
 
+import LibTmux.Capabilities
 import LibTmux.Creation
 import LibTmux.Id
 import LibTmux.Server
+import LibTmux.Program
+  ( Program, ProgramOptions, programOptions
+  , ProgramExit (..), StartFailure (..), StartPhase (..)
+  , ProgramScreen (..), ProgramResult (..), ProgramError (..)
+  , sendProgramInput, readProgramScreen, waitProgram, waitProgramFor, terminateProgram
+  , ProgramRecovery, ProgramCleanupStatus (..), programRecoveries, programCleanupFailure
+  , inspectProgramCleanup, resumeProgramCleanup
+  )
 import LibTmux.Snapshot
 import LibTmux.Value
 import LibTmux.Version

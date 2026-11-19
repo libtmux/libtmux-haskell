@@ -149,7 +149,9 @@ def test_an_example_consumer_bounds_its_build_and_run(
         "executable": "demo",
         **declared,
     }
-    check_sdist.check_example_consumer(entry, tmp_path, "../lib.tar.gz", lambda path: b"ok\n")
+    check_sdist.check_example_consumers(
+        [entry], tmp_path / "consumers", "../lib.tar.gz", lambda path: b"ok\n"
+    )
     assert commands == [("cabal", 600), ("cabal", 120), ("program", limit)]
 
 
@@ -162,6 +164,67 @@ def test_haddock_examples_run_with_a_time_limit(
     with pytest.raises(ValueError, match="Haddock example output differs"):
         check_sdist.check_haddock_examples(tmp_path, ["LibTmux"], [("1 + 1", "2\n")])
     assert commands == [("cabal", 600)]
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_batched_consumers_still_check_each_distinct_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: bool
+) -> None:
+    """One build must execute both components and detect a bad second result."""
+    entries = [
+        {
+            "id": name,
+            "executable": name,
+            "source": name + "/Main.hs",
+            "package": name + "/" + name + ".cabal",
+            "stdout": name + "/stdout",
+        }
+        for name in ["first", "second"]
+    ]
+    expected = {entry["stdout"]: (entry["id"] + "\n").encode() for entry in entries}
+    builds: list[tuple[list[str], Path, int]] = []
+    targets: list[str] = []
+    executed: list[str] = []
+    workspace = tmp_path / "consumers"
+
+    def source(path: str) -> bytes:
+        return expected.get(path, b"source")
+
+    def executable(args: list[str], **kwargs: object) -> str:
+        assert kwargs == {"cwd": workspace, "timeout": check_sdist.QUICK}
+        targets.append(args[2])
+        return "/consumer/" + args[2].removeprefix("exe:")
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert kwargs == {
+            "cwd": workspace,
+            "check": True,
+            "capture_output": True,
+            "timeout": check_sdist.DEFAULT_TIMEOUT,
+        }
+        name = Path(args[0]).name
+        executed.append(name)
+        output = b"wrong" if corrupt and name == "second" else (name + "\n").encode()
+        return subprocess.CompletedProcess(args, 0, output, b"")
+
+    monkeypatch.setattr(
+        check_sdist, "run", lambda args, cwd, timeout: builds.append((args, cwd, timeout))
+    )
+    monkeypatch.setattr(check_sdist, "output", executable)
+    monkeypatch.setattr(check_sdist, "bounded_run", run)
+    if corrupt:
+        with pytest.raises(ValueError, match="second produced unexpected output"):
+            check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
+    else:
+        check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
+    assert builds == [
+        (["cabal", "build", "all", "--offline", "--jobs=2"], workspace, check_sdist.BUILD)
+    ]
+    assert targets == ["exe:first", "exe:second"]
+    assert executed == ["first", "second"]
+    project = (workspace / "cabal.project").read_text()
+    assert project.startswith("packages: ../core.tar.gz first second\n")
+    assert all((workspace / entry["id"] / "Main.hs").read_bytes() == b"source" for entry in entries)
 
 
 @pytest.fixture

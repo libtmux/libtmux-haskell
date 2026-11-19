@@ -20,11 +20,13 @@
 -- from the exception context. A failed callback remains the primary failure.
 module LibTmux.Server
   ( -- * Open and observe
-    Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration
+    Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration, serverCapabilities
     -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
     -- * Detached session creation
   , createSession, createSessionWith
+    -- * Owned terminal applications
+  , withProgram, runProgram
     -- * Rename and title
   , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
     -- * Shared ownership
@@ -65,6 +67,7 @@ import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
 import LibTmux.Creation qualified as Creation
+import LibTmux.Capabilities qualified as Capabilities
 import LibTmux.Internal.Creation (CreationRecovery)
 import LibTmux.Internal.Creation qualified as Create
 import LibTmux.Internal.Command qualified as Command
@@ -73,6 +76,8 @@ import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Mutation (MutationRecovery)
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
+import LibTmux.Internal.Program qualified as Program
+import LibTmux.Program (Program, ProgramOptions, ProgramResult)
 import LibTmux.Internal.Runtime (ReadRecovery (..))
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler (Operation, Status (..), Stage (..), Outcome (..))
@@ -93,7 +98,7 @@ import System.OsString.Posix qualified as Os
 
 -- | One pinned endpoint and connection generation.
 -- Retaining this value after 'withServer' or 'withServerIn' keeps no admission open.
-data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int
+data Server = Server !R.Runtime !R.ServerHandle !ByteString !Int !Capabilities.Capabilities
 
 -- | Shared resource limits and cleanup ownership for Server handles. Create
 -- one with 'withRuntime', then adopt endpoints through 'withServerIn'.
@@ -136,8 +141,8 @@ withServerIn (Runtime runtime) config action = mask $ \restore -> do
   Scope.runServerScope runtime owner $ restore $ do
     handle <- operational (R.adoptServerOwnerWith (\_ _ -> pure ()) runtime owner
       (posixBytes config.socketPath) (posixBytes config.pinDirectory))
-    operational (qualifyVersion runtime handle executable duration)
-    action (Server runtime handle executable duration)
+    version <- operational (qualifyVersion runtime handle executable duration)
+    action (Server runtime handle executable duration (Capabilities.capabilitiesFor version))
 
 -- | Pure configuration, checked when 'withServer' or 'withServerIn' opens the handle.
 -- Paths retain POSIX bytes; no text decoding or shell interpretation occurs.
@@ -168,13 +173,13 @@ withServer config action = do
   runtime <- R.newRuntime P.normalFork
   Scope.runScope runtime $ do
     handle <- operational (R.adopt runtime (posixBytes config.socketPath) (posixBytes config.pinDirectory))
-    operational (qualifyVersion runtime handle executable duration)
-    action (Server runtime handle executable duration)
+    version <- operational (qualifyVersion runtime handle executable duration)
+    action (Server runtime handle executable duration (Capabilities.capabilitiesFor version))
 
-qualifyVersion :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO ()
+qualifyVersion :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO Version.TmuxVersion
 qualifyVersion runtime handle executable duration = do
   (_, _, version) <- C.captureVersionWith P.defaultHooks runtime handle executable duration
-  either (throwIO . UnsupportedTmuxVersion) (const (pure ())) (Version.requireSupported version)
+  either (throwIO . UnsupportedTmuxVersion) pure (Version.requireSupported version)
 
 checkedConfiguration :: ServerConfig -> IO (ByteString, Int)
 checkedConfiguration config = do
@@ -188,7 +193,7 @@ checkedConfiguration config = do
 -- Returned values own their data and remain usable after 'withServer' exits.
 -- Capacity and acquisition failure are errors; they never become empty lists.
 capture :: Server -> IO Snapshot
-capture (Server runtime handle executable duration) = operational $ do
+capture (Server runtime handle executable duration _) = operational $ do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   (started, finished, decoded) <- C.captureSnapshot runtime handle executable duration
@@ -198,7 +203,37 @@ capture (Server runtime handle executable duration) = operational $ do
 
 -- | The handle's opaque generation, available without contacting tmux.
 serverGeneration :: Server -> Generation
-serverGeneration (Server _ handle _ _) = Pin.pinGeneration (R.serverPin handle)
+serverGeneration (Server _ handle _ _ _) = Pin.pinGeneration (R.serverPin handle)
+
+-- | Capabilities evaluated against the daemon release observed during endpoint
+-- adoption. This pure lookup performs no operation and never substitutes
+-- the client executable's release. A dead pinned endpoint cannot enable a
+-- replacement daemon; subsequent operations fail through that same pin.
+serverCapabilities :: Server -> Capabilities.Capabilities
+serverCapabilities (Server _ _ _ _ available) = available
+
+-- | Run a literal executable/argv application in a new owned session on this
+-- daemon, then terminate its group and remove its resources. The callback may
+-- send input and observe bounded rendered output. Cancellation of this owning
+-- scope initiates bounded cleanup; cancellation of 'LibTmux.Program.waitProgram'
+-- alone does not. Async exceptions retain their original class.
+--
+-- tmux 3.8 and Linux 6.9 pidfd process-group signaling are required and checked
+-- before application effects. A separately owned pin and bounded native Runtime
+-- keep t'LibTmux.Program.ProgramRecovery' usable after this Server closes. The
+-- borrowed daemon and its other sessions remain running. See "LibTmux.Program"
+-- for the initial contract and explicit limits.
+withProgram :: Server -> ProgramOptions -> (Program -> IO a) -> IO a
+withProgram (Server _ handle executable _ available) =
+  Program.withOwnedProgram handle executable available
+
+-- | Wait for a terminal application, capture its bounded final rendered output,
+-- and clean up before returning a detached result. Cancellation initiates bounded
+-- cleanup. Set 'LibTmux.Program.executionTimeout' for an owning setup/observation
+-- deadline; cleanup has a separate budget. Without it there is no total limit.
+runProgram :: Server -> ProgramOptions -> IO ProgramResult
+runProgram (Server _ handle executable _ available) =
+  Program.runOwnedProgram handle executable available
 
 -- | Per-command deadline, checked before admission. Start from
 -- 'defaultMutationOptions' and update 'timeout' in seconds.
@@ -226,7 +261,7 @@ createSession = createSessionWith defaultMutationOptions
 -- environment beyond the native launch budget raises 'InvalidConfiguration'
 -- without admitting an operation.
 createSessionWith :: MutationOptions -> Server -> Creation.SessionOptions -> IO Creation.CreatedSession
-createSessionWith options (Server runtime handle executable _) settings = operational $ do
+createSessionWith options (Server runtime handle executable _ _) settings = operational $ do
   duration <- mutationDuration options
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
@@ -271,7 +306,7 @@ setPaneTitleWith options server (G.PaneRef generation ident) label =
   mutate options server generation (Command.SetPaneTitle ident label)
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
-mutate options server@(Server runtime handle executable _) generation command = operational $ do
+mutate options server@(Server runtime handle executable _ _) generation command = operational $ do
   duration <- mutationDuration options
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)

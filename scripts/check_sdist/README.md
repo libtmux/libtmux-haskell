@@ -18,6 +18,11 @@ It checks that:
   that `cabal.project.vcs` offers for installation, which must be an ancestor
   of `HEAD`.
 
+The archive and installation-pin groups use separate Cabal projects. Each
+builds its declared consumer packages together with at most two parallel jobs,
+then executes and checks every program separately. Components keep their own
+source directories and declared dependencies.
+
 It first runs the `check_docs` checks. It needs Cabal, a provisioned dependency
 store, the full Git history for the installation pin, and the tmux executable
 named by `LIBTMUX_TEST_TMUX` for the examples and public command tests.

@@ -47,6 +47,7 @@ def root(tmp_path: Path) -> Path:
         "LICENSE",
         ".tool-versions",
         "libtmux-haskell.cabal",
+        "capabilities.json",
     ]:
         shutil.copy2(check_docs.ROOT / filename, tmp_path / filename)
     return tmp_path
@@ -59,7 +60,7 @@ def catalogue(root: Path) -> Catalogue:
 
 
 def test_registered_programs_are_valid(root: Path) -> None:
-    """The unmodified checkout passes and reports exactly the seven maintained programs."""
+    """The unmodified checkout reports every maintained program."""
     assert {entry["id"] for entry in check_docs.check(root)} == {
         "typed-values",
         "capture-graph",
@@ -68,6 +69,7 @@ def test_registered_programs_are_valid(root: Path) -> None:
         "query-graph",
         "mutate-graph",
         "create-session",
+        "managed-program",
     }
 
 

@@ -21,7 +21,7 @@ module LibTmux.Internal.Runtime
   , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, receiptOperation, inspectReceipt, resumeReceipt
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
-  , mutateWith
+  , mutateWith, programMutationWith
   , SessionCreation, CreationJournal, createSessionWith
   , creationRequest, creationJournal, journalReceipt
   ) where
@@ -154,6 +154,7 @@ data ReadCommand value where
 data NativeCommand value where
   Observe :: !(ReadCommand value) -> NativeCommand value
   Mutate :: !Command.Mutation -> NativeCommand Command.MutationReply
+  ProgramMutate :: !Command.ProgramCommand -> NativeCommand Command.MutationReply
   CreateSession :: !N.Spec -> !Command.SessionOptions -> !CreationJournal
     -> NativeCommand Command.SessionCreationReply
 
@@ -161,12 +162,14 @@ data NativeCommand value where
 data ResultDecoder value where
   ObservationResult :: !(ReadCommand value) -> ResultDecoder value
   MutationResult :: ResultDecoder Command.MutationReply
+  ProgramResult :: !Bool -> ResultDecoder Command.MutationReply
   CreationResult :: !CreationJournal -> ResultDecoder Command.SessionCreationReply
 
 -- | Closed scalar acquisition targets; callers cannot supply format fragments.
 data EntityField
   = SessionName !Id.SessionId | WindowName !Id.WindowId
   | PaneTitle !Id.PaneId | PaneCommand !Id.PaneId | PanePath !Id.PaneId
+  | ProgramState !Id.PaneId
   deriving stock (Eq, Show)
 
 data ReadError
@@ -578,6 +581,10 @@ mutateWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> Command
 mutateWith hooks duration runtime client executable mutation =
   startNative (Mutate mutation) hooks duration runtime client executable ScalarRead
 
+programMutationWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> Command.ProgramCommand -> IO (Request Command.MutationReply)
+programMutationWith hooks duration runtime client executable command =
+  startNative (ProgramMutate command) hooks duration runtime client executable ScalarRead
+
 -- | Create through an existing pin in the serialized mutation lane. The launch
 -- context contributes file, cwd and environment; its argv is replaced by the
 -- closed compiler. Failure before Request handoff retains journal annotations
@@ -636,6 +643,8 @@ commandArguments nonce command = case command of
   ReadPid -> framed "#{pid}"
   ReadVersion -> VersionProbe.versionArguments nonce
   ReadTopology -> framed Topology.topologyFormat
+  ReadEntityField (ProgramState _) ->
+    framed "#{pane_id}:#{pane_pid}:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}:#{history_size}"
   ReadEntityField field -> let (_, receipt, value) = entityField field in
     framed (receipt <> ":" <> F.escapedFieldFormat value)
   ReadGraph generation -> display (Record.graphFormat generation nonce)
@@ -655,6 +664,8 @@ entityField (PaneCommand ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
   fieldFormat Field.PaneId, Field.formatVariable Field.PaneCommand)
 entityField (PanePath ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
   fieldFormat Field.PaneId, Field.formatVariable Field.PanePath)
+entityField (ProgramState ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, "")
 
 fieldFormat :: Field.Field row value -> ByteString
 fieldFormat field = "#{" <> Field.formatVariable field <> "}"
@@ -688,6 +699,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
       spec = base {N.args = [executable, "-u", "-N", "-S", pinPath (serverPin client)] <> arguments}
       (lane, resourceClass) = case decoder of
         MutationResult -> (S.Mutation, B.Ordinary)
+        ProgramResult _ -> (S.Mutation, B.Ordinary)
         CreationResult _ -> (S.Mutation, B.Ordinary)
         ObservationResult _ -> case allocation of
           InspectionRead -> (S.Inspection, B.Inspection)
@@ -704,6 +716,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
           ObservationResult (ReadGraph _) -> P.retainedBytes + 64 * 1024 * 1024
           ObservationResult (ReadSnapshot _) -> P.retainedBytes + 64 * 1024 * 1024
           MutationResult -> P.retainedBytes + fromIntegral N.vectorLimitBytes
+          ProgramResult _ -> P.retainedBytes + fromIntegral N.vectorLimitBytes
           CreationResult _ -> P.retainedBytes + fromIntegral N.vectorLimitBytes
           _ -> P.retainedBytes
     envelope <- B.acquireBytes runtime.budget resourceClass parentBytes
@@ -737,6 +750,10 @@ compileNative nonce (Observe command) = Right (ObservationResult command, comman
 compileNative _ (Mutate mutation) = do
   arguments <- Command.compileMutation mutation
   pure (MutationResult, "-C" : arguments, P.KeepInputOpen)
+compileNative nonce (ProgramMutate command) = do
+  arguments <- Command.compileProgramMutation nonce command
+  let guarded = case command of Command.ProgramGuarded {} -> True; _ -> False
+  pure (ProgramResult guarded, arguments, P.BytesInput "")
 compileNative nonce (CreateSession _ options journal) = do
   arguments <- Command.compileSessionCreation nonce options
   pure (CreationResult journal, "-C" : arguments, P.KeepInputOpen)
@@ -890,6 +907,7 @@ finishRead runtime owner@NativeOwner {decoder, result} ticket completed = do
 
 forceResult :: ResultDecoder value -> value -> IO ()
 forceResult MutationResult value = void (evaluate (force value))
+forceResult (ProgramResult _) value = void (evaluate (force value))
 forceResult (CreationResult _) value = void (evaluate (force value))
 forceResult (ObservationResult command) value = case command of
   ReadPid -> void (evaluate value)
@@ -903,6 +921,8 @@ completionEvidence :: ResultDecoder value -> value -> S.Completion
 completionEvidence (ObservationResult _) _ = S.Success
 completionEvidence MutationResult Command.Applied = S.Success
 completionEvidence MutationResult _ = S.CommandFailure
+completionEvidence (ProgramResult _) Command.Applied = S.Success
+completionEvidence (ProgramResult _) _ = S.CommandFailure
 completionEvidence (CreationResult _) (Command.SessionCreated _) = S.Success
 completionEvidence (CreationResult _) _ = S.CommandFailure
 
@@ -916,6 +936,13 @@ decodeResult MutationResult = \_ completed -> case completed.launchFailure of
           _ -> Nothing
     in either (Left . toException . InvalidCommandReply) Right
       (Command.decodeControlReply exit completed.output completed.errors)
+decodeResult (ProgramResult guarded) = \nonce completed -> case completed.launchFailure of
+  Just problem -> Left (toException problem)
+  Nothing -> let exit = case completed.exit of
+                  Just (N.Exited status) -> Just (fromIntegral status)
+                  _ -> Nothing
+    in either (Left . toException . InvalidCommandReply) Right
+      (Command.decodeProgramReply guarded nonce exit completed.output completed.errors)
 decodeResult (CreationResult _) = \nonce completed -> case completed.launchFailure of
   Just problem -> Left (toException problem)
   Nothing ->

@@ -13,7 +13,8 @@ import CommandTest qualified
 import CreationTest qualified
 import VersionProbeTest qualified
 import TopologyTest qualified
+import CapabilitiesTest qualified
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "libtmux" [SchedulerTest.tests, BudgetTest.tests, FrameTest.tests, FieldTest.tests, RecordTest.tests, GraphTest.tests, GraphProperties.tests, TopologyTest.tests, QueryTest.tests, QueryProperties.tests, CommandTest.tests, CreationTest.tests, VersionProbeTest.tests])
+main = defaultMain (testGroup "libtmux" [CapabilitiesTest.tests, SchedulerTest.tests, BudgetTest.tests, FrameTest.tests, FieldTest.tests, RecordTest.tests, GraphTest.tests, GraphProperties.tests, TopologyTest.tests, QueryTest.tests, QueryProperties.tests, CommandTest.tests, CreationTest.tests, VersionProbeTest.tests])
