@@ -3,7 +3,7 @@
 ## Status
 
 Accepted for implementation after the four external reviews and their
-[source and probe reconciliation](0001-native-domain-model-qualification.md).
+[source and probe reconciliation](native-domain-model-qualification.md).
 Public API acceptance remains conditional on the qualification work below.
 The public observation work adds `LibTmux`, `LibTmux.Server` and
 `LibTmux.Snapshot` to the scalar modules. [PR #2][capture-pr] contains the
@@ -257,7 +257,7 @@ Keep file-format and CLI dependencies outside the core.
 Implement private framing, field semantics, complete capture and recovery
 first. Before export, qualify installed programs for detached navigation,
 typed selection plus mutation, and cancellation/recovery, along with offline
-fixtures and measured capture cost. The [qualification record](0001-native-domain-model-qualification.md)
+fixtures and measured capture cost. The [qualification record](native-domain-model-qualification.md)
 retains open gates. Architectural acceptance does not establish adoption or
 release readiness.
 

@@ -2,7 +2,7 @@
 
 The capture protocol must preserve observed field bytes across the required
 tmux releases, reject unrelated hook output and stay within declared bounds.
-The [ADR qualification record](../decisions/0001-native-domain-model-qualification.md)
+The [ADR qualification record](../decisions/native-domain-model-qualification.md)
 separates measured research from Haskell implementation acceptance.
 
 ## One evaluation, one envelope
@@ -98,7 +98,7 @@ or a configured daemon-side job.
 
 Earlier endpoint probes covered tmux 3.3 and 3.8 and established hook-output
 rejection and scalar boundaries. Their raw-byte result does not generalize
-to intermediate releases. The [review reconciliation](../decisions/0001-native-domain-model-qualification.md)
+to intermediate releases. The [review reconciliation](../decisions/native-domain-model-qualification.md)
 records the thirteen-release byte probe, the additional tmux 3.4 dollar case,
 scalar tearing and remaining build/locale qualifications.
 
