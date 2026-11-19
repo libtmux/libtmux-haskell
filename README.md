@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: cc2d94ae7257d05c638016ca556ae918e4de00e0
+  tag: b7531729f4643678be17f1623f4b588fc1d77fe3
 ```
 
 Update the package index:
@@ -330,6 +330,13 @@ The program splits that window's initial pane, sends input to the new pane and
 cleans up its session. A `WindowSlot` retains the session and index; a `PaneRef`
 chooses the pane even when another pane is active. Capture again for actual
 dimensions and pane count.
+
+### [`capturePane`](src/LibTmux/Server.hs) to read the new pane's screen
+
+Read the captured rows with `paneText`. The creation example checks that the
+visible row count matches the pane height. The
+[pane capture guide](docs/mutations.md#read-pane-text) shows how to read
+retained history and keep ANSI styling.
 
 ## Run a terminal application
 

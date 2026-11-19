@@ -125,6 +125,23 @@ raises `InvalidMutationArgument` before any keys are sent. Use
 Success confirms that tmux processed the input request. Observe the pane
 separately when your program needs evidence that the application responded.
 
+## Read pane text
+
+[`capturePane`](../src/LibTmux/Server.hs) takes an exact pane reference.
+Start with `defaultPaneCapture` for the visible rows in plain Unicode.
+Use `paneText` to read the captured text. The
+[creation example](creation.md) captures its own pane.
+
+Set `rows` to `RowsBetween (-10) (-1)` for ten rows before the first
+visible row. Offsets are inclusive and accepted from -2147483647 through
+32767. tmux clamps them to the rows it retained. Set `rendering` to `AnsiStyled` to keep tmux's color and
+style escapes. Empty rows remain in either format.
+
+The byte limit applies before UTF-8 decoding. An oversized capture raises
+`PaneTextTooLarge` instead of returning clipped text. The transport limit
+also covers the enclosing reply and any hook output.
+An after-hook failure raises `PaneCaptureHookFailed` with its diagnostic.
+
 ## Targets, names and deadlines
 
 - A reference from another connection generation, or from an

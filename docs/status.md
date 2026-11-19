@@ -20,6 +20,7 @@ initial Linux Program scope. These operations check the generation and retain re
 | Window creation and exact contextual pane splits | Implemented through `createWindow`, `splitPane` and `WindowSlot`; see [the complete program](creation.md) |
 | Remove a session, window or pane | Implemented through `LibTmux.Server`; see [target removal](creation.md#remove-a-target) |
 | Input to any pane on the selected daemon | Implemented with `sendKeys`; see [pane input](mutations.md#send-input-to-a-pane) |
+| Bounded visible and history text | Implemented with `capturePane`; see [pane capture](mutations.md#read-pane-text) |
 | Scoped terminal applications, input, rendered output and leader exit | Initial Linux slice through `LibTmux.Program`; [requirements and limits](programs.md) |
 | First-server bootstrap and contextual link/selection operations | Not implemented |
 | Query interchange and backend optimization | Not implemented |
