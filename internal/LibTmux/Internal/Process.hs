@@ -49,12 +49,20 @@ data Hooks = Hooks
     -- ^ Stdout reader, called masked; production implementations must not block.
   }
 
+-- Preparation may register resources but cannot create an executable child.
+-- The ticket journals this obligation before starting any transport/effect.
+data Prepared = Prepared
+  { startPrepared :: !(IO N.Start), retirePrepared :: !(IO ()) }
+data Backend = Backend
+  { payloadAllowance :: !Word64, prepareBackend :: !(B.Class -> N.Spec -> IO Prepared) }
+
 data Pool = Pool
   { jobs :: !(TVar (Map.IntMap Ticket)), closing :: !(TVar Bool)
   , nextKey :: !(TVar Int), capacity :: !Int, forker :: Fork
   , budget :: !B.Budget, clientLease :: !B.ClientLease
   , pinOwner :: !PinOwner, pinBusy :: !(TVar Bool)
   , pinResult :: !(TMVar (Either SomeException ()))
+  , backend :: !(TVar (Maybe Backend))
   }
 
 data Progress = Progress {outputBytes :: !Int, errorBytes :: !Int}
@@ -70,6 +78,8 @@ data Ticket = Ticket
   , signalLock :: !(MVar ())
   , busy :: !(TVar Bool), failure :: !(TVar (Maybe SomeException))
   , cleanupFailure :: !(TVar (Maybe SomeException))
+  , prepared :: !(IORef (Maybe Prepared)), selectedBackend :: !(Maybe Backend)
+  , allocation :: !B.Class
   , hooks :: !Hooks, lease :: !B.ChildLease
   }
 
@@ -113,7 +123,23 @@ newPoolSTM budget forker pinOwner capacity = do
   nextKey <- newTVar 0
   pinBusy <- newTVar False
   pinResult <- newEmptyTMVar
-  pure Pool {jobs, closing, nextKey, capacity, forker, budget, clientLease, pinOwner, pinBusy, pinResult}
+  backend <- newTVar Nothing
+  pure Pool {jobs, closing, nextKey, capacity, forker, budget, clientLease, pinOwner, pinBusy, pinResult, backend}
+
+-- Bind once before the pool's first reservation; every ticket captures the
+-- selected execution domain in the same transaction that reserves its credit.
+bindBackend :: Pool -> Backend -> STM ()
+bindBackend pool selected = do
+  closed <- readTVar pool.closing
+  key <- readTVar pool.nextKey
+  previous <- readTVar pool.backend
+  when (closed || key /= 0) (throwSTM PoolClosed)
+  when (selected.payloadAllowance > fromIntegral N.vectorLimitBytes
+    || B.inspectionAllowance pool.budget < inspectionBytes + selected.payloadAllowance)
+    (throwSTM ResourceLimit)
+  case previous of
+    Just _ -> throwSTM PoolClosed
+    Nothing -> writeTVar pool.backend (Just selected)
 
 inputLimitBytes, streamLimitBytes, prefixLimitBytes :: Int
 inputLimitBytes = 65536
@@ -170,7 +196,8 @@ submitProcess register allocation hooks pool spec input output = mask_ $ do
   ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
     <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO (Progress 0 0) <*> newTVarIO "" <*> newIORef Set.empty
     <*> newIORef Nothing <*> newMVar () <*> newTVarIO True
-    <*> newTVarIO Nothing <*> newTVarIO Nothing <*> pure hooks
+    <*> newTVarIO Nothing <*> newTVarIO Nothing <*> newIORef Nothing
+    <*> pure Nothing <*> pure allocation <*> pure hooks
   registered <- atomically $ do
     closed <- readTVar pool.closing
     when closed (throwSTM PoolClosed)
@@ -179,8 +206,12 @@ submitProcess register allocation hooks pool spec input output = mask_ $ do
     when (Map.size jobs >= available) (throwSTM ResourceLimit)
     key <- readTVar pool.nextKey
     when (key == maxBound) (throwSTM ResourceLimit)
-    lease <- B.acquireChild pool.budget allocation (childBytes + outputAllowance)
-    let owned = (ticket lease) {key}
+    selectedBackend <- readTVar pool.backend
+    let transportAllowance = maybe 0 (.payloadAllowance) selectedBackend
+    when (transportAllowance > maxBound - childBytes - outputAllowance) (throwSTM ResourceLimit)
+    let bytes = childBytes + outputAllowance + transportAllowance
+    lease <- B.acquireChild pool.budget allocation bytes
+    let owned = (ticket lease) {key, selectedBackend}
     register owned
     writeTVar pool.nextKey (key + 1)
     writeTVar pool.jobs (Map.insert key owned jobs)
@@ -210,13 +241,18 @@ worker unmask pool ticket spec input output = do
 runJob :: Ticket -> N.Spec -> Input -> Output -> IO Completion
 runJob ticket spec input outputMode = do
   start <- mask_ $ do
-    native <- ticket.hooks.launchNative spec
+    prepared <- case ticket.selectedBackend of
+      Nothing -> pure (Prepared (ticket.hooks.launchNative spec) (pure ()))
+      Just backend -> backend.prepareBackend ticket.allocation spec
+    writeIORef ticket.prepared (Just prepared)
+    native <- prepared.startPrepared
     case native of
       N.Refused _ -> pure ()
       N.Owned child -> do
         writeIORef ticket.child (Just child)
         writeIORef ticket.descriptors (Set.fromList (filter (>= 0)
           (map fromIntegral [child.pidfd, child.input, child.output, child.errors])))
+    writeIORef ticket.prepared Nothing
     atomically $ putTMVar ticket.launchEvidence $ case native of
       N.Refused problem -> LaunchRefused problem
       N.Owned _ -> NativeStarted
@@ -346,6 +382,12 @@ stop ticket = withMVar ticket.signalLock $ \_ -> mask_ $ do
 -- | Signal an owned, unreaped child before closing streams, then consume its status.
 cleanup :: Ticket -> IO ()
 cleanup ticket = do
+  pending <- readIORef ticket.prepared
+  native <- readIORef ticket.child
+  case (native, pending) of
+    (Nothing, Just held) -> held.retirePrepared
+    _ -> pure () -- A journaled child owns its returned descriptors and collector.
+  writeIORef ticket.prepared Nothing
   stop ticket
   readIORef ticket.child >>= \case
     Nothing -> pure ()
@@ -383,6 +425,9 @@ recover pool ticket original = try @SomeException (cleanup ticket) >>= \case
 
 finish :: Pool -> Ticket -> Either SomeException Completion -> IO ()
 finish pool ticket outcome = do
+  readIORef ticket.prepared >>= \case
+    Just _ -> fail "retiring a job with unresolved launch ownership"
+    Nothing -> pure ()
   remaining <- readIORef ticket.descriptors
   unless (Set.null remaining) (fail "retiring job with live descriptors")
   atomically $ do
