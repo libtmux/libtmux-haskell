@@ -16,7 +16,9 @@ $ cabal run --verbose=0 create-session -- \
     "$(command -v tmux)"
 ```
 
-The program checks an empty value, a removal marker and an absent entry
+The program reads one option type and one hook scope from
+[the daemon's catalogue](options.md). It checks an empty value, a removal
+marker and an absent entry
 in the new session's [environment](mutations.md#read-and-change-the-environment).
 It adds a window and splits an explicit pane, then links that window
 at a second index, selects an exact pane, tiles the window and removes the
@@ -63,6 +65,13 @@ main = getArgs >>= \case
           , Creation.process = Creation.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])
           }
     result <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
+      let capabilities = Tmux.serverCapabilities server
+      history <- maybe (die "Missing history-limit option") pure
+        (Tmux.lookupOption capabilities "history-limit")
+      createdHook <- maybe (die "Missing after-new-session hook") pure
+        (Tmux.lookupHook capabilities "after-new-session")
+      putStrLn $ "history-limit kind: " <> show history.optionKind
+      putStrLn $ "after-new-session scopes: " <> show createdHook.hookScopes
       before <- Tmux.capture server
       created <- Tmux.createSession server options
       let environment = Tmux.SessionEnvironment created.session
@@ -164,6 +173,8 @@ Program output:
 
 <!-- example-output: create-session -->
 ```text
+history-limit kind: NumberKind
+after-new-session scopes: [SessionScope]
 created session: created-workspace
 session environment: empty, removed, absent
 initial window: api

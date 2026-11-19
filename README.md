@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 278210241b8f5d2dec1ca28ba8175d6efe582ed2
+  tag: 24a094464234804266f15c0493bebcb98e81ae3b
 ```
 
 Update the package index:
@@ -361,6 +361,12 @@ explain scope, visibility and literal bytes.
 
 The [paste buffer example](docs/buffers.md) verifies a binary round trip and
 observes the output of a pane after pasting text with preserved line feeds.
+
+### [`lookupOption`](src/LibTmux/Options.hs) to find a setting's type and scope
+
+Pass `serverCapabilities server` to look up native settings or hooks for
+the connected daemon. See [options and hooks](docs/options.md) for the
+pinned releases and list operations.
 
 ## Resize panes and windows
 

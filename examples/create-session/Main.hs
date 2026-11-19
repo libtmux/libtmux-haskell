@@ -30,6 +30,13 @@ main = getArgs >>= \case
           , Creation.process = Creation.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])
           }
     result <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
+      let capabilities = Tmux.serverCapabilities server
+      history <- maybe (die "Missing history-limit option") pure
+        (Tmux.lookupOption capabilities "history-limit")
+      createdHook <- maybe (die "Missing after-new-session hook") pure
+        (Tmux.lookupHook capabilities "after-new-session")
+      putStrLn $ "history-limit kind: " <> show history.optionKind
+      putStrLn $ "after-new-session scopes: " <> show createdHook.hookScopes
       before <- Tmux.capture server
       created <- Tmux.createSession server options
       let environment = Tmux.SessionEnvironment created.session
