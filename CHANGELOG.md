@@ -86,6 +86,10 @@
   raw-paste requirements, which are outside the shared vocabulary. ([#15])
 - Import `LibTmux.Recovery` to inspect operation owners or resume cleanup.
   `tryTmux` still catches contextual library failures through `LibTmux`. ([#12])
+- Import `LibTmux.Query.Fields` for row-prefixed query tokens such as
+  `paneActive` and `sessionWindowLinks`. It replaces the eight row-specific
+  field modules, retaining their field types, relationships and requirement
+  names. ([#12])
 - Supply the new metadata fields when constructing `Session`, `Window`,
   `WindowLink`, `Pane`, `Client` and `Fixture.AttachedClient` values offline.
   Cursor, mode-depth and client-size values retain zero; client height uses
