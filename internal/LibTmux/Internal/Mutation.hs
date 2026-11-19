@@ -1,7 +1,8 @@
 -- | One synchronous mutation and its retained ownership. A deadline bounds
 -- submission as well as waiting; recovery never dispatches the command again.
 module LibTmux.Internal.Mutation
-  ( performMutation, performRequest, MutationRecovery, recoveryReceipt, inspectRecovery
+  ( performMutation, performRequest, performRequests, checkMutationReply
+  , MutationRecovery, recoveryReceipt, inspectRecovery
   , resumeRecovery, awaitRecovery, detachRecovery
   ) where
 
@@ -67,10 +68,13 @@ performMutation hooks duration runtime server executable mutation =
           unless valid (throwIO (InvalidMutationArgument "pane.key: unknown tmux key"))
       _ -> pure ()
     left <- remainingTime
-    await (R.mutateWith hooks left runtime server executable mutation) >>= \case
-      C.Applied -> pure ()
-      C.Rejected diagnostic -> throwIO (MutationRejected diagnostic)
-      C.AppliedWithErrors diagnostic -> throwIO (MutationAppliedWithErrors diagnostic)
+    await (R.mutateWith hooks left runtime server executable mutation) >>= checkMutationReply
+
+checkMutationReply :: C.MutationReply -> IO ()
+checkMutationReply = \case
+  C.Applied -> pure ()
+  C.Rejected diagnostic -> throwIO (MutationRejected diagnostic)
+  C.AppliedWithErrors diagnostic -> throwIO (MutationAppliedWithErrors diagnostic)
 
 -- | Share one absolute deadline and correlated owner across typed mutations.
 -- Submission obtains remaining time after its own context acquisition; the

@@ -17,7 +17,7 @@ module LibTmux.Internal.Runtime
   , Request, PidRead, VersionRead, ReadClass (..), ReadResult (..), ReadError (..)
   , readServerPid, readServerPidWith, awaitRead, readStatus, readOperation
   , readServerVersion, readServerVersionWith
-  , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, readSnapshotWith, withCaptureBudget
+  , EntityField (..), readTopologyWith, readEntityFieldWith, readGraphWith, readSnapshotWith, withCaptureBudget, withReadBudget
   , ReadReceipt, ReadRecovery (..), readReceipt, receiptGeneration, receiptOperation, inspectReceipt, resumeReceipt
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
@@ -675,8 +675,11 @@ readSnapshotWith hooks duration runtime client executable =
 -- | Retain the complete capture envelope while fields and graphs accumulate.
 -- Native requests keep their independent child/parent reservations.
 withCaptureBudget :: Runtime -> IO a -> IO a
-withCaptureBudget runtime action = bracket
-  (atomically (B.acquireBytes runtime.budget B.Ordinary (64 * 1024 * 1024)))
+withCaptureBudget runtime = withReadBudget runtime (64 * 1024 * 1024)
+
+withReadBudget :: Runtime -> Integer -> IO a -> IO a
+withReadBudget runtime bytes action = bracket
+  (atomically (B.acquireBytes runtime.budget B.Ordinary bytes))
   (atomically . B.releaseBytes) (const action)
 
 commandArguments :: F.Nonce -> ReadCommand value -> [ByteString]
