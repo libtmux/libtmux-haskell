@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: bff5ed9a10df52133bedc3193094b71b68793b16
+  tag: c575ed478264fb70bbee3ee9c31fb69f2b2d7e02
 ```
 
 Update the package index:
@@ -314,6 +314,9 @@ $ cabal run --verbose=0 create-session -- \
 After checking duplicate-name rejection, the example removes the targets it
 created and checks that the original sessions survive. See the
 [creation and removal guide](docs/creation.md#remove-a-target).
+
+Use [`sendKeys`](docs/mutations.md#send-input-to-a-pane) to type text or send
+named keys to the new pane.
 
 ## Run a terminal application
 

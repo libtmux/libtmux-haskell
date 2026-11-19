@@ -32,6 +32,8 @@ main = getArgs >>= \case
       created <- Tmux.createSession server options
       Tmux.renameWindow server created.window "api"
       Tmux.setPaneTitle server created.pane "editor-ready"
+      Tmux.sendKeys server created.pane (Tmux.LiteralText "Enter")
+      Tmux.sendKeys server created.pane (Tmux.NamedKeys ("Enter" :| []))
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of

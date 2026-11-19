@@ -110,6 +110,21 @@ old snapshot values: demo, editor
 - The two window links stay distinct.
 - The literal `#{pid}` in the window name is not evaluated as a format.
 
+## Send input to a pane
+
+[`sendKeys`](../src/LibTmux/Server.hs) takes an exact `PaneRef` and
+`PaneInput`. Pass `LiteralText "Enter"` to type the five characters.
+`NamedKeys ("Enter" :| [])` sends one key. The
+[creation example](creation.md) shows both requests to a newly created pane.
+
+Import `(:|)` from `Data.List.NonEmpty` for a named key sequence. tmux
+checks every name before the library sends the sequence. An invalid name
+raises `InvalidMutationArgument` before any keys are sent. Use
+`sendKeysWith` to set one deadline for validation and sending.
+
+Success confirms that tmux processed the input request. Observe the pane
+separately when your program needs evidence that the application responded.
+
 ## Targets, names and deadlines
 
 - A reference from another connection generation, or from an
