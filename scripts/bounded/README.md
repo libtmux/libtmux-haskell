@@ -13,21 +13,19 @@ A test checks that scripts use this wrapper to launch external commands.
 | `QUICK` | 120 s, for `git`, `cabal sdist`, index updates, version queries, one `ghc -fno-code` check and built programs. |
 | `BUILD` | 600 s, for `cabal build` and `cabal haddock`. |
 
-## What the limits sit above
+## Hosted timings
 
-CI runs each script as one step. The slowest run of each step among the 25 most
-recent successful `ci.yml` runs on `master`, measured on 2026-11-16:
+Each CI step can run several individually bounded commands. These step times
+come from the [bounded-script check on November 19](https://github.com/libtmux/libtmux-haskell/actions/runs/44483048346).
 
-| Step | Seconds | Run |
-| --- | --- | --- |
-| Isolated source-archive consumer (`check_sdist`) | 82 | 43735981925 |
-| Prepare checked Hackage archives (`release prepare`) | 14 | 43728718382 |
-| Documented example command (`check_docs --run`) | 10 | 43781053429 |
-| Public type contracts (`check_types`) | 9 | 43781053429 |
+| Step | Seconds |
+| --- | ---: |
+| Isolated source-archive consumer (`check_sdist`) | 87 |
+| Prepare checked Hackage archives (`release prepare`) | 13 |
+| Documented example command (`check_docs --run`) | 17 |
+| Public type contracts (`check_types`) | 8 |
 
-No command is slower than its step, and the 82 s step includes every build in
-the script. `QUICK` is above every command, and `BUILD` is above the longest
-build by a factor of seven. Rerun the measurement to refresh the table:
+Read the longest step times across recent successful master runs with `gh`.
 
 ```console
 $ gh run list \
