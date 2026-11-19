@@ -14,7 +14,7 @@ import Data.ByteString qualified as Bytes
 import Data.IORef
 import Data.IntMap.Strict qualified as Map
 import Data.Word (Word64)
-import Foreign.C.Error (eAGAIN, eCHILD)
+import Foreign.C.Error (eAGAIN, eCHILD, eSRCH)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt (..))
 import Foreign.Marshal.Alloc (free)
@@ -272,7 +272,7 @@ retirePending domain key entry spec = do
       N.Refused _ -> pure ()
       N.Owned child -> do
         rc <- N.signalChild child 9
-        when (rc /= 0) (N.raise rc)
+        when (rc /= 0 && rc /= N.errno eSRCH) (N.raise rc)
         threadWaitRead (Fd child.pidfd)
         _ <- collect domain key entry
         retireStorage domain key entry
