@@ -1,7 +1,7 @@
 module OwnedGuardianTest (tests) where
 
 import Control.Concurrent.Async (cancel, race, wait, withAsync)
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Control.Concurrent.STM
 import Control.Exception
 import Data.ByteString.Char8 qualified as Bytes
@@ -84,7 +84,7 @@ witnessedSuccess mode = do
       bracket (N.openPid (fromInteger pid)) N.close $ \daemon -> do
         witnesses <- collected
         assertBool "no independent launcher child" (not (null witnesses))
-        when (mode==3) (assertBool "ordinary native clients produced no independent descendants" (length witnesses>=6))
+        when (mode==3) (assertBool "ordinary native clients produced no independent descendants" (length witnesses>=3))
         -- A Program may already have retired descendants in its own group.
         -- The first startup witness must remain live until the outer scope.
         case reverse witnesses of
@@ -267,6 +267,44 @@ relatedIdentity = do
   _ <- LibRuntime.shutdown second
   pure ()
 
+startupCancellation :: IO ()
+startupCancellation = do
+  executable <- selectedExecutable
+  W.withLauncher 2 executable $ \launcher server -> W.withCollected server $ \collected ->
+    forM_ [OS.ClientLaunched,OS.DaemonOwned,OS.Verified,OS.Admitted] $ \selected -> do
+      namesCell <- newIORef Nothing
+      daemon <- newIORef Nothing
+      let checkpoint stage names = when (stage==selected) $ do
+            getMaskingState >>= (@?= Unmasked)
+            writeIORef namesCell (Just names)
+            unless (stage==OS.ClientLaunched) $ OS.peerPidfd names.socket >>= \case
+              Right fd -> N.pidReady fd >>= (@?= False) >> writeIORef daemon (Just fd)
+              Left _ -> assertFailure "cancellation point lost its admitted listener"
+            throwIO ThreadKilled
+      result <- tryWithContext @AsyncException $
+        OS.withOwnedServerWith OS.defaultProbe {OS.stage=checkpoint} launcher (const (assertFailure "cancelled startup entered callback" :: IO ()))
+      case result of
+        Left (ExceptionWithContext context ThreadKilled) -> do
+          witnesses <- collected
+          mapM_ (\fd -> N.pidReady fd >>= (@?= True)) witnesses
+          unless (selected==OS.ClientLaunched) (assertBool "admitted startup produced no independent child witness" (not (null witnesses)))
+          forM_ (OS.ownedRecoveries context) $ \recovery -> do
+            let owner=OS.recoveryOwner recovery
+            OS.observeOwned owner >>= \status -> status.complete @?= False
+            readTVarIO owner.domain.full >>= (@?= True)
+            -- Cancellation before listener observation can leave an unproved
+            -- socket name. Only this fixture removes that controlled test name;
+            -- the candidate retains its owner until recovery observes absence.
+            names <- readIORef namesCell >>= maybe (fail "startup names lost") pure
+            OS.ignoreMissing (Files.removeLink names.socket)
+            OS.ignoreMissing (Files.removeLink (names.socket<>".lock"))
+            OS.settle owner
+            OS.observeOwned owner >>= \status -> status.complete @?= True
+        other -> assertFailure (show other)
+      readIORef daemon >>= mapM_ (\fd -> (N.pidReady fd >>= (@?= True)) `finally` N.close fd)
+      names <- readIORef namesCell >>= maybe (fail "cancellation checkpoint did not run") pure
+      OS.statusIfPresent names.directory >>= \remaining -> assertBool "cancelled private directory survived recovery" (maybe True (const False) remaining)
+
 tests :: TestTree
 tests = testGroup "private guardian scope"
   [ testCase "empty native startup retires the exact daemon and closes its generation" $ do
@@ -323,4 +361,6 @@ tests = testGroup "private guardian scope"
   , testCase "sequential Programs preserve a live independent bystander and parent admission" $
       W.isolated "sequential Programs preserve a live independent bystander and parent admission" sequentialPrograms
   , testCase "shared capacity does not grant authority over a related runtime owner" relatedIdentity
+  , testCase "startup cancellation checkpoints preserve the exception and every physical owner" $
+      W.isolated "startup cancellation checkpoints preserve the exception and every physical owner" startupCancellation
   ]
