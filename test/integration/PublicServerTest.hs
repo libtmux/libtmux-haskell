@@ -9,6 +9,7 @@ import Data.IORef
 import Data.List (isPrefixOf)
 import Fixture qualified
 import LibTmux qualified as Tmux
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Server qualified as Server
 import LibTmux.Snapshot.Fixture qualified as F
 import System.Exit (ExitCode (..))
@@ -71,10 +72,10 @@ tests = testGroup "public Server API"
         readIORef entered >>= (@?= False)
         case result of
           Left (ExceptionWithContext context _) ->
-            forM_ (Tmux.cleanupRecoveries context) $ \recovery -> do
-              status <- Tmux.inspectCleanup recovery
-              mapM_ (Tmux.detachUnresolved recovery . fst) status.unresolved
-              _ <- Tmux.resumeCleanup recovery
+            forM_ (Recovery.cleanupRecoveries context) $ \recovery -> do
+              status <- Recovery.inspectCleanup recovery
+              mapM_ (Recovery.detachUnresolved recovery . fst) status.unresolved
+              _ <- Recovery.resumeCleanup recovery
               pure ()
           Right () -> assertFailure "unqualified Server entered its callback"
 
@@ -115,10 +116,10 @@ tests = testGroup "public Server API"
           case result of
             Left (ExceptionWithContext context (Tmux.CleanupFailed status _)) -> do
               status.complete @?= False
-              case Tmux.cleanupRecoveries context of
+              case Recovery.cleanupRecoveries context of
                 [recovery] -> do
                   clear
-                  Tmux.resumeCleanup recovery >>= \finished -> finished.complete @?= True
+                  Recovery.resumeCleanup recovery >>= \finished -> finished.complete @?= True
                 other -> assertFailure ("typed result lost its cleanup owners: " <> show other)
             other -> assertFailure ("cleanup failure was not preserved: " <> show other)
   , testGroup "public shared Runtime"
@@ -227,11 +228,11 @@ tests = testGroup "public Server API"
                     _ -> assertFailure "nested scope did not create one pin directory"
               case result of
                 Left (ExceptionWithContext context (Tmux.CleanupFailed _ _)) -> do
-                  let recoveries = Tmux.cleanupRecoveries context
+                  let recoveries = Recovery.cleanupRecoveries context
                   assertBool "nested scope discarded its original cleanup annotation" (length recoveries >= 2)
                   clear
                   forM_ recoveries $ \recovery ->
-                    Tmux.resumeCleanup recovery >>= \status -> status.complete @?= True
+                    Recovery.resumeCleanup recovery >>= \status -> status.complete @?= True
                 _ -> assertFailure "nested cleanup failure was lost"
 
       , testCase "public selected recovery leaves the healthy scope open" $
@@ -256,12 +257,12 @@ tests = testGroup "public Server API"
                 case result of
                   Left (ExceptionWithContext context (Tmux.CleanupFailed status _)) -> do
                     status.pendingHandles @?= 1
-                    case Tmux.cleanupRecoveries context of
+                    case Recovery.cleanupRecoveries context of
                       [recovery] -> do
                         Tmux.capture healthy >>= \snapshot -> length (Tmux.panes snapshot) @?= 1
                         clear
-                        Tmux.resumeCleanup recovery >>= \finished -> finished.complete @?= True
-                        Tmux.awaitCleanup recovery >>= \finished -> finished.complete @?= True
+                        Recovery.resumeCleanup recovery >>= \finished -> finished.complete @?= True
+                        Recovery.awaitCleanup recovery >>= \finished -> finished.complete @?= True
                         Tmux.capture healthy >>= \snapshot -> length (Tmux.panes snapshot) @?= 1
                       other -> assertFailure ("selected cleanup owner was lost: " <> show other)
                   _ -> assertFailure "selected cleanup failure was lost"

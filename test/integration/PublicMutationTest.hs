@@ -12,6 +12,7 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Text qualified as Text
 import Fixture qualified
 import LibTmux qualified as Tmux
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Snapshot.Fixture qualified as F
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -298,9 +299,9 @@ tests = testGroup "public mutation API"
             assertBool "deadline did not retain the moved old occurrence"
               ("changed\nREADY\n" `Text.isPrefixOf` Tmux.paneText latest)
             forM_ recovery $ \owner -> do
-              Tmux.recoveryGeneration owner @?= Tmux.serverGeneration server
-              bounded (Tmux.resumeCaptureRecovery owner)
-              _ <- Tmux.detachCaptureRecovery owner
+              Recovery.recoveryGeneration owner @?= Tmux.serverGeneration server
+              bounded (Recovery.resumeCaptureRecovery owner)
+              _ <- Recovery.detachCaptureRecovery owner
               pure ()
           Tmux.PaneTextTimedOut Nothing _ -> assertFailure "deadline lost the last capture"
           Tmux.PaneTextMatched _ -> assertFailure "moving old text satisfied freshness"
@@ -354,12 +355,12 @@ tests = testGroup "public mutation API"
                 bounded (wait worker) >>= \case
                   Left (ExceptionWithContext context problem) -> do
                     fromException @AsyncException problem @?= Just ThreadKilled
-                    case Tmux.captureRecoveries context of
+                    case Recovery.captureRecoveries context of
                       [recovery] -> do
-                        Tmux.recoveryGeneration recovery @?= Tmux.serverGeneration server
+                        Recovery.recoveryGeneration recovery @?= Tmux.serverGeneration server
                         release
-                        Tmux.resumeCaptureRecovery recovery
-                        _ <- Tmux.detachCaptureRecovery recovery
+                        Recovery.resumeCaptureRecovery recovery
+                        _ <- Recovery.detachCaptureRecovery recovery
                         pure ()
                       _ -> assertFailure "cancelled text wait lost its exact capture owner"
                   Right _ -> assertFailure "cancelled text wait returned a result"
@@ -511,12 +512,12 @@ tests = testGroup "public mutation API"
         flip finally (configured fixture ["set-hook", "-gu", "after-rename-window"]) $ do
           Tmux.tryTmux (Tmux.renameWindow server window.ref "applied-before-hook-error") >>= \case
             Left (ExceptionWithContext context (Tmux.MutationAppliedWithErrors _)) ->
-              case Tmux.mutationRecoveries context of
+              case Recovery.mutationRecoveries context of
                 [recovery] -> do
-                  observed <- Tmux.inspectMutationRecovery recovery
+                  observed <- Recovery.inspectMutationRecovery recovery
                   observed.logical.outcome @?= Just Tmux.Failed
                   observed.logical.retained @?= False
-                  Tmux.operationStatus (Tmux.mutationOperation recovery) >>= (@?= observed.logical)
+                  Recovery.operationStatus (Recovery.mutationOperation recovery) >>= (@?= observed.logical)
                 _ -> assertFailure "known failure lost its correlated status"
             _ -> assertFailure "applied hook failure lost its outcome"
           after <- Tmux.capture server
@@ -543,13 +544,13 @@ tests = testGroup "public mutation API"
               bounded (wait entered)
               timeout 500000 (wait worker) >>= \case
                 Just (Left (ExceptionWithContext context Tmux.MutationTimedOut)) ->
-                  case Tmux.mutationRecoveries context of
+                  case Recovery.mutationRecoveries context of
                     [recovery] -> do
-                      observed <- bounded (Tmux.awaitMutationRecovery recovery)
-                      observed.logical.outcome @?= Just Tmux.OutcomeUnknown
+                      observed <- bounded (Recovery.awaitMutationRecovery recovery)
+                      observed.logical.outcome @?= Just Recovery.OutcomeUnknown
                       observed.logical.retained @?= True
                       release
-                      Tmux.detachMutationRecovery recovery >>= (@?= True)
+                      Recovery.detachMutationRecovery recovery >>= (@?= True)
                     _ -> assertFailure "deadline lost its accepted operation"
                 _ -> assertFailure "explicit timeout did not bound the call"
 
@@ -571,17 +572,17 @@ tests = testGroup "public mutation API"
                 bounded (wait worker) >>= \case
                   Left (ExceptionWithContext context problem) -> do
                     fromException @AsyncException problem @?= Just ThreadKilled
-                    case Tmux.mutationRecoveries context of
+                    case Recovery.mutationRecoveries context of
                       [recovery] -> do
-                        Tmux.mutationGeneration recovery @?= Tmux.serverGeneration server
-                        observed <- bounded (Tmux.awaitMutationRecovery recovery)
+                        Recovery.mutationGeneration recovery @?= Tmux.serverGeneration server
+                        observed <- bounded (Recovery.awaitMutationRecovery recovery)
                         observed.workerOwned @?= False
                         observed.nativeOwned @?= False
-                        observed.logical.outcome @?= Just Tmux.OutcomeUnknown
+                        observed.logical.outcome @?= Just Recovery.OutcomeUnknown
                         observed.logical.retained @?= True
-                        Tmux.resumeMutationRecovery recovery
+                        Recovery.resumeMutationRecovery recovery
                         release
-                        Tmux.detachMutationRecovery recovery >>= (@?= True)
+                        Recovery.detachMutationRecovery recovery >>= (@?= True)
                         Tmux.renameWindow server window.ref "after-public-recovery"
                         after <- Tmux.capture server
                         changed <- require (Tmux.lookupWindow after window.ref)

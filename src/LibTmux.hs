@@ -8,7 +8,8 @@
 -- 'resizePane' and 'resizeWindow' request absolute cells through checked
 -- 'Resize' values. Capture again for actual geometry.
 --
--- "LibTmux.Server" documents ownership and failure recovery. Typed IDs,
+-- "LibTmux.Server" documents scopes. Import "LibTmux.Recovery" to inspect
+-- and resume retained operations. Typed IDs,
 -- checked dimensions and release admission have their own pure modules.
 -- "LibTmux.Query" provides qualified typed descriptions over the same
 -- snapshots; query source names are separate from collection access here.
@@ -38,8 +39,6 @@ import LibTmux.Program
   , ProgramExit (..), StartFailure (..), StartPhase (..)
   , ProgramScreen (..), ProgramResult (..), ProgramError (..)
   , sendProgramInput, readProgramScreen, waitProgram, waitProgramFor, terminateProgram
-  , ProgramRecovery, ProgramCleanupStatus (..), programRecoveries, programCleanupFailure
-  , inspectProgramCleanup, resumeProgramCleanup
   )
 import LibTmux.Snapshot
 import LibTmux.Value

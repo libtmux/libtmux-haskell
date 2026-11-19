@@ -9,6 +9,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text qualified as Text
 import Fixture qualified
 import LibTmux qualified as Tmux
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Creation qualified as Creation
 import LibTmux.Snapshot.Fixture qualified as F
 import System.Exit (ExitCode (..))
@@ -80,7 +81,7 @@ tests = testGroup "public absolute resizing"
                  Tmux.resizeWindow server base.window (Tmux.ResizeBoth large small)] $ \request ->
             Tmux.tryTmux request >>= \case
               Left (ExceptionWithContext context (Tmux.InvalidMutationArgument _)) ->
-                assertBool "invalid resize retained an operation" (null (Tmux.mutationRecoveries context))
+                assertBool "invalid resize retained an operation" (null (Recovery.mutationRecoveries context))
               _ -> assertFailure "oversized resize reached the daemon"
         after <- Tmux.capture server
         geometry after @?= geometry before
@@ -126,9 +127,9 @@ tests = testGroup "public absolute resizing"
         withHook fixture paneResize "has-session -t =missing-resize-hook" $
           Tmux.tryTmux (performResize paneResize server base (Tmux.ResizeWidth width)) >>= \case
             Left (ExceptionWithContext context (Tmux.MutationAppliedWithErrors _)) -> do
-              recovery <- one (Tmux.mutationRecoveries context)
-              Tmux.mutationGeneration recovery @?= Tmux.serverGeneration server
-              observed <- Tmux.awaitMutationRecovery recovery
+              recovery <- one (Recovery.mutationRecoveries context)
+              Recovery.mutationGeneration recovery @?= Tmux.serverGeneration server
+              observed <- Recovery.awaitMutationRecovery recovery
               observed.logical.outcome @?= Just Tmux.Failed
               observed.logical.retained @?= False
               after <- Tmux.capture server
@@ -151,13 +152,13 @@ tests = testGroup "public absolute resizing"
                 bounded (wait worker) >>= \case
                   Left (ExceptionWithContext context problem) -> do
                     fromException @AsyncException problem @?= Just ThreadKilled
-                    recovery <- one (Tmux.mutationRecoveries context)
-                    Tmux.mutationGeneration recovery @?= Tmux.serverGeneration server
-                    observed <- bounded (Tmux.awaitMutationRecovery recovery)
+                    recovery <- one (Recovery.mutationRecoveries context)
+                    Recovery.mutationGeneration recovery @?= Tmux.serverGeneration server
+                    observed <- bounded (Recovery.awaitMutationRecovery recovery)
                     observed.nativeOwned @?= False
                     observed.workerOwned @?= False
-                    observed.logical.outcome @?= Just Tmux.OutcomeUnknown
-                    Tmux.detachMutationRecovery recovery >>= (@?= True)
+                    observed.logical.outcome @?= Just Recovery.OutcomeUnknown
+                    Recovery.detachMutationRecovery recovery >>= (@?= True)
                   Right () -> assertFailure "cancelled resize returned success"
   ]
 
