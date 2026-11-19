@@ -94,9 +94,9 @@ tests = testGroup "public Server API"
                   Tmux.PaneTextMatched _ -> pure ()
                   Tmux.PaneTextTimedOut _ retained -> do
                     forM_ retained $ \owner -> do
-                      Tmux.recoveryGeneration owner @?= Tmux.serverGeneration server
-                      Tmux.resumeCaptureRecovery owner
-                      _ <- Tmux.detachCaptureRecovery owner
+                      Recovery.recoveryGeneration owner @?= Tmux.serverGeneration server
+                      Recovery.resumeCaptureRecovery owner
+                      _ <- Recovery.detachCaptureRecovery owner
                       pure ()
                     assertFailure "owned pane output was not observed"
                   Tmux.PaneTextExited _ -> assertFailure "owned metadata pane exited"
