@@ -41,6 +41,9 @@
   available. ([#47])
 - Link, unlink and select exact session/index slots. Select a pane through
   its slot and apply a shared named layout to the physical window. ([#12])
+- Read and change named entries in the global or session environment.
+  Preserve literal bytes, visibility and the difference between empty,
+  removed and absent values. ([#12])
 
 ### Changed
 
