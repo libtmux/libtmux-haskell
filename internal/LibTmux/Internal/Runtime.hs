@@ -264,7 +264,7 @@ newServerOwner runtime@Runtime {forker} = mask_ $ do
   atomically $ do
     _ <- inspect runtime
     open <- readTVar runtime.admission
-    unless open (throwSTM P.PoolClosed)
+    unless open (throwSTM B.AdmissionClosed)
     key <- readTVar runtime.nextKey
     when (key == maxBound) (throwSTM P.ResourceLimit)
     pool <- P.newPoolSTM runtime.budget forker owner 16
