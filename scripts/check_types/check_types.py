@@ -64,6 +64,7 @@ REJECTED = (
     Rejection("test/compile-fail/QuerySourceCoercion.hs", 18872, "coerce"),
     Rejection("test/compile-fail/MutationWrongEntity.hs", 83865, "WindowRef"),
     Rejection("test/compile-fail/ResizeWrongEntity.hs", 83865, "WindowRef"),
+    Rejection("test/compile-fail/RecoveryFromUmbrella.hs", 76037, "inspectCleanup"),
     Rejection("test/compile-fail/CreationEmptyArgv.hs", 83865, "NonEmpty"),
     Rejection("test/compile-fail/CreationConstructor.hs", 1928, "CreatedSession"),
     Rejection("test/compile-fail/CreationEmptyPane.hs", 76037, "EmptyPane"),
