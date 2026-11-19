@@ -4,6 +4,12 @@
 
 ### Added
 
+- Create windows through `createWindow` and `createWindowWith`, with explicit
+  session/index placement, selection and occupied-link replacement policy.
+  Return the actual window, pane and link identities. ([#33])
+- Split an explicit pane through `splitPane` and `splitPaneWith`, retaining
+  its exact `WindowSlot` context, checked orientation/size and historical
+  creation receipts after cancellation or failed hooks. ([#26])
 - Run terminal applications through `withProgram` and `runProgram`, with
   literal argv, input, rendered output and typed leader outcomes. Program
   operations require tmux 3.8, Linux 6.9 process-group pidfds and the checked
@@ -30,6 +36,11 @@
 
 ### Changed
 
+- Share opaque creation identities through `CreatedEntities`; `CreatedSession`,
+  `CreatedWindow` and `CreatedPane` name each command's result. Window and pane
+  receipts include existing parents; cleanup must target the entity created
+  by the original command. Derived `Show` output now names `CreatedEntities`.
+  ([#33], [#26])
 - Admit tmux 3.3a and every newer release in `LibTmux.Version.requireSupported`,
   `withServer`, `withServerIn` and the server version recorded in snapshots,
   with no upper bound. Releases after 3.8 and patch letters such as 3.8a now
@@ -50,6 +61,8 @@
 
 ### Fixed
 
+- Refuse insertion after window index 2147483647 before dispatch, avoiding an
+  unexpected tmux 3.3a daemon exit at its signed-index boundary. ([#33])
 - Mask watch retirement during `ProgramRecovery` cleanup so asynchronous
   exceptions cannot leave a closed descriptor recorded for retry. ([#41])
 - Report a refused native creation context as `InvalidConfiguration` before
@@ -146,5 +159,7 @@
 [#15]: https://github.com/libtmux/libtmux-haskell/issues/15
 
 [#41]: https://github.com/libtmux/libtmux-haskell/issues/41
+[#33]: https://github.com/libtmux/libtmux-haskell/issues/33
+[#26]: https://github.com/libtmux/libtmux-haskell/issues/26
 [#28]: https://github.com/libtmux/libtmux-haskell/issues/28
 [#24]: https://github.com/libtmux/libtmux-haskell/issues/24
