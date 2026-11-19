@@ -55,6 +55,16 @@ jobs:
         with:
           ref: '3.8'
           configure-args: --disable-utf8proc
+      - name: Fetch pinned option-table history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tmux/tmux
+          ref: 7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53
+          fetch-depth: 0
+          path: .option-table-source
+          persist-credentials: false
+      - name: Verify the generated option and hook catalogue
+        run: uv run scripts/generate_options/generate_options.py --tmux .option-table-source --check
       - name: Restore Haskell dependencies
         id: dependencies
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

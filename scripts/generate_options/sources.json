@@ -1,0 +1,62 @@
+[
+  {
+    "version": "3.3a",
+    "commit": "0b355ae8114511e1ff6359272b164f1cdf718e80",
+    "sha256": "dbf0432e6620735554e798a0aef55c5dd2a1021518261fef4b3f93e60989d2b4"
+  },
+  {
+    "version": "3.4",
+    "commit": "9ae69c3795ab5ef6b4d760f6398cd9281151f632",
+    "sha256": "b50f5da4d81dfd26089d35510b96f8f1cf5457d05835d8494feeea0c5cf4e1ea"
+  },
+  {
+    "version": "3.5",
+    "commit": "ac44566c9c7e3e94d23be6def4c7ae83472543f5",
+    "sha256": "b3d678c0f3a52c6cd742fb16b8e57c4e808223e814d88422f7344b7ef5e4bb92"
+  },
+  {
+    "version": "3.5a",
+    "commit": "549c35b06165f6ae023115eb76f83f2cbf945395",
+    "sha256": "b3d678c0f3a52c6cd742fb16b8e57c4e808223e814d88422f7344b7ef5e4bb92"
+  },
+  {
+    "version": "3.6",
+    "commit": "0dac7fe434d029a4f0b819cba8eb7963df291990",
+    "sha256": "bede62bb7230e59e81447287179875c8c0a7ff6a1eb6be71f4a35de999ef66b2"
+  },
+  {
+    "version": "3.6a",
+    "commit": "cc117b5048f77a4842820f8ebbe3a86e5c077224",
+    "sha256": "bede62bb7230e59e81447287179875c8c0a7ff6a1eb6be71f4a35de999ef66b2"
+  },
+  {
+    "version": "3.6b",
+    "commit": "0623d1e968423ad0c192e0d8debf1258671063d5",
+    "sha256": "bede62bb7230e59e81447287179875c8c0a7ff6a1eb6be71f4a35de999ef66b2"
+  },
+  {
+    "version": "3.7",
+    "commit": "81f88f8517c9fc5371b56cf117530c6b477c96ac",
+    "sha256": "c1245a284d540f4c5160617c2f762718b9bc264236c5cf1524b34f51621b56c2"
+  },
+  {
+    "version": "3.7a",
+    "commit": "0e418b62d259ce8da8970f75732cc6632ee4c3a0",
+    "sha256": "c1245a284d540f4c5160617c2f762718b9bc264236c5cf1524b34f51621b56c2"
+  },
+  {
+    "version": "3.7b",
+    "commit": "e802909de06012a4df6209d55e86487c56223163",
+    "sha256": "c1245a284d540f4c5160617c2f762718b9bc264236c5cf1524b34f51621b56c2"
+  },
+  {
+    "version": "3.7c",
+    "commit": "e476c1230b958df0cb12977517d24b3dc931375b",
+    "sha256": "c1245a284d540f4c5160617c2f762718b9bc264236c5cf1524b34f51621b56c2"
+  },
+  {
+    "version": "3.8",
+    "commit": "7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53",
+    "sha256": "cbf3b034785b30aeee3d67032f99e9d9b173a321e11b19be1a11c9e9914fc866"
+  }
+]
