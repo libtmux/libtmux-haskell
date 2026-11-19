@@ -479,20 +479,10 @@ payloadBoundary stamp = scan 0 Nothing
 guardStamp :: ByteString -> Either ReplyError ByteString
 guardStamp header
   | Bytes.length header > 64 = Left UnexpectedReply
-  | otherwise = do
-      stamp <- maybe (Left UnexpectedReply) Right (Bytes.stripPrefix "%begin " header)
-      case Ascii.words stamp of
-        [seconds, number, "0"]
-          | Bytes.intercalate " " [seconds, number, "0"] == stamp
-          , decimal 9223372036854775807 seconds && decimal 4294967295 number -> Right stamp
-        _ -> Left UnexpectedReply
-  where
-    decimal maximumValue bytes = not (Bytes.null bytes) && Bytes.length bytes <= 20
-      && (bytes == "0" || Bytes.head bytes /= 48)
-      && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
-      && case Ascii.readInteger bytes of
-        Just (value, "") -> value <= maximumValue
-        _ -> False
+  | Just stamp <- Bytes.stripPrefix "%begin " header
+  , " 0" `Bytes.isSuffixOf` stamp
+  , Frame.isControlStamp stamp = Right stamp
+  | otherwise = Left UnexpectedReply
 
 errorBody :: ByteString -> ByteString -> Either ReplyError (ByteString, ByteString)
 errorBody stamp body
