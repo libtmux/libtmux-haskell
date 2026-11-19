@@ -14,6 +14,7 @@ import PublicMutationTest qualified
 import PublicCreationTest qualified
 import PublicWindowCreationTest qualified
 import PublicResizeTest qualified
+import PublicControlTest qualified
 import PublicSettingsTest qualified
 import PublicProgramTest qualified
 import EntityCaptureTest qualified
@@ -28,4 +29,4 @@ main = withSandbox $ guardRetained $ do
     [FixtureTest.tests, FrameIntegrationTest.tests, SocketPinTest.tests,
      RuntimeTest.tests, RuntimeReadTest.tests, RuntimeMutationTest.tests, RuntimeCreationTest.tests, ScopeTest.tests, PublicServerTest.tests, PublicMutationTest.tests, PublicCreationTest.tests,
      EntityCaptureTest.tests, CommandIntegrationTest.tests, PublicWindowCreationTest.tests,
-     PublicResizeTest.tests, PublicSettingsTest.tests, programTests, processTests]
+     PublicResizeTest.tests, PublicSettingsTest.tests, PublicControlTest.tests, programTests, processTests]

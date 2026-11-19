@@ -15,6 +15,7 @@
 -- snapshots; query source names are separate from collection access here.
 module LibTmux
   ( module LibTmux.Capabilities
+  , module LibTmux.Control
   , module LibTmux.Creation
   , module LibTmux.Server
   , module LibTmux.Program
@@ -28,6 +29,7 @@ module LibTmux
   ) where
 
 import LibTmux.Capabilities
+import LibTmux.Control
 import LibTmux.Creation
 import LibTmux.Environment
 import LibTmux.Id

@@ -35,6 +35,8 @@ instance Exception OwnerError
 
 data Input = BytesInput !ByteString | KeepInputOpen
 
+data Output = BufferedOutput | StreamedOutput !Word64 !(ByteString -> IO ())
+
 inputSize :: Input -> Int
 inputSize (BytesInput bytes) = Bytes.length bytes
 inputSize KeepInputOpen = 0
@@ -147,9 +149,24 @@ submitRegistered register allocation hooks pool spec input =
 -- | 'KeepInputOpen' supplies no bytes and retains its writer until child exit.
 -- Early EOF can make a control client exit before its synchronous hooks finish.
 submitInputRegistered :: (Ticket -> STM ()) -> B.Class -> Hooks -> Pool -> N.Spec -> Input -> IO Ticket
-submitInputRegistered register allocation hooks pool spec input = mask_ $ do
+submitInputRegistered register allocation hooks pool spec input =
+  submitProcess register allocation hooks pool spec input BufferedOutput
+
+-- | Keep the client's input open and deliver stdout a chunk at a time. The
+-- extra lease covers the consumer's decoder and event queue while the child
+-- is owned, including during cleanup.
+submitStreaming :: Hooks -> Pool -> N.Spec -> Word64 -> (ByteString -> IO ()) -> IO Ticket
+submitStreaming hooks pool spec allowance receive =
+  submitProcess (const (pure ())) B.Ordinary hooks pool spec KeepInputOpen (StreamedOutput allowance receive)
+
+submitProcess :: (Ticket -> STM ()) -> B.Class -> Hooks -> Pool -> N.Spec -> Input -> Output -> IO Ticket
+submitProcess register allocation hooks pool spec input output = mask_ $ do
   N.validate spec
   when (inputSize input > inputLimitBytes) (throwIO ResourceLimit)
+  let outputAllowance = case output of
+        BufferedOutput -> 0
+        StreamedOutput allowance _ -> allowance
+  when (outputAllowance > maxBound - childBytes) (throwIO ResourceLimit)
   ticket <- Ticket (-1) <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO False <*> newTVarIO Nothing
     <*> newTVarIO [] <*> newTVarIO 0 <*> newTVarIO (Progress 0 0) <*> newTVarIO "" <*> newIORef Set.empty
     <*> newIORef Nothing <*> newMVar () <*> newTVarIO True
@@ -162,7 +179,7 @@ submitInputRegistered register allocation hooks pool spec input = mask_ $ do
     when (Map.size jobs >= available) (throwSTM ResourceLimit)
     key <- readTVar pool.nextKey
     when (key == maxBound) (throwSTM ResourceLimit)
-    lease <- B.acquireChild pool.budget allocation childBytes
+    lease <- B.acquireChild pool.budget allocation (childBytes + outputAllowance)
     let owned = (ticket lease) {key}
     register owned
     writeTVar pool.nextKey (key + 1)
@@ -173,7 +190,7 @@ submitInputRegistered register allocation hooks pool spec input = mask_ $ do
     ownedInput <- case input of
       BytesInput bytes -> BytesInput <$> evaluate (force (Bytes.copy bytes))
       KeepInputOpen -> pure KeepInputOpen
-    void (forkIn pool (\unmask -> worker unmask pool registered ownedSpec ownedInput)))
+    void (forkIn pool (\unmask -> worker unmask pool registered ownedSpec ownedInput output)))
     `onException` do
       atomically $ do
         modifyTVar' pool.jobs (Map.delete registered.key)
@@ -181,17 +198,17 @@ submitInputRegistered register allocation hooks pool spec input = mask_ $ do
       finishPin pool
   pure registered
 
-worker :: (forall a. IO a -> IO a) -> Pool -> Ticket -> N.Spec -> Input -> IO ()
-worker unmask pool ticket spec input = do
-  outcome <- try @SomeException (unmask (runJob ticket spec input >>= evaluate))
+worker :: (forall a. IO a -> IO a) -> Pool -> Ticket -> N.Spec -> Input -> Output -> IO ()
+worker unmask pool ticket spec input output = do
+  outcome <- try @SomeException (unmask (runJob ticket spec input output >>= evaluate))
   case outcome of
     Right completed -> finish pool ticket (Right completed)
     Left problem -> do
       atomically (writeTVar ticket.failure (Just problem))
       recover pool ticket problem
 
-runJob :: Ticket -> N.Spec -> Input -> IO Completion
-runJob ticket spec input = do
+runJob :: Ticket -> N.Spec -> Input -> Output -> IO Completion
+runJob ticket spec input outputMode = do
   start <- mask_ $ do
     native <- ticket.hooks.launchNative spec
     case native of
@@ -215,8 +232,11 @@ runJob ticket spec input = do
             BytesInput bytes -> guarded (preservingFinally ticket.cleanupFailure
               (N.writeBytes (Fd child.input) bytes) (retire ticket child.input))
             KeepInputOpen -> pure ()
+          readStdout = case outputMode of
+            BufferedOutput -> readStream ticket True child.output
+            StreamedOutput _ receive -> streamOutput ticket child.output receive >> pure ""
           collect = both (pure ())
-            (both ticket.hooks.beforeSecondStream (guarded (readStream ticket True child.output))
+            (both ticket.hooks.beforeSecondStream (guarded readStdout)
               (guarded (readStream ticket False child.errors)))
             (both (pure ())
               writeInput
@@ -272,6 +292,13 @@ readStream ticket stdout fd = preservingFinally ticket.cleanupFailure (loop [] 0
         atomically $ modifyTVar' ticket.counts $ \old ->
           if stdout then old {outputBytes = total} else old {errorBytes = total}
       pure chunk
+
+streamOutput :: Ticket -> CInt -> (ByteString -> IO ()) -> IO ()
+streamOutput ticket fd receive = preservingFinally ticket.cleanupFailure loop (retire ticket fd)
+  where
+    loop = mask_ (ticket.hooks.readOutput fd) >>= \case
+      Nothing -> threadWaitRead (Fd fd) >> loop
+      Just chunk -> unless (Bytes.null chunk) (receive chunk >> loop)
 
 -- | Keep an action failure primary and retain a simultaneous cleanup failure.
 -- A cleanup failure on its own remains a thrown exception.
@@ -429,6 +456,10 @@ awaitCleanup pool = atomically (readTMVar pool.pinResult) >>= either throwIO pur
 
 await :: Ticket -> IO Completion
 await ticket = atomically (readTMVar ticket.result) >>= either throwIO pure
+
+-- | True after the child, descriptors and reader have retired.
+ticketRetired :: Pool -> Ticket -> STM Bool
+ticketRetired pool ticket = Map.notMember ticket.key <$> readTVar pool.jobs
 
 abort :: Ticket -> IO ()
 abort ticket = atomically (writeTVar ticket.cancelled True)

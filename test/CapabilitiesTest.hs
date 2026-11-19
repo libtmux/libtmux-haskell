@@ -13,10 +13,10 @@ tests = testGroup "daemon capabilities"
   [ testCase "the released event-wait boundary rejects candidates and older patches" $
       forM_ ["3.3a", "3.7", "3.7z", "next-3.8", "3.8-rc", "3.8-rc10"] $ \raw -> do
         version <- release raw
-        forM_ (filter ((== Refuse) . (.handling)) capabilityRegistry) $ \info -> do
-          supports (capabilitiesFor version) info.capability @?= False
-          requireCapability (capabilitiesFor version) info.capability @?=
-            Left (CapabilityUnavailable info.capability version)
+        forM_ [ManagedPrograms, ProgramInput, RenderedScreen, ProgramExitEvents] $ \feature -> do
+          supports (capabilitiesFor version) feature @?= False
+          requireCapability (capabilitiesFor version) feature @?=
+            Left (CapabilityUnavailable feature version)
   , testCase "released, patched and newer daemons admit every registered operation" $
       forM_ ["3.8", "3.8a", "3.8z", "3.9", "3.10", "next-4.0"] $ \raw -> do
         version <- release raw
@@ -30,6 +30,14 @@ tests = testGroup "daemon capabilities"
         version <- release raw
         supports (capabilitiesFor version) RawBufferPasteFlag @?= True
       (capabilityInfo RawBufferPasteFlag).handling @?= Fallback
+  , testCase "control attachment flags first exist in tmux 3.2" $ do
+      forM_ ["3.1c", "3.2-rc"] $ \raw -> do
+        version <- release raw
+        requireCapability (capabilitiesFor version) ControlNotifications @?=
+          Left (CapabilityUnavailable ControlNotifications version)
+      forM_ ["3.2", "3.3a", "3.8"] $ \raw -> do
+        version <- release raw
+        requireCapability (capabilitiesFor version) ControlNotifications @?= Right ()
   , testCase "packaged capability metadata matches the runtime registry" $
       Text.readFile "capabilities.json" >>= (@?= capabilityManifest)
   ]
