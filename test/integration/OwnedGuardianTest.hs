@@ -96,7 +96,10 @@ witnessedSuccess mode = do
         mapM_ (\fd -> N.pidReady fd >>= (@?= True)) (daemon:witnesses)
 
 unpublished :: Bool -> IO ()
-unpublished loseHelper = do
+unpublished loseHelper = pendingPublication loseHelper False
+
+pendingPublication :: Bool -> Bool -> IO ()
+pendingPublication loseHelper closeBeforeFailure = do
   executable <- selectedExecutable
   W.withLauncher 1 executable $ \launcher server -> do
     budget <- B.newBudget (P.inspectionBytes+G.transportBytes)
@@ -137,6 +140,10 @@ unpublished loseHelper = do
       W.withWitness server $ \(witness,_) -> do
         N.pidReady witness >>= (@?= False)
         (_,helper) <- G.nativeDescriptors domain
+        when closeBeforeFailure $ do
+          G.requestStop domain
+          G.awaitStopped domain
+          N.pidReady witness >>= (@?= True)
         when loseHelper $ do
           N.cSignal helper 9 >>= (@?= 0)
           threadWaitRead (Fd helper)
@@ -167,7 +174,7 @@ unpublished loseHelper = do
           G.isReleased domain >>= (@?= False)
           readTVarIO domain.full >>= (@?= False)
         else do
-          N.pidReady witness >>= (@?= False)
+          N.pidReady witness >>= (@?= closeBeforeFailure)
           cleanup
           N.pidReady witness >>= (@?= True)) cleanup
 
@@ -368,4 +375,6 @@ tests = testGroup "private guardian scope"
   , testCase "shared capacity does not grant authority over a related runtime owner" relatedIdentity
   , testCase "startup cancellation checkpoints preserve the exception and every physical owner" $
       W.isolated "startup cancellation checkpoints preserve the exception and every physical owner" startupCancellation
+  , testCase "terminal proof retires pending publication after the guardian channel closes" $
+      W.isolated "terminal proof retires pending publication after the guardian channel closes" (pendingPublication False True)
   ]

@@ -267,7 +267,11 @@ retirePending :: Domain -> Int -> Entry -> N.Spec -> IO ()
 retirePending domain key entry spec = do
   wasSent <- readTVarIO entry.sent
   if not wasSent then retireStorage domain key entry else do
-    send domain 14 key nullPtr (-1)
+    complete <- readTVarIO domain.full
+    unless complete $ send domain 14 key nullPtr (-1) `catch` \(problem :: IOException) -> do
+      drain domain
+      terminal <- readTVarIO domain.full
+      unless terminal (throwIO problem)
     awaitStart domain key entry spec >>= \case
       N.Refused _ -> pure ()
       N.Owned child -> do
