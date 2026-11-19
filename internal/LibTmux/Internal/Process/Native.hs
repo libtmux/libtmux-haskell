@@ -90,8 +90,16 @@ data Spec = Spec
   , discardOutput :: !Bool }
 
 data Child = Child
-  { pidfd :: !CInt, input :: !CInt, output :: !CInt, errors :: !CInt }
+  { pidfd :: !CInt, input :: !CInt, output :: !CInt, errors :: !CInt
+  , collector :: !Collector }
   deriving stock (Show)
+
+-- Collection belongs to the physical parent. A delegated pidfd remains the
+-- real process identity while its parent supplies the single collected status.
+data Collector = ParentStatus | DelegatedStatus !(IO (Maybe Exit))
+instance Show Collector where
+  show ParentStatus = "ParentStatus"
+  show (DelegatedStatus _) = "DelegatedStatus"
 
 data Start = Refused !Failure | Owned !Child
   deriving stock (Show)
@@ -153,7 +161,7 @@ launchWith call value = mask_ $ do
         allocaArray 5 $ \result -> do
           rc <- call file argv envp cwd result
           peekArray 5 result >>= \case
-            [fd, input, output, errors, 0] | rc == 0 -> pure (Owned (Child fd input output errors))
+            [fd, input, output, errors, 0] | rc == 0 -> pure (Owned (Child fd input output errors ParentStatus))
             [-1, -1, -1, -1, stage] | rc /= 0 -> case lookup stage phases of
               Just phase -> pure (Refused (LaunchRefused phase rc))
               Nothing -> fail "invalid native refusal stage"
@@ -162,7 +170,9 @@ launchWith call value = mask_ $ do
     phases = zip [1..] [HostFeatures, HostSignalPolicy, Pipes, FileActions, SpawnAttributes, Execute]
 
 waitChild :: Child -> IO (Maybe Exit)
-waitChild = waitWith cWait
+waitChild child = case child.collector of
+  ParentStatus -> waitWith cWait child
+  DelegatedStatus collect -> collect
 
 -- | Consume at most one status. The owner masks and immediately caches it.
 waitWith :: WaitCall -> Child -> IO (Maybe Exit)
