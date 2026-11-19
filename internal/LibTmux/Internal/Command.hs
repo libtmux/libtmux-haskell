@@ -98,7 +98,10 @@ compileCreation nonce (NewWindow placement options) = do
     NextFree session -> Right (creationSessionTarget session <> ":", [])
     At session index -> (, []) <$> slotBytes session index
     Before session index -> (, ["-b"]) <$> slotBytes session index
-    After session index -> (, ["-a"]) <$> slotBytes session index
+    After session index -> do
+      when (Value.windowIndexValue index == 2147483647)
+        (Left (InvalidOperand "window.index" "cannot insert after 2147483647"))
+      (, ["-a"]) <$> slotBytes session index
   compileSpawn "window.creation"
     (map (literal "window.creation")
        (["new-window"] <> ["-d" | not options.selectWindow]
