@@ -28,6 +28,7 @@ configuration below.
 | Built-in options and hooks by daemon release | Implemented through `LibTmux.Options`; see [options and hooks](options.md) |
 | Scoped scalar settings and built-in hooks | `readOption`, `setOption`, `readHook` and `setHook`; see [scope and values](options.md#select-a-store) |
 | Start and retire a private daemon | `withOwnedServer`; see [server scopes](capture.md#open-a-server) |
+| Explicit daemon retirement | `killServer`; see [generation checks](capture.md#retire-a-server-early) |
 | Query interchange and backend optimization | Not implemented |
 | Bounded control notifications and optional pane output records | `withControl`; see [control scope](control.md) |
 | Agent discovery and pane inspection | `libtmux-mcp` adapter; see [MCP setup](agents.md) |

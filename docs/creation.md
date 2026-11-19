@@ -119,6 +119,7 @@ main = do
     paneOwner <- Tmux.createSession server disposable
     Tmux.killPane server paneOwner.pane
     remaining <- Tmux.capture server
+    Tmux.killServer server
     pure (created, added, split, before, after, screen, workerIndices, rejected, remaining)
   case result of
     Left problem -> rethrowIO problem
@@ -150,6 +151,7 @@ main = do
       putStrLn $ "duplicate name rejected: " <> show rejected
       putStrLn $ "original sessions after removal: " <> show
         (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))
+      putStrLn "server retired"
 
 awaitText :: Tmux.Server -> Tmux.PaneRef -> Tmux.PaneWaitOptions -> Text.Text -> IO Tmux.PaneText
 awaitText server pane options expected =
@@ -185,6 +187,7 @@ input-ready
 Enter
 duplicate name rejected: True
 original sessions after removal: True
+server retired
 ```
 
 ## Link, select and arrange windows
@@ -217,6 +220,10 @@ A missing native target fails with `MutationRejected`. A foreign or offline
 reference fails with `InvalidTarget` before dispatch. Command completion
 confirms the removal response. Observe descendant process exit separately.
 
+Use `killServer` to retire the daemon and await its exit. The example calls
+it after the last capture so its detached result stays available.
+[Explicit server retirement](capture.md#retire-a-server-early)
+
 ## Options and process modes
 
 Start from [`defaultSessionOptions`](../src/LibTmux/Creation.hs). Import
@@ -242,9 +249,8 @@ because argv and environment values can contain credentials.
   tmux treats a single argv entry as shell input, so the type requires at
   least one argument after the executable.
 
-There is no processless session mode. The ordinary creation operation also
-requires an existing daemon; it does not bootstrap a first server, reuse an
-existing session, attach a terminal or replace a daemon after failure.
+Session creation always requests an initial process. Call it inside an owned
+or borrowed `Server` scope. [Open a server](capture.md#open-a-server)
 
 ## Window placement and pane targets
 

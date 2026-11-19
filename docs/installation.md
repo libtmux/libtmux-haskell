@@ -93,7 +93,9 @@ The native backend needs:
 - A kernel with compatible pidfd operations.
 - Exclusive ownership of child reaping.
 
-`withOwnedServer` also needs `SO_PEERPIDFD`, available from Linux 6.5, and
+`withOwnedServer` also needs peer pidfds, available from Linux 6.5, and
 a mounted `/proc` with readable process and descriptor information. It checks
 host operations before starting tmux. Pure scalar construction and lookup
-work without a daemon. [Process host contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#launch-and-host-requirements)
+work without a daemon.
+[Linux 6.5 socket options](https://github.com/torvalds/linux/blob/v6.5/include/uapi/asm-generic/socket.h#L128-L129) ·
+[Process host contract](https://github.com/libtmux/libtmux-haskell/blob/master/docs/contracts/process.md#launch-and-host-requirements)

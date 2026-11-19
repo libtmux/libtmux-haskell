@@ -13,14 +13,12 @@
 and retries an observation, and bounds an owning run. It checks exit status,
 rendered output and preservation of the borrowed session and panes.
 
-Put tmux 3.8 or newer on `PATH`,
-Linux 6.9 process-group pidfds and the required Bash builtins, then run from the
-repository root:
+Run from the repository root with tmux 3.8 or newer on `PATH`, Linux 6.9
+process-group pidfds and the Bash builtins described in the program guide.
 
 ```console
 $ cabal run --verbose=0 managed-program
 ```
 
-Compare with [expected.stdout](expected.stdout), then follow the README's daemon
-teardown commands. The [program guide](../../docs/programs.md) describes scope
-ownership, bounds, cancellation, startup requirements and recovery.
+The example retires its private daemon automatically.
+[Expected output](expected.stdout) · [Program guide](../../docs/programs.md)

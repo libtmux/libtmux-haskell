@@ -48,8 +48,8 @@ Update the package index:
 $ cabal update
 ```
 
-Requires Linux x86_64 with glibc 2.39 or newer, GHC 9.14 and tmux 3.3a or
-newer. The first example also uses Linux 6.5 peer pidfds.
+Requires Linux x86_64 with glibc 2.39 or newer, GHC 9.14, Cabal 3.18 or
+newer, and tmux 3.3a or newer. The first example uses Linux 6.5 peer pidfds.
 [Installation](https://libtmux.org/en/haskell/latest/guides/installation/) ·
 [Host requirements](docs/installation.md#native-backend-host-requirements)
 
@@ -395,6 +395,10 @@ More: [program ownership, bounds and recovery](docs/programs.md).
 
 Pass its socket path to `serverConfig`. The scope retires the library’s
 connection resources and leaves the daemon running.
+
+[`killServer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-killserver/)
+waits for the daemon generation admitted by this handle to exit.
+[Generation checks and recovery](docs/capture.md#retire-a-server-early)
 
 ## Find the right guide
 

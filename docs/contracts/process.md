@@ -1,7 +1,7 @@
 # Private process ownership
 
-This backend owns one-shot child processes. It is private implementation
-work, not a public client or a proof that a tmux operation completed.
+The backend owns native command clients and the descendant domain of a
+private daemon. Command completion has a separate native reply contract.
 
 ## Launch and host requirements
 
@@ -24,6 +24,19 @@ Arguments, environment and cwd use explicit bytes. Vectors reject NULs,
 relative executable/cwd paths, malformed environment entries, more than
 4,096 combined arguments/environment entries, and more than 64 KiB of
 encoded strings and pointer storage. No shell parses those vectors.
+
+## Private server and explicit retirement
+
+`withOwnedServer` uses a dedicated Linux child subreaper for `tmux -D` and
+its native clients. It includes pane processes that fork or change sessions.
+Retirement closes admission, observes the admitted daemon's exit through
+its pidfd, and waits for the subreaper's kernel no-child witness before
+removing the private directory. Incomplete retirement keeps a cleanup owner.
+
+`SO_PEERPIDFD` binds the socket peer to an operating-system process. A borrowed
+handle can acquire a retirement capability during adoption. `killServer`
+checks that capability against the pinned listener and signals through its
+held descriptor. Ordinary borrowed-scope exit releases the capability.
 
 ## Streams and bounds
 

@@ -14,7 +14,7 @@
 -- 'createSession', 'createWindow' and 'splitPane' return historical identities.
 -- 'renameSession',
 -- 'renameWindow' and 'setPaneTitle' update generation-bound targets.
--- 'killSession', 'killWindow' and 'killPane' remove those targets.
+-- 'killServer', 'killSession', 'killWindow' and 'killPane' retire their targets.
 -- Capture again to observe their effects.
 --
 -- Operational failures use t'TmuxException'. 'tryTmux' catches that type only.
@@ -24,7 +24,7 @@ module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration, serverCapabilities
   , withControl
-  , OwnedServerConfig (..), defaultOwnedServerConfig, withOwnedServer, killServer
+  , OwnedServerConfig (..), defaultOwnedServerConfig, withOwnedServer
     -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
     -- * Session, window and pane creation
@@ -47,7 +47,7 @@ module LibTmux.Server
     -- * Absolute geometry
   , resizePane, resizePaneWith, resizeWindow, resizeWindowWith
     -- * Remove a target
-  , killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
+  , killServer, killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
     -- * Named paste buffers
   , loadBuffer, loadBufferWith, readBuffer, pasteBuffer, pasteBufferWith
     -- * Pane input
@@ -212,8 +212,8 @@ withServer config action = do
 -- | Start an empty daemon in a fresh private directory. The executable is
 -- resolved once; the scope chooses and owns its endpoint.
 data OwnedServerConfig = OwnedServerConfig
-  { tmuxExecutable :: !PosixPath
-  , operationTimeout :: !NominalDiffTime
+  { tmuxExecutable :: !PosixPath -- ^ Absolute executable or program to resolve on PATH.
+  , operationTimeout :: !NominalDiffTime -- ^ Default operation deadline in seconds, positive and at most ten.
   } deriving stock (Eq, Show)
 
 -- | Resolve @tmux@ on @PATH@ and use a two-second default operation deadline.
@@ -222,9 +222,9 @@ defaultOwnedServerConfig = OwnedServerConfig (Os.fromBytestring "tmux") 2
 
 -- | Run with a private foreground daemon. The daemon begins with no sessions.
 -- The host must support peer pidfds and expose process data through @/proc@.
--- Cleanup includes every descendant
--- of its native clients and terminal applications. Helper loss or replaced
--- endpoint names retain a cleanup owner through "LibTmux.Recovery".
+-- Cleanup includes every descendant of its native clients and terminal
+-- applications. Helper loss or replaced endpoint names retain a cleanup owner
+-- through "LibTmux.Recovery".
 withOwnedServer :: OwnedServerConfig -> (Server -> IO a) -> IO a
 withOwnedServer config action = do
   duration <- limitedDuration OwnedOperationTimeout config.operationTimeout
@@ -289,10 +289,11 @@ withAdoptedRetirement runtime handle executable duration action =
         (.unresolved) <$> R.inspectServerHandle runtime handle
       unless (null remaining) (throwIO (Owned.OperationsUnresolved (length remaining)))
 
--- | Retire this admitted daemon generation through its held process descriptor.
--- Later calls through this Server fail with 'ServerClosed'. The private scope
--- also retires descendants and endpoint names; an adopted scope keeps unrelated
--- handles and filesystem names. Incomplete cleanup retains a recovery owner.
+-- | Await the exit of this admitted daemon generation. A borrowed scope
+-- must have bound a pidfd to the listener during adoption. A stale listener
+-- is refused before signalling. The private scope also retires its descendants
+-- and endpoint directory. Later operations through this handle fail with
+-- 'ServerClosed'. Incomplete cleanup retains an owner in the exception context.
 killServer :: Server -> IO ()
 killServer (Server _ handle _ _ _ retire) = operational $ do
   closed <- atomically (readTVar (R.serverPool handle).closing)

@@ -24,6 +24,20 @@ and endpoint settings.
   socket's parent.
 - A Linux host; see [installation](installation.md#native-backend-host-requirements).
 
+## Retire a server early
+
+Call `killServer server` to retire the daemon before the scope returns.
+For a private daemon, the call also waits for its descendant processes and
+removes the owned directory. [Creation and removal example](creation.md#remove-a-target)
+
+A borrowed connection can signal only the daemon it identified when it
+opened. `killServer` refuses if that capability could not be acquired, or
+if the original listener changed. It closes this handle after daemon exit.
+Other handles keep their own lifetimes. [Server API](../src/LibTmux/Server.hs)
+
+An interrupted retirement keeps its cleanup owner in the exception context.
+[Errors and recovery](#errors-and-recovery)
+
 ## Physical entities and appearances
 
 A session links windows at numeric indices. One physical window can appear at

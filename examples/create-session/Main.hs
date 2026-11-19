@@ -89,6 +89,7 @@ main = do
     paneOwner <- Tmux.createSession server disposable
     Tmux.killPane server paneOwner.pane
     remaining <- Tmux.capture server
+    Tmux.killServer server
     pure (created, added, split, before, after, screen, workerIndices, rejected, remaining)
   case result of
     Left problem -> rethrowIO problem
@@ -120,6 +121,7 @@ main = do
       putStrLn $ "duplicate name rejected: " <> show rejected
       putStrLn $ "original sessions after removal: " <> show
         (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))
+      putStrLn "server retired"
 
 awaitText :: Tmux.Server -> Tmux.PaneRef -> Tmux.PaneWaitOptions -> Text.Text -> IO Tmux.PaneText
 awaitText server pane options expected =

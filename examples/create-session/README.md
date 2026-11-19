@@ -9,13 +9,10 @@
 
 # Create a session, window and pane
 
-[Main.hs](Main.hs) creates a session with a direct process argv, uses its actual
-window and pane references, and checks the environment of the new session.
-It adds a window and splits an explicit pane. It
-links the new window at two indices, selects a pane, tiles the window and
-unlinks the second index. It sends input to the split pane, waits for fresh text from the running process, checks
-duplicate name rejection and removes its new targets.
-It reads the detached graph after closing the Server scope.
+[Main.hs](Main.hs) starts a private daemon and uses returned references to
+create, link and select its windows and panes. It sends input to the split
+pane, waits for fresh text, then removes its targets and retires the daemon.
+The detached graph remains available after retirement.
 
 Run from the repository root.
 
@@ -23,6 +20,5 @@ Run from the repository root.
 $ cabal run --verbose=0 create-session
 ```
 
-Compare with [expected.stdout](expected.stdout), then follow the README's
-teardown commands. The [creation guide](../../docs/creation.md) explains
-process modes, historical identities, deadlines and recovery.
+Compare with [expected.stdout](expected.stdout).
+[Creation guide](../../docs/creation.md)
