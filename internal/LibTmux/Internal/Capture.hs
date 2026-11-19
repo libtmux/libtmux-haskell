@@ -7,14 +7,15 @@
 -- "LibTmux.Server" owns the public scope and cleanup policy.
 module LibTmux.Internal.Capture
   ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
-  , captureVersionWith, capturePaneWith
+  , captureVersionWith, capturePaneWith, waitForPaneText, TextObservation (..)
   , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
   ) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (STM)
 import Control.DeepSeq (NFData, force)
 import Control.Exception (Exception, ExceptionWithContext (..), Handler (..), SomeException,
-  catchNoPropagate, catches, evaluate, mask, onException, rethrowIO, someExceptionContext, throwIO)
+  catchNoPropagate, catches, evaluate, fromException, mask, onException, rethrowIO, someExceptionContext, throwIO)
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context qualified as Context
 import Control.Monad (forM, when)
@@ -22,10 +23,12 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.IORef
 import Data.Maybe (listToMaybe)
+import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Id (PaneId)
-import LibTmux.Internal.Command (PaneCaptureReply)
+import LibTmux.Internal.Command (PaneCaptureReply (CaptureRejected))
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Graph qualified as Session (Session (..))
 import LibTmux.Internal.Graph qualified as Window (Window (..))
@@ -88,6 +91,54 @@ capturePaneWith runtime client executable duration pane options =
   withinDeadline runtime client duration $ \receipt deadline -> do
     left <- remaining deadline
     owned runtime receipt (R.readPaneCaptureWith P.defaultHooks left runtime client executable pane options)
+
+data TextObservation
+  = TextMatched !Text
+  | TextPaneEnded !(Maybe Text)
+  | TextWaitExpired !(Maybe Text) !(Maybe CaptureRecovery)
+
+-- | Acquire the visible evidence and liveness through the pinned daemon.
+-- The complete wait shares one monotonic deadline and one active read owner.
+waitForPaneText :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> PaneId
+  -> PaneCaptureOptions -> (PaneCaptureReply -> IO Text) -> Text -> Int -> IO TextObservation
+waitForPaneText runtime client executable duration pane options decode needle initialCount = do
+  latest <- newIORef Nothing
+  let observe = do
+        (_, _, result) <- withinDeadline runtime client duration
+          (\receipt deadline -> loop latest receipt deadline initialCount)
+        maybe (TextPaneEnded <$> readIORef latest) (pure . TextMatched) result
+  catchNoPropagate observe $ \original@(ExceptionWithContext context (problem :: SomeException)) ->
+    if fromException problem == Just CaptureDeadline || fromException problem == Just R.ReadExpired
+      then TextWaitExpired <$> readIORef latest <*> pure (listToMaybe (Context.getExceptionAnnotations context))
+      else rethrowIO original
+  where
+    loop latest receipt deadline required = do
+      reply <- nextWaitRead runtime receipt deadline $ \left ->
+        R.readPaneCaptureWith P.defaultHooks left runtime client executable pane options
+      case reply of
+        CaptureRejected _ -> do
+          alive <- paneAlive receipt deadline
+          if alive then Just <$> decode reply else pure Nothing
+        _ -> do
+          text <- decode reply
+          writeIORef latest (Just text)
+          let count = Text.count needle text
+          if count > required then pure (Just text) else do
+            alive <- paneAlive receipt deadline
+            if not alive then pure Nothing else do
+              left <- remaining deadline
+              threadDelay (min 100000 left)
+              loop latest receipt deadline (if count == 0 then 0 else required)
+
+    paneAlive receipt deadline = nextWaitRead runtime receipt deadline $ \left ->
+      R.readPaneAliveWith P.defaultHooks left runtime client executable pane
+
+nextWaitRead :: R.Runtime -> IORef (Maybe R.ReadReceipt) -> Word64 -> (Int -> IO (R.Request value)) -> IO value
+nextWaitRead runtime receipt deadline start = do
+  left <- remaining deadline
+  value <- owned runtime receipt (start left)
+  writeIORef receipt Nothing
+  pure value
 
 captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do
