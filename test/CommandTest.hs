@@ -6,12 +6,39 @@ import LibTmux.Id qualified as Id
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.TmuxText qualified as Label
 import LibTmux.Pane qualified as Pane
+import LibTmux.Value qualified as Value
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
 tests :: TestTree
 tests = testGroup "typed mutation arguments"
-  [ testCase "literal formats and final separators stay inside one operand" $ do
+  [ testCase "absolute resizes retain exact targets and requested axes" $ do
+      pane <- require (Id.parsePaneId "%3")
+      window <- require (Id.parseWindowId "@7")
+      width <- require (Value.mkDimension 100)
+      height <- require (Value.mkDimension 40)
+      forM_ [(Value.ResizeWidth width, ["-x", "100"]),
+             (Value.ResizeHeight height, ["-y", "40"]),
+             (Value.ResizeBoth width height, ["-x", "100", "-y", "40"])] $ \(size, arguments) -> do
+        C.compileMutation (C.ResizePane pane size) @?= Right (["resize-pane", "-t", "%3"] <> arguments)
+        C.compileMutation (C.ResizeWindow window size) @?= Right (["resize-window", "-t", "@7"] <> arguments)
+  , testCase "resize validates every axis against the shared native bound" $ do
+      pane <- require (Id.parsePaneId "%3")
+      window <- require (Id.parseWindowId "@7")
+      small <- require (Value.mkDimension 50)
+      largest <- require (Value.mkDimension 10000)
+      forM_ [10001, 2147483648, 10 ^ (100 :: Int)] $ \number -> do
+        large <- require (Value.mkDimension number)
+        forM_ [(C.ResizePane pane (Value.ResizeWidth large), "pane.width"),
+               (C.ResizePane pane (Value.ResizeHeight large), "pane.height"),
+               (C.ResizePane pane (Value.ResizeBoth small large), "pane.height"),
+               (C.ResizeWindow window (Value.ResizeWidth large), "window.width"),
+               (C.ResizeWindow window (Value.ResizeHeight large), "window.height"),
+               (C.ResizeWindow window (Value.ResizeBoth large small), "window.width")] $ \(request, field) ->
+          C.compileMutation request @?= Left (C.InvalidOperand field "dimension exceeds 10000 cells")
+      C.compileMutation (C.ResizeWindow window (Value.ResizeBoth largest largest)) @?=
+        Right ["resize-window", "-t", "@7", "-x", "10000", "-y", "10000"]
+  , testCase "literal formats and final separators stay inside one operand" $ do
       window <- require (Id.parseWindowId "@7")
       C.compileMutation (C.RenameWindow window "#{pid};") @?=
         Right ["rename-window", "-t", "@7", "--", "#{a:35}{pid}\\;"]

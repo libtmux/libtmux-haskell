@@ -61,6 +61,8 @@ data Mutation
   | LoadBuffer !ByteString !ByteString
   | SaveBuffer !ByteString !ByteString
   | PasteBuffer !Id.PaneId !ByteString !PasteNewlines !Bool
+  | ResizePane !Id.PaneId !Value.Resize
+  | ResizeWindow !Id.WindowId !Value.Resize
   deriving stock (Eq, Show)
 
 data EnvironmentChange
@@ -529,6 +531,12 @@ compileMutation = \case
       (target "paste-buffer" (Id.renderPaneId pane)
         <> ["-r" | newlines == PreserveLineFeeds] <> ["-S" | rawFlag] <> ["-b"])
       [name]
+  ResizePane ident size ->
+    (target "resize-pane" (Id.renderPaneId ident) <>) <$>
+      resizeArguments (Field.fieldKey Field.PaneWidth) (Field.fieldKey Field.PaneHeight) size
+  ResizeWindow ident size ->
+    (target "resize-window" (Id.renderWindowId ident) <>) <$>
+      resizeArguments (Field.fieldKey Field.WindowWidth) (Field.fieldKey Field.WindowHeight) size
   SendPaneText ident text ->
     literalArguments "pane.input" (target "send-keys" (Id.renderPaneId ident) <> ["-l", "--"])
       [Utf8.encodeUtf8 text]
@@ -546,6 +554,19 @@ compileMutation = \case
           expansionCost = 6 * toInteger (Bytes.count 35 value) + if endsSeparator value then 1 else 0
       checkCost key value minimumCost expansionCost
       pure (prefix <> [protectSeparator (protectFormat value)])
+
+-- Both axes must pass before the runner admits any native effect. resize-pane
+-- can unzoom or change width before its native height validation fails.
+resizeArguments :: Text -> Text -> Value.Resize -> Either ArgumentError [ByteString]
+resizeArguments widthKey heightKey = \case
+  Value.ResizeWidth width -> cells widthKey "-x" width
+  Value.ResizeHeight height -> cells heightKey "-y" height
+  Value.ResizeBoth width height -> (<>) <$> cells widthKey "-x" width <*> cells heightKey "-y" height
+  where
+    cells key flag value = do
+      when (Value.dimensionValue value > 10000)
+        (Left (InvalidOperand key "dimension exceeds 10000 cells"))
+      pure [flag, Ascii.pack (show (Value.dimensionValue value))]
 
 -- The claim and effect run in one daemon queue. Nonce acknowledgements belong
 -- to the composite operation; arbitrary hook output is not parsed as framing.
