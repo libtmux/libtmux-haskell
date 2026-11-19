@@ -14,6 +14,7 @@ import GHC.Conc (threadWaitRead)
 import LibTmux qualified as Tmux
 import LibTmux.Creation qualified as Creation
 import LibTmux.Internal.OwnedServer qualified as OS
+import LibTmux.Internal.ControlFrames qualified as ControlFrames
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
@@ -24,6 +25,7 @@ import System.FilePath (takeDirectory)
 import System.OsPath.Posix qualified as Path
 import System.OsString.Posix qualified as Os
 import System.Posix.Files.ByteString qualified as Files
+import System.Posix.IO.ByteString qualified as Posix
 import System.Posix.Signals (sigUSR1)
 import System.Posix.Types (Fd (..))
 import System.Process.Typed (nullStream, proc, readProcess, setStdin)
@@ -111,29 +113,47 @@ replacedPath = Fixture.withFixture $ \first -> Fixture.withFixture $ \second ->
 
 rebound :: IO ()
 rebound = Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server ->
-  withWitness server $ \daemon -> do
-    let socket=Bytes.pack fixture.socket
-    original <- OS.statusIfPresent socket
-    bracket (Bytes.useAsCString (Bytes.pack fixture.directory) OS.cWatchStart >>= \fd ->
-      if fd<0 then N.raise (negate fd) else pure fd) N.close $ \watch -> do
-        Files.removeLink socket
-        N.cSignal (fromIntegral daemon) sigUSR1 >>= (@?= 0)
-        let changed=OS.statusIfPresent socket >>= \current ->
-              if fmap OS.identity current/=fmap OS.identity original && maybe False (const True) current
-                then pure ()
-                else threadWaitRead (Fd watch) >> OS.cWatchDrain watch >>= \rc ->
-                  if rc<0 then N.raise (negate rc) else changed
-        changed
-    -- Creation precedes the handler closing its old listener. A reply through
-    -- the new source socket proves that the signal handler returned.
-    Fixture.command fixture ["display-message","-p","#{pid}"] >>= \(code,_,errors) ->
-      (code,errors) @?= (ExitSuccess,"")
-    Tmux.tryTmux (Tmux.killServer server) >>= \case
-      Left (ExceptionWithContext _ (Tmux.OperationFailed _)) -> pure ()
-      _ -> assertFailure "rebound generation authorized termination"
-    N.pidReady (fromIntegral daemon) >>= (@?= False)
-    Fixture.command fixture ["display-message","-p","#{pid}"] >>= \(code,_,errors) ->
-      (code,errors) @?= (ExitSuccess,"")
+  withWitness server $ \daemon -> Fixture.withClient fixture (Fixture.Pipe,Fixture.Pipe,Fixture.Pipe)
+    ["-u","-N","-S",fixture.socket,"-C","attach-session","-t","fixture"] $ \control -> do
+      decoder <- newIORef ControlFrames.newDecoder
+      let reply = Fixture.readSome control.output >>= \case
+            Nothing -> fail "control connection ended before its completion reply"
+            Just bytes -> do
+              current <- readIORef decoder
+              (next,frames) <- either (fail . show) pure (ControlFrames.feed current bytes)
+              writeIORef decoder next
+              when (any rejected frames) (fail "control completion command was rejected")
+              if any succeeded frames then pure () else reply
+          succeeded (ControlFrames.Reply ControlFrames.ReplySucceeded _) = True
+          succeeded _ = False
+          rejected (ControlFrames.Reply ControlFrames.ReplyRejected _) = True
+          rejected (ControlFrames.Exit _) = True
+          rejected _ = False
+      reply
+      let socket=Bytes.pack fixture.socket
+      original <- OS.statusIfPresent socket
+      bracket (Bytes.useAsCString (Bytes.pack fixture.directory) OS.cWatchStart >>= \fd ->
+        if fd<0 then N.raise (negate fd) else pure fd) N.close $ \watch -> do
+          Files.removeLink socket
+          N.cSignal (fromIntegral daemon) sigUSR1 >>= (@?= 0)
+          let changed=OS.statusIfPresent socket >>= \current ->
+                if fmap OS.identity current/=fmap OS.identity original && maybe False (const True) current
+                  then pure ()
+                  else threadWaitRead (Fd watch) >> OS.cWatchDrain watch >>= \rc ->
+                    if rc<0 then N.raise (negate rc) else changed
+          changed
+      -- The new inode proves the signal handler has begun. A matched reply on
+      -- this pre-existing connection proves it returned and closed the old listener.
+      let command="display-message -p libtmux-rebind-complete\n"
+      count <- Posix.fdWrite control.input command
+      fromIntegral count @?= Bytes.length command
+      reply
+      Tmux.tryTmux (Tmux.killServer server) >>= \case
+        Left (ExceptionWithContext _ (Tmux.OperationFailed _)) -> pure ()
+        _ -> assertFailure "rebound generation authorized termination"
+      N.pidReady (fromIntegral daemon) >>= (@?= False)
+      Fixture.command fixture ["display-message","-p","#{pid}"] >>= \(code,_,errors) ->
+        (code,errors) @?= (ExitSuccess,"")
 
 cancelledKill :: IO ()
 cancelledKill = Fixture.withFixture $ \fixture -> bracket (R.newRuntime P.normalFork) R.awaitCleanup $ \runtime -> do
