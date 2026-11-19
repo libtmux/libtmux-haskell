@@ -91,6 +91,8 @@ extra-source-files:
   examples/managed-program/cabal.project.vcs
   .tool-versions
   cbits/process.h
+  test-support/guardian-launcher.c
+  test-support/guardian-witness.c
   test-support/process-child.c
   test-support/process-policy.c
   pyproject.toml
@@ -291,8 +293,8 @@ test-suite integration
   type: exitcode-stdio-1.0
   hs-source-dirs: test/integration test-support internal
   main-is: Main.hs
-  other-modules: PublicControlTest LibTmux.Internal.Control LibTmux.Internal.ControlFrames PublicSettingsTest PublicResizeTest PublicWindowCreationTest PublicProgramTest LibTmux.Internal.Creation PublicCreationTest RuntimeCreationTest PublicMutationTest RuntimeMutationTest CommandIntegrationTest LibTmux.Internal.Mutation LibTmux.Internal.Command PublicServerTest ScopeTest LibTmux.Internal.Scope EntityCaptureTest LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest OwnedGuardianTest ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native LibTmux.Internal.Process.Guardian LibTmux.Internal.OwnedServer
-  c-sources: test-support/fixture-watch.c test-support/process-gate.c cbits/process.c cbits/guardian.c cbits/guardian-client.c cbits/owned-socket.c
+  other-modules: PublicControlTest LibTmux.Internal.Control LibTmux.Internal.ControlFrames PublicSettingsTest PublicResizeTest PublicWindowCreationTest PublicProgramTest LibTmux.Internal.Creation PublicCreationTest RuntimeCreationTest PublicMutationTest RuntimeMutationTest CommandIntegrationTest LibTmux.Internal.Mutation LibTmux.Internal.Command PublicServerTest ScopeTest LibTmux.Internal.Scope EntityCaptureTest LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy RuntimeTest RuntimeReadTest LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe Fixture FixtureTest FrameIntegrationTest SocketPinTest ProcessTest OwnedGuardianTest GuardianWitness ProcessGate LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native LibTmux.Internal.Process.Guardian LibTmux.Internal.OwnedServer
+  c-sources: test-support/fixture-watch.c test-support/process-gate.c test-support/guardian-witness.c cbits/process.c cbits/guardian.c cbits/guardian-client.c cbits/owned-socket.c
   include-dirs: cbits
   extra-libraries: dl
   cc-options: -std=c11 -Wall -Wextra
