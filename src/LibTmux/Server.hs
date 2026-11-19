@@ -22,6 +22,7 @@
 module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration, serverCapabilities
+  , withControl
     -- * Mutation deadlines
   , MutationOptions (..), defaultMutationOptions
     -- * Session, window and pane creation
@@ -78,10 +79,13 @@ import Data.Type.Coercion (coerceWith, sym)
 import Data.Word (Word32)
 import LibTmux.Environment (EnvironmentEntry (..), EnvironmentScope (..), EnvironmentVisibility)
 import LibTmux.Id (SessionId)
+import LibTmux.Id qualified as Id
 import LibTmux.Internal.Budget qualified as B
 import LibTmux.Internal.Buffer qualified as Buffer
 import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
+import LibTmux.Internal.Control (Control, ControlOptions (..))
+import LibTmux.Internal.Control qualified as Control
 import LibTmux.Creation qualified as Creation
 import LibTmux.Capabilities qualified as Capabilities
 import LibTmux.Internal.Creation qualified as Create
@@ -90,6 +94,7 @@ import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
+import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Program qualified as Program
 import LibTmux.Program (Program, ProgramOptions, ProgramResult)
 import LibTmux.Internal.Runtime qualified as R
@@ -234,6 +239,21 @@ serverGeneration (Server _ handle _ _ _) = Pin.pinGeneration (R.serverPin handle
 -- replacement daemon; subsequent operations fail through that same pin.
 serverCapabilities :: Server -> Capabilities.Capabilities
 serverCapabilities (Server _ _ _ _ available) = available
+
+-- | Observe a session from this Server through an attached control client.
+-- Start the callback after tmux acknowledges the selected session. Read
+-- bounded notifications through "LibTmux.Control" and make changes through
+-- the Server operations. Closing the callback retires its own client.
+withControl :: Server -> SessionRef -> ControlOptions -> (Control -> IO a) -> IO a
+withControl server@(Server _ handle executable duration available) (G.SessionRef generation ident) options action = do
+  checkTarget server generation
+  either throwIO pure (Capabilities.requireCapability available Capabilities.ControlNotifications)
+  let session = Utf8.encodeUtf8 (Id.renderSessionId ident)
+      flags = if options.includePaneOutput then "ignore-size" else "ignore-size,no-output"
+      args = [executable, "-u", "-N", "-S", Pin.pinPath (R.serverPin handle),
+        "-C", "attach-session", "-E", "-f", flags, "-t", session]
+      spec = N.spec executable args
+  Control.withControlClient (R.serverPool handle) spec duration session options action
 
 -- | Run a literal executable/argv application in a new owned session on this
 -- daemon, then terminate its group and remove its resources. The callback may
