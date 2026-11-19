@@ -38,10 +38,17 @@ main = getArgs >>= \case
         Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure True
         Left problem -> rethrowIO problem
         Right _ -> die "Duplicate creation unexpectedly succeeded"
-      pure (created, before, after, rejected)
+      Tmux.killSession server created.session
+      let disposable = options {Creation.name = Nothing}
+      windowOwner <- Tmux.createSession server disposable
+      Tmux.killWindow server windowOwner.window
+      paneOwner <- Tmux.createSession server disposable
+      Tmux.killPane server paneOwner.pane
+      remaining <- Tmux.capture server
+      pure (created, before, after, rejected, remaining)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, before, after, rejected) -> do
+      Right (created, before, after, rejected, remaining) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
@@ -54,6 +61,8 @@ main = getArgs >>= \case
         putStrLn $ "captured sessions: " <> show (length (Tmux.sessions before)) <> " -> " <> show (length (Tmux.sessions after))
         putStrLn $ "created window links: " <> show (length links)
         putStrLn $ "duplicate name rejected: " <> show rejected
+        putStrLn $ "original sessions after removal: " <> show
+          (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))
   _ -> die "Usage: create-session SOCKET TMUX_EXECUTABLE"
 
 require :: Show problem => String -> Either problem a -> IO a

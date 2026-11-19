@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: aafa58f8c61f162f9c96d7ebbd893d69e25f8d04
+  tag: bff5ed9a10df52133bedc3193094b71b68793b16
 ```
 
 Update the package index:
@@ -311,8 +311,9 @@ $ cabal run --verbose=0 create-session -- \
     "$(command -v tmux)"
 ```
 
-It also checks duplicate-name rejection. The new session stays running until
-the demo server is stopped. More: [creation and recovery](docs/creation.md).
+After checking duplicate-name rejection, the example removes the targets it
+created and checks that the original sessions survive. See the
+[creation and removal guide](docs/creation.md#remove-a-target).
 
 ## Run a terminal application
 

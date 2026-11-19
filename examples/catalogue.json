@@ -219,7 +219,7 @@
         "--expected-output",
         "examples/create-session/expected.stdout",
         "--expected-panes",
-        "2"
+        "1"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -237,7 +237,7 @@
           "archive-consumer"
         ]
       },
-      "fixture_panes": 2
+      "fixture_panes": 1
     },
     {
       "id": "managed-program",

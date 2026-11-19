@@ -11,11 +11,11 @@
 
 [Main.hs](Main.hs) creates a session with a direct process argv, uses its actual
 window and pane references, and refreshes the object graph. It checks duplicate
-name rejection and reads the detached values after closing the Server scope.
+name rejection, removes its new targets and reads the detached values after
+closing the Server scope.
 
-The program leaves its new session running. Use the
-[private demonstration server](../../README.md), then run from the repository
-root:
+Use the [private demonstration server](../../README.md), then run from the
+repository root:
 
 ```console
 $ cabal run --verbose=0 create-session -- \
