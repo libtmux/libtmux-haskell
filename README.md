@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: ca11d553b4abe9884639a32af6cee1953ed90baf
+  tag: 7b5e4db7259290c7034b1f43e20c2e89737a6074
 ```
 
 Update the package index:
@@ -344,6 +344,12 @@ The creation example waits for a readiness marker, captures a baseline,
 sends input and waits for a new occurrence with `FreshSince baseline`.
 See [text waits](docs/mutations.md#wait-for-pane-text) for timeout and exit
 results.
+
+### [`linkWindow`](src/LibTmux/Server.hs) to share a window across slots
+
+The creation example links the worker window at two indices. It selects the
+new link, chooses a pane, applies `Tiled` and removes the extra link. See
+[window links and focus](docs/creation.md#link-select-and-arrange-windows).
 
 ## Run a terminal application
 

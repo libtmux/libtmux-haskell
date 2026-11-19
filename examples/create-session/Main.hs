@@ -20,6 +20,7 @@ main = getArgs >>= \case
     socket <- Path.encodeFS socketArgument
     executable <- Path.encodeFS executableArgument
     width <- require "Width" (Tmux.mkDimension 120)
+    extraIndex <- require "Second link index" (Tmux.mkWindowIndex 4)
     let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
         options = Creation.defaultSessionOptions
           { Creation.name = Just "created-workspace"
@@ -34,14 +35,23 @@ main = getArgs >>= \case
       Tmux.setPaneTitle server created.pane "editor-ready"
       added <- Tmux.createWindow server (Creation.NextFree created.session)
         Creation.defaultWindowOptions {Creation.windowLabel = Just "worker", Creation.windowProcess = options.process}
-      split <- Tmux.splitPane server
-        (Creation.WindowSlot added.session added.windowIndex) added.pane
+      let workerSlot = Creation.WindowSlot added.session added.windowIndex
+          secondLink = Creation.WindowSlot added.session extraIndex
+      split <- Tmux.splitPane server workerSlot added.pane
         Creation.defaultSplitOptions
           { Creation.direction = Creation.LeftRight
           , Creation.size = Creation.SplitPercent 25
           , Creation.splitProcess = Creation.ShellCommand
               "stty -echo; printf 'input-ready\\n'; exec /bin/cat -"
           }
+      Tmux.linkWindow server workerSlot secondLink
+      Tmux.selectWindowLink server secondLink
+      Tmux.selectExactPane server secondLink split.pane
+      Tmux.selectLayout server secondLink Tmux.Tiled
+      linked <- Tmux.capture server
+      linkedSlots <- require "Worker links" (Tmux.linksForSession linked added.session)
+      let workerIndices = [Tmux.windowIndexValue link.index | link <- linkedSlots, link.window == added.window]
+      Tmux.unlinkWindow server secondLink
       _ <- awaitText server split.pane Tmux.defaultPaneWait "input-ready"
       baseline <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
       Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
@@ -61,10 +71,10 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, added, split, before, after, screen, rejected, remaining)
+      pure (created, added, split, before, after, screen, workerIndices, rejected, remaining)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, added, split, before, after, screen, rejected, remaining) -> do
+      Right (created, added, split, before, after, screen, workerIndices, rejected, remaining) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
@@ -82,6 +92,7 @@ main = getArgs >>= \case
         putStrLn $ "created session links: " <> show (length links)
         putStrLn $ "new window: " <> Text.unpack workerLabel
         putStrLn $ "new window panes: " <> show (length panes)
+        putStrLn $ "same worker window at indices: " <> show workerIndices
         putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
         putStrLn $ "captured pane rows match height: " <> show
           (toInteger (length (Text.lines (Tmux.paneText screen))) == Tmux.dimensionValue splitPane.height)

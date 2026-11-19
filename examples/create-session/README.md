@@ -10,8 +10,9 @@
 # Create a session, window and pane
 
 [Main.hs](Main.hs) creates a session with a direct process argv, uses its actual
-window and pane references, adds a window and splits an explicit pane. It sends
-input to that pane, waits for fresh text from the running process, checks
+window and pane references, adds a window and splits an explicit pane. It
+links the new window at two indices, selects a pane, tiles the window and
+unlinks the second index. It sends input to the split pane, waits for fresh text from the running process, checks
 duplicate name rejection and removes its new targets.
 It reads the detached graph after closing the Server scope.
 
