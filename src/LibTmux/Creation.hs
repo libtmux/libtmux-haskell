@@ -31,7 +31,7 @@ import System.OsString.Posix (PosixString)
 -- treats a single entry as shell input. 'DirectCommand' encodes that condition.
 data InitialProcess
   = DefaultProcess -- ^ Use tmux's configured default-command or default shell.
-  | ShellCommand !ByteString -- ^ Run command bytes through tmux's default shell.
+  | ShellCommand !ByteString -- ^ Native shell-command bytes; an empty split command creates a processless pane.
   | DirectCommand !PosixString !(NonEmpty PosixString) -- ^ Execute the program and argv directly.
   deriving stock (Eq)
 
@@ -66,6 +66,7 @@ data WindowSlot = WindowSlot !SessionRef !WindowIndex
 -- Relative insertion can shift existing indices before later creation fails;
 -- failure does not promise rollback. Grouped sessions can share these effects.
 -- If a relative slot is vacant, tmux creates at that index without insertion.
+-- 'After' refuses index 2147483647 before dispatch: no larger index exists.
 data WindowPlacement
   = NextFree !SessionRef -- ^ Let tmux choose a free index from the session's base-index.
   | At !WindowSlot -- ^ Create at the exact index, subject to 'WindowCollision'.
