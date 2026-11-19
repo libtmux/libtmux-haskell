@@ -6,7 +6,8 @@ module LibTmux.Pane
 
 -- | A visible screen or an inclusive range relative to the first visible row.
 -- Negative offsets address history. tmux clamps the endpoints to its retained
--- rows. Offset zero is the first visible row.
+-- rows. Offset zero is the first visible row. Use ordered offsets from
+-- -2147483647 through 32767.
 data PaneRows
   = VisibleRows
   | RowsBetween !Int !Int
