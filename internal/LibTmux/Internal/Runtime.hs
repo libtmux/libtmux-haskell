@@ -74,7 +74,7 @@ data Runtime = Runtime
   , scheduler :: !S.Scheduler, owners :: !(TVar [NativeOwner])
   }
 data ServerOwner = ServerOwner
-  { key :: !Int, group :: !S.Group, pool :: !P.Pool
+  { key :: !Int, runtimeIdentity :: !Unique, group :: !S.Group, pool :: !P.Pool
   , closeFailure :: !(TVar (Maybe SomeException))
   , shutdownRun :: !(TVar (Maybe (TMVar (Either SomeException ()))))
   }
@@ -271,7 +271,7 @@ newServerOwner runtime@Runtime {forker} = mask_ $ do
     mapM_ (P.bindBackend pool) runtime.backend
     closeFailure <- newTVar Nothing
     shutdownRun <- newTVar Nothing
-    let entry = ServerOwner {key, group, pool, closeFailure, shutdownRun}
+    let entry = ServerOwner {key, runtimeIdentity=runtime.identity, group, pool, closeFailure, shutdownRun}
     writeTVar runtime.nextKey (key + 1)
     modifyTVar' runtime.entries (Map.insert key entry)
     pure entry
@@ -357,7 +357,7 @@ inspectServerOwner runtime entry = do
 
 validateEntry :: Runtime -> ServerOwner -> STM ()
 validateEntry runtime entry =
-  unless (entry.pool.budget == runtime.budget) (throwSTM ForeignServer)
+  unless (entry.runtimeIdentity == runtime.identity) (throwSTM ForeignServer)
 
 serverReads :: Runtime -> ServerOwner -> STM [NativeOwner]
 serverReads runtime entry =
