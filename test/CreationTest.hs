@@ -66,10 +66,14 @@ tests = testGroup "creation receipts"
       session <- require (Id.parseSessionId "$1")
       pane <- require (Id.parsePaneId "%3")
       index <- require (Value.mkWindowIndex 2147483648)
+      maximumIndex <- require (Value.mkWindowIndex 2147483647)
       small <- require (Value.mkWindowIndex 0)
       huge <- require (Value.mkDimension 2147483648)
       C.compileCreation nonce (C.NewWindow (C.At session index)
         Creation.defaultWindowOptions) @?= Left (C.InvalidOperand "window.index" "index exceeds 2147483647")
+      C.compileCreation nonce (C.NewWindow (C.After session maximumIndex)
+        Creation.defaultWindowOptions) @?=
+          Left (C.InvalidOperand "window.index" "cannot insert after 2147483647")
       C.compileCreation nonce (C.NewWindow (C.NextFree session)
         Creation.defaultWindowOptions {Creation.windowLabel = Just (Snapshot.labelFromBytes (Bytes.replicate 10000 35))}) @?=
           Left (C.EncodedCommandTooLarge "window.creation")

@@ -109,6 +109,20 @@ tests = testGroup "public window and pane creation"
             after <- Tmux.capture server
             map (.ref) (Tmux.panes after) @?= map (.ref) (Tmux.panes before)
 
+  , testCase "insertion after the maximum slot refuses before daemon effects" $
+      withBase $ \fixture server base -> do
+        index <- require (Tmux.mkWindowIndex 2147483647)
+        upper <- Tmux.createWindow server (Creation.At (Creation.WindowSlot base.session index)) windowOptions
+        withPane fixture upper.pane $ do
+          before <- Tmux.capture server
+          Tmux.tryTmux (Tmux.createWindow server (Creation.After (slot upper)) windowOptions) >>= \case
+            Left (ExceptionWithContext context (Tmux.InvalidMutationArgument _)) ->
+              assertBool "maximum-slot refusal retained creation" (null (Tmux.creationRecoveries context))
+            _ -> assertFailure "maximum-slot insertion reached the daemon"
+          after <- Tmux.capture server
+          map (.ref) (Tmux.windows after) @?= map (.ref) (Tmux.windows before)
+          (Tmux.serverInfo after).pid @?= (Tmux.serverInfo before).pid
+
   , testCase "foreign, stale and invalid targets have no creation effects" $
       withBase $ \fixture server base -> do
         Tmux.withServer (config fixture) $ \otherServer -> do
