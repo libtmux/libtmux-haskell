@@ -32,6 +32,10 @@ module LibTmux.Server
   , withProgram, runProgram
     -- * Rename and title
   , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
+    -- * Window links, selection and layout
+  , linkWindow, linkWindowWith, unlinkWindow, unlinkWindowWith
+  , selectWindowLink, selectWindowLinkWith, selectExactPane, selectExactPaneWith
+  , NamedLayout (..), selectLayout, selectLayoutWith
     -- * Remove a target
   , killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
     -- * Pane input
@@ -82,6 +86,7 @@ import LibTmux.Creation qualified as Creation
 import LibTmux.Capabilities qualified as Capabilities
 import LibTmux.Internal.Creation (CreationRecovery)
 import LibTmux.Internal.Creation qualified as Create
+import LibTmux.Internal.Command (NamedLayout (..))
 import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
@@ -363,6 +368,63 @@ setPaneTitleWith :: MutationOptions -> Server -> PaneRef -> Text.Text -> IO ()
 setPaneTitleWith options server (G.PaneRef generation ident) label =
   mutate options server generation (Command.SetPaneTitle ident label)
 
+-- | Link the current occupant of the first slot at the second slot. Both
+-- slots belong to this Server generation. The destination must be vacant.
+-- Existing links remain and the new link starts unselected.
+linkWindow :: Server -> Creation.WindowSlot -> Creation.WindowSlot -> IO ()
+linkWindow = linkWindowWith defaultMutationOptions
+
+-- | 'linkWindow' with an explicit deadline. Session groups can propagate a
+-- link to their members. Capture the graph again for current indices.
+linkWindowWith :: MutationOptions -> Server -> Creation.WindowSlot -> Creation.WindowSlot -> IO ()
+linkWindowWith options server (Creation.WindowSlot (G.SessionRef fromGeneration source) sourceIndex)
+    (Creation.WindowSlot (G.SessionRef toGeneration destination) destinationIndex) =
+  mutateTargets options server [fromGeneration, toGeneration]
+    (Command.LinkWindow source sourceIndex destination destinationIndex)
+
+-- | Remove one exact window link. tmux refuses removal of the physical
+-- window's last link. Session groups can propagate removal to their members.
+unlinkWindow :: Server -> Creation.WindowSlot -> IO ()
+unlinkWindow = unlinkWindowWith defaultMutationOptions
+
+-- | 'unlinkWindow' with an explicit deadline.
+unlinkWindowWith :: MutationOptions -> Server -> Creation.WindowSlot -> IO ()
+unlinkWindowWith options server (Creation.WindowSlot (G.SessionRef generation session) index) =
+  mutate options server generation (Command.UnlinkWindow session index)
+
+-- | Select the link at the requested session and index, including one of
+-- several links to the same physical window. Observe selection with 'capture'.
+selectWindowLink :: Server -> Creation.WindowSlot -> IO ()
+selectWindowLink = selectWindowLinkWith defaultMutationOptions
+
+-- | 'selectWindowLink' with an explicit deadline.
+selectWindowLinkWith :: MutationOptions -> Server -> Creation.WindowSlot -> IO ()
+selectWindowLinkWith options server (Creation.WindowSlot (G.SessionRef generation session) index) =
+  mutate options server generation (Command.SelectWindowLink session index)
+
+-- | Select an exact pane through the given window link. tmux rejects a pane
+-- that no longer belongs to the link's current window.
+selectExactPane :: Server -> Creation.WindowSlot -> PaneRef -> IO ()
+selectExactPane = selectExactPaneWith defaultMutationOptions
+
+-- | 'selectExactPane' with an explicit deadline. Both targets belong to the
+-- same Server generation.
+selectExactPaneWith :: MutationOptions -> Server -> Creation.WindowSlot -> PaneRef -> IO ()
+selectExactPaneWith options server (Creation.WindowSlot (G.SessionRef slotGeneration session) index)
+    (G.PaneRef generation pane) =
+  mutateTargets options server [slotGeneration, generation] (Command.SelectExactPane session index pane)
+
+-- | Apply a named layout to the physical window at the given slot. All links
+-- to that window see the resulting layout. tmux can unzoom it.
+selectLayout :: Server -> Creation.WindowSlot -> NamedLayout -> IO ()
+selectLayout = selectLayoutWith defaultMutationOptions
+
+-- | 'selectLayout' with an explicit deadline. Capture the window again to
+-- observe its resulting pane geometry.
+selectLayoutWith :: MutationOptions -> Server -> Creation.WindowSlot -> NamedLayout -> IO ()
+selectLayoutWith options server (Creation.WindowSlot (G.SessionRef generation session) index) layout =
+  mutate options server generation (Command.SelectLayout session index layout)
+
 -- | Remove a session from this Server generation. A window linked from
 -- another session survives. Use 'killSessionWith' to choose a deadline.
 killSession :: Server -> SessionRef -> IO ()
@@ -514,9 +576,12 @@ waitForText server@(Server runtime handle executable _ _) pane@(G.PaneRef genera
       C.TextWaitExpired latest recovery -> PaneTextTimedOut (captured <$> latest) recovery
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
-mutate options server@(Server runtime handle executable _ _) generation command = operational $ do
+mutate options server generation = mutateTargets options server [generation]
+
+mutateTargets :: MutationOptions -> Server -> [Generation] -> Command.Mutation -> IO ()
+mutateTargets options server@(Server runtime handle executable _ _) generations command = operational $ do
   duration <- mutationDuration options
-  checkTarget server generation
+  mapM_ (checkTarget server) generations
   M.performMutation P.defaultHooks duration runtime handle executable command
 
 checkTarget :: Server -> Generation -> IO ()

@@ -54,6 +54,65 @@ tests = testGroup "public mutation API"
           oldWindow.name @?= "original-window"
           oldPane.title @?= "original-title"
 
+  , testCase "links and selects explicit slots and preserves exact panes when tiling" $
+      Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+        configured fixture ["split-window", "-h", "-d", "-t", "fixture:0", "/bin/cat", "-"]
+        configured fixture ["new-window", "-d", "-t", "fixture:7", "/bin/cat", "-"]
+        originalIndex <- require (Tmux.mkWindowIndex 0)
+        duplicateIndex <- require (Tmux.mkWindowIndex 4)
+        unrelatedIndex <- require (Tmux.mkWindowIndex 7)
+        before <- Tmux.capture server
+        session <- one (Tmux.sessions before)
+        links <- require (Tmux.linksForSession before session.ref)
+        original <- one [link | link <- links, link.index == originalIndex]
+        unrelated <- one [link | link <- links, link.index == unrelatedIndex]
+        unrelatedWindow <- require (Tmux.lookupWindow before unrelated.window)
+        panes <- require (Tmux.panesForWindow before original.window)
+        target <- one (filter (not . (.active)) panes)
+        let source = Tmux.WindowSlot session.ref originalIndex
+            duplicate = Tmux.WindowSlot session.ref duplicateIndex
+            unrelatedSlot = Tmux.WindowSlot session.ref unrelatedIndex
+
+        Tmux.linkWindow server source duplicate
+        linked <- Tmux.capture server
+        linkedSlots <- require (Tmux.linksForSession linked session.ref)
+        map (.index) (filter ((== original.window) . (.window)) linkedSlots)
+          @?= [originalIndex, duplicateIndex]
+        map (.index) (filter (.active) linkedSlots) @?= [originalIndex]
+        Tmux.tryTmux (Tmux.linkWindow server source unrelatedSlot) >>= \case
+          Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+          _ -> assertFailure "linking replaced an occupied slot"
+
+        Tmux.selectWindowLink server duplicate
+        Tmux.selectExactPane server duplicate target.ref
+        Tmux.tryTmux (Tmux.selectExactPane server unrelatedSlot target.ref) >>= \case
+          Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+          _ -> assertFailure "pane selection accepted the wrong window slot"
+        Tmux.selectLayout server duplicate Tmux.Tiled
+        tiled <- Tmux.capture server
+        tiledSlots <- require (Tmux.linksForSession tiled session.ref)
+        map (.index) (filter (.active) tiledSlots) @?= [duplicateIndex]
+        tiledPanes <- require (Tmux.panesForWindow tiled original.window)
+        map (.ref) (filter (.active) tiledPanes) @?= [target.ref]
+        map (.ref) tiledPanes @?= map (.ref) panes
+        assertBool "tiled did not change the original side-by-side geometry"
+          (and (zipWith (\old new -> new.width > old.width && new.height < old.height) panes tiledPanes))
+        Tmux.lookupWindow tiled unrelated.window @?= Right unrelatedWindow
+
+        Tmux.unlinkWindow server duplicate
+        remaining <- Tmux.capture server
+        remainingSlots <- require (Tmux.linksForSession remaining session.ref)
+        map (.index) (filter ((== original.window) . (.window)) remainingSlots) @?= [originalIndex]
+        require (Tmux.panesForWindow remaining original.window) >>= (@?= map (.ref) tiledPanes) . map (.ref)
+        Tmux.tryTmux (Tmux.unlinkWindow server source) >>= \case
+          Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+          _ -> assertFailure "unlink removed the physical window's last link"
+        Tmux.withServer (config fixture) $ \other -> do
+          sameEndpoint <- Tmux.capture other
+          otherSession <- one (Tmux.sessions sameEndpoint)
+          Tmux.tryTmux (Tmux.linkWindow server source (Tmux.WindowSlot otherSession.ref duplicateIndex))
+            >>= expectInvalidTarget
+
   , testCase "kills only the selected pane, physical window and session" $
       Fixture.withFixture $ \fixture -> do
         configured fixture ["new-session", "-d", "-s", "disposable", "/bin/cat", "-"]

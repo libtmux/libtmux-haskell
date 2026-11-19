@@ -6,7 +6,7 @@
 -- normal exit; later hook output remains opaque to this decoder.
 module LibTmux.Internal.Command
   ( Mutation (..), ProgramCommand (..), ProgramIdentity (..), ArgumentError (..), compileMutation
-  , compileProgramMutation, decodeProgramReply
+  , compileProgramMutation, decodeProgramReply, NamedLayout (..)
   , compileKeyProbe, decodeKeyProbe
   , PaneCaptureReply (..), compilePaneCapture, decodePaneCapture
   , MutationReply (..), ReplyError (..), decodeControlReply
@@ -50,6 +50,15 @@ data Mutation
   | KillPane !Id.PaneId
   | SendPaneText !Id.PaneId !Text
   | SendPaneKeys !Id.PaneId !(NonEmpty Text)
+  | LinkWindow !Id.SessionId !Value.WindowIndex !Id.SessionId !Value.WindowIndex
+  | UnlinkWindow !Id.SessionId !Value.WindowIndex
+  | SelectWindowLink !Id.SessionId !Value.WindowIndex
+  | SelectExactPane !Id.SessionId !Value.WindowIndex !Id.PaneId
+  | SelectLayout !Id.SessionId !Value.WindowIndex !NamedLayout
+  deriving stock (Eq, Show)
+
+-- | Layout names shared by tmux 3.3a and 3.8.
+data NamedLayout = EvenHorizontal | EvenVertical | MainHorizontal | MainVertical | Tiled
   deriving stock (Eq, Show)
 
 -- | Closed application operations. Payload-bearing capture is saved separately
@@ -113,7 +122,7 @@ compileCreation nonce (NewWindow placement options) = do
      <> optional "workingDirectory" "-c" osBytes options.windowDirectory)
     options.windowEnvironment options.windowProcess
 compileCreation nonce (SplitPane session index pane options) = do
-  target <- slotBytes session index
+  target <- paneSlotBytes session index pane
   size <- case options.size of
     Creation.DefaultSplitSize -> Right []
     Creation.SplitCells cells
@@ -128,7 +137,7 @@ compileCreation nonce (SplitPane session index pane options) = do
     (map (literal "pane.creation")
        (["split-window"] <> ["-d" | not options.selectPane]
         <> ["-P", "-F", sessionCreationFormat nonce,
-            "-t", target <> "." <> Utf8.encodeUtf8 (Id.renderPaneId pane)]
+            "-t", target]
         <> ["-h" | options.direction == Creation.LeftRight]
         <> ["-b" | options.before] <> ["-f" | options.fullWindow]
         <> ["-Z" | options.zoom] <> size)
@@ -143,6 +152,11 @@ slotBytes session index = do
   when (Value.windowIndexValue index > 2147483647)
     (Left (InvalidOperand "window.index" "index exceeds 2147483647"))
   pure (creationSessionTarget session <> ":" <> Ascii.pack (show (Value.windowIndexValue index)))
+
+paneSlotBytes :: Id.SessionId -> Value.WindowIndex -> Id.PaneId -> Either ArgumentError ByteString
+paneSlotBytes session index pane = do
+  target <- slotBytes session index
+  pure (target <> "." <> Utf8.encodeUtf8 (Id.renderPaneId pane))
 
 -- | Validate and lower one detached creation, including its receipt format.
 -- Command argv must fit one native tmux message, including NUL terminators.
@@ -461,6 +475,28 @@ compileMutation = \case
   KillSession ident -> Right (target "kill-session" (Id.renderSessionId ident))
   KillWindow ident -> Right (target "kill-window" (Id.renderWindowId ident))
   KillPane ident -> Right (target "kill-pane" (Id.renderPaneId ident))
+  LinkWindow source sourceIndex destination destinationIndex -> do
+    from <- slotBytes source sourceIndex
+    to <- slotBytes destination destinationIndex
+    pure ["link-window", "-d", "-s", from, "-t", to]
+  UnlinkWindow session index -> do
+    slot <- slotBytes session index
+    pure ["unlink-window", "-t", slot]
+  SelectWindowLink session index -> do
+    slot <- slotBytes session index
+    pure ["select-window", "-t", slot]
+  SelectExactPane session index pane -> do
+    slot <- paneSlotBytes session index pane
+    pure ["select-pane", "-t", slot]
+  SelectLayout session index layout -> do
+    slot <- slotBytes session index
+    let name = case layout of
+          EvenHorizontal -> "even-horizontal"
+          EvenVertical -> "even-vertical"
+          MainHorizontal -> "main-horizontal"
+          MainVertical -> "main-vertical"
+          Tiled -> "tiled"
+    pure ["select-layout", "-t", slot, "--", name]
   SendPaneText ident text ->
     literalArguments "pane.input" (target "send-keys" (Id.renderPaneId ident) <> ["-l", "--"])
       [Utf8.encodeUtf8 text]
