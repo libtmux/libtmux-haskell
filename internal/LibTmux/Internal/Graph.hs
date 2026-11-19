@@ -666,6 +666,7 @@ data LookupError
   | MissingPane !PaneRef -- ^ No physical pane with this identity was captured.
   deriving stock (Eq, Show)
 
+-- | Invalid entity or server data observed while assembling a snapshot.
 data GraphError
   = InvalidGeneration
   | InvalidReference !LookupError

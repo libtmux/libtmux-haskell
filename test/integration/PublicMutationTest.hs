@@ -316,11 +316,11 @@ tests = testGroup "public mutation API"
 
         let otherRendering = Tmux.defaultPaneCapture {Tmux.rendering = Tmux.AnsiStyled}
         Tmux.tryTmux (waitText (fresh {Tmux.waitCapture = otherRendering})) >>= \case
-          Left (ExceptionWithContext _ (Tmux.InvalidConfiguration _)) -> pure ()
+          Left (ExceptionWithContext _ (Tmux.InvalidConfiguration Tmux.PaneWaitBaselineMismatch)) -> pure ()
           _ -> assertFailure "wait admitted a baseline with a different rendering"
         Tmux.withServer (config fixture) $ \other ->
           Tmux.tryTmux (Tmux.waitForText other target Tmux.defaultPaneWait "READY") >>= \case
-            Left (ExceptionWithContext _ (Tmux.InvalidTarget _)) -> pure ()
+            Left (ExceptionWithContext _ Tmux.InvalidTarget) -> pure ()
             _ -> assertFailure "wait admitted a foreign PaneRef"
 
         run ["set-hook", "-g", "pane-died", "wait-for -S text-wait-exited"]
@@ -494,7 +494,7 @@ tests = testGroup "public mutation API"
           forM_ [0, -1, 11] $ \duration -> do
             let options = Tmux.defaultMutationOptions {Tmux.timeout = duration}
             Tmux.tryTmux (Tmux.renameWindowWith options server window.ref "invalid-deadline") >>= \case
-              Left (ExceptionWithContext _ (Tmux.InvalidConfiguration _)) -> pure ()
+              Left (ExceptionWithContext _ (Tmux.InvalidConfiguration (Tmux.TimeoutOutOfRange Tmux.MutationTimeout))) -> pure ()
               _ -> assertFailure "invalid timeout admitted a mutation"
           Tmux.tryTmux (Tmux.renameWindow server window.ref (Tmux.labelFromBytes "x\NULy")) >>= \case
             Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument _)) -> pure ()
@@ -608,7 +608,7 @@ require :: Show problem => Either problem a -> IO a
 require = either (fail . show) pure
 
 expectInvalidTarget :: Either (ExceptionWithContext Tmux.TmuxException) () -> Assertion
-expectInvalidTarget (Left (ExceptionWithContext _ (Tmux.InvalidTarget _))) = pure ()
+expectInvalidTarget (Left (ExceptionWithContext _ Tmux.InvalidTarget)) = pure ()
 expectInvalidTarget _ = assertFailure "foreign target admitted a mutation"
 
 bounded :: IO a -> IO a

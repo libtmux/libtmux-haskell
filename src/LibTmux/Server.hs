@@ -56,7 +56,8 @@ module LibTmux.Server
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
-  , TmuxException (..), tryTmux
+  , TmuxException (..), ConfigurationProblem (..), TimeoutKind (..), ObservationProblem (..)
+  , ArgumentError (..), tryTmux
   ) where
 
 import Control.Concurrent.STM (atomically, readTVar)
@@ -89,7 +90,7 @@ import LibTmux.Internal.Control qualified as Control
 import LibTmux.Creation qualified as Creation
 import LibTmux.Capabilities qualified as Capabilities
 import LibTmux.Internal.Creation qualified as Create
-import LibTmux.Internal.Command (NamedLayout (..))
+import LibTmux.Internal.Command (ArgumentError (..), NamedLayout (..))
 import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
@@ -98,7 +99,8 @@ import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Program qualified as Program
 import LibTmux.Program (Program, ProgramOptions, ProgramResult)
 import LibTmux.Internal.Runtime qualified as R
-import LibTmux.Internal.Scope (TmuxException (..), operational)
+import LibTmux.Internal.Scope
+  ( TmuxException (..), ConfigurationProblem (..), TimeoutKind (..), ObservationProblem (..), operational )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
 import LibTmux.Options
@@ -211,11 +213,9 @@ qualifyVersion runtime handle executable duration = do
 
 checkedConfiguration :: ServerConfig -> IO (ByteString, Int)
 checkedConfiguration config = do
-  let seconds = toRational config.captureTimeout
-  when (seconds <= 0 || seconds > 10) $
-    throwIO (InvalidConfiguration "captureTimeout must be greater than zero and at most ten seconds")
+  duration <- limitedDuration CaptureTimeout config.captureTimeout
   executable <- operational (resolveExecutable config.executable)
-  pure (executable, fromInteger (ceiling (seconds * 1000000)))
+  pure (executable, duration)
 
 -- | Acquire the complete baseline graph, metadata and attached clients.
 -- Returned values own their data and remain usable after 'withServer' exits.
@@ -225,7 +225,7 @@ capture (Server runtime handle executable duration _) = operational $ do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   (started, finished, decoded) <- C.captureSnapshot runtime handle executable duration
-  stamped <- either (throwIO . InvalidObservation . Text.pack . show) pure
+  stamped <- either (throwIO . InvalidObservation . InvalidSnapshot) pure
     (G.stampSnapshot started finished decoded)
   evaluate (force stamped)
 
@@ -352,7 +352,7 @@ create options server@(Server runtime handle executable _ _) generations command
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   unless (all (== serverGeneration server) generations)
-    (throwIO (InvalidTarget "reference belongs to a different Server generation or an offline fixture"))
+    (throwIO InvalidTarget)
   Create.performCommandCreation P.defaultHooks duration runtime handle executable command
 
 -- | Rename the session targeted by a reference from this Server generation.
@@ -405,20 +405,20 @@ getEnvironment server@(Server runtime handle executable duration _) scope name =
     (C.captureEnvironmentWith runtime handle executable duration target name) $
       \original@(ExceptionWithContext context problem) -> case problem of
         R.InvalidCommandOperands invalid ->
-          rethrowIO (ExceptionWithContext context (InvalidConfiguration (Text.pack (show invalid))))
+          rethrowIO (ExceptionWithContext context (InvalidConfiguration (InvalidReadArgument invalid)))
         _ -> rethrowIO original
   case reply of
     Command.ControlDataRejected diagnostic
       | diagnostic == "unknown variable: " <> name <> "\n" -> pure Nothing
       | otherwise -> throwIO (EnvironmentReadRejected diagnostic)
     Command.ControlDataHookFailed diagnostic -> throwIO (EnvironmentReadHookFailed diagnostic)
-    Command.ControlDataExceedsLimit -> throwIO (InvalidObservation "environment response exceeded its byte limit")
+    Command.ControlDataExceedsLimit -> throwIO (InvalidObservation (EnvironmentReplyTooLarge P.streamLimitBytes))
     Command.ControlData bytes ->
       case Bytes.stripSuffix "\n" bytes of
         Just row | row == "-" <> name -> pure (Just (EnvironmentRemoved visibility))
         Just row | Just value <- Bytes.stripPrefix (name <> "=") row ->
           pure (Just (EnvironmentValue visibility (Bytes.copy value)))
-        _ -> throwIO (InvalidObservation "environment reply did not contain the named entry")
+        _ -> throwIO (InvalidObservation EnvironmentEntryMissing)
 
 -- | Set a literal value with explicit visibility. The name cannot be empty
 -- or contain NUL or @=@. Values cannot contain NUL. An empty value is valid.
@@ -471,7 +471,7 @@ readOption server target lookupMode name = do
   value <- readSetting server generation destination name (Command.ReadScalar (lookupMode == EffectiveOption))
   traverse (\bytes -> case Bytes.stripSuffix "\n" bytes >>= decodeOption kind choices of
     Just decoded -> pure decoded
-    Nothing -> throwIO (InvalidObservation "option reply disagrees with its catalogue type")) value
+    Nothing -> throwIO (InvalidObservation (OptionReplyTypeMismatch name))) value
 
 -- | Replace one scalar option. Built-in names and types must match the
 -- catalogue and selected scope. A user option starts with an at sign, followed
@@ -843,8 +843,8 @@ capturePane server@(Server runtime handle executable duration _) pane@(G.PaneRef
 paneCaptureErrors :: PaneCaptureOptions -> IO a -> IO a
 paneCaptureErrors options action = catchNoPropagate action $ \original@(ExceptionWithContext context problem) ->
   case problem of
-    R.InvalidCommandOperands (Command.InvalidOperand field reason) ->
-      rethrowIO (ExceptionWithContext context (InvalidConfiguration (field <> ": " <> reason)))
+    R.InvalidCommandOperands invalid ->
+      rethrowIO (ExceptionWithContext context (InvalidConfiguration (InvalidReadArgument invalid)))
     R.InvalidCommandReply Command.ReplyTooLarge ->
       rethrowIO (ExceptionWithContext context (PaneTextTooLarge options.byteLimit))
     _ -> rethrowIO original
@@ -855,7 +855,7 @@ decodePaneText options = \case
   Command.ControlDataHookFailed diagnostic -> throwIO (PaneCaptureHookFailed diagnostic)
   Command.ControlDataRejected diagnostic -> throwIO (PaneCaptureRejected diagnostic)
   Command.ControlData bytes ->
-    either (const (throwIO (InvalidObservation "pane text is not valid UTF-8")))
+    either (const (throwIO (InvalidObservation PaneTextInvalidUtf8)))
       pure (Utf8.decodeUtf8' bytes)
 
 -- | Read the captured Unicode text without contacting tmux.
@@ -897,8 +897,8 @@ waitForText :: Server -> PaneRef -> PaneWaitOptions -> Text.Text -> IO PaneWaitR
 waitForText server@(Server runtime handle executable _ _) pane@(G.PaneRef generation ident) options needle =
   operational $ do
     checkTarget server generation
-    when (Text.null needle) (throwIO (InvalidConfiguration "pane text wait requires nonempty text"))
-    duration <- limitedDuration "pane text wait" options.waitTimeout
+    when (Text.null needle) (throwIO (InvalidConfiguration EmptyPaneWaitText))
+    duration <- limitedDuration PaneWaitTimeout options.waitTimeout
     let settings = options.waitCapture
         captured = PaneText pane settings
     baseline <- case options.waitMatch of
@@ -907,7 +907,7 @@ waitForText server@(Server runtime handle executable _ _) pane@(G.PaneRef genera
         | other == pane && previous.rows == settings.rows && previous.rendering == settings.rendering ->
             pure (Text.count needle contents)
         | otherwise ->
-            throwIO (InvalidConfiguration "baseline requires the same pane, rows and rendering")
+            throwIO (InvalidConfiguration PaneWaitBaselineMismatch)
     result <- paneCaptureErrors settings $
       C.waitForPaneText runtime handle executable duration ident settings (decodePaneText settings) needle baseline
     pure $ case result of
@@ -929,16 +929,16 @@ checkTarget server@(Server _ handle _ _ _) generation = do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   unless (generation == serverGeneration server)
-    (throwIO (InvalidTarget "reference belongs to a different Server generation or an offline fixture"))
+    (throwIO InvalidTarget)
 
 mutationDuration :: MutationOptions -> IO Int
-mutationDuration options = limitedDuration "mutation" options.timeout
+mutationDuration options = limitedDuration MutationTimeout options.timeout
 
-limitedDuration :: Text.Text -> NominalDiffTime -> IO Int
+limitedDuration :: TimeoutKind -> NominalDiffTime -> IO Int
 limitedDuration operation duration = do
   let seconds = toRational duration
   when (seconds <= 0 || seconds > 10)
-    (throwIO (InvalidConfiguration (operation <> " timeout must be positive and at most ten seconds")))
+    (throwIO (InvalidConfiguration (TimeoutOutOfRange operation)))
   pure (fromInteger (ceiling (seconds * 1000000)))
 
 -- | Catch library failures with their exception context. Retain this value
@@ -949,10 +949,10 @@ tryTmux = tryWithContext
 
 resolveExecutable :: PosixPath -> IO ByteString
 resolveExecutable executable = case Platform.coercionToPlatformTypes of
-  Left _ -> throwIO (InvalidConfiguration "this package requires Linux POSIX paths")
+  Left _ -> throwIO (InvalidConfiguration PosixPathsRequired)
   Right (_, proof) -> do
     selected <- Directory.findExecutable (coerceWith (sym proof) executable)
-    path <- maybe (throwIO (InvalidConfiguration "tmux executable was not found")) Directory.makeAbsolute selected
+    path <- maybe (throwIO (InvalidConfiguration ExecutableNotFound)) Directory.makeAbsolute selected
     pure (posixBytes (coerceWith proof path))
 
 posixBytes :: PosixPath -> ByteString
