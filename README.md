@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 5c786e7d05165ff8fbe31dce5ae896607fb73619
+  tag: 278210241b8f5d2dec1ca28ba8175d6efe582ed2
 ```
 
 Update the package index:
@@ -362,6 +362,35 @@ explain scope, visibility and literal bytes.
 The [paste buffer example](docs/buffers.md) verifies a binary round trip and
 observes the output of a pane after pasting text with preserved line feeds.
 
+## Resize panes and windows
+
+### [`resizePane`](src/LibTmux/Server.hs) and [`resizeWindow`](src/LibTmux/Server.hs): request absolute cells
+
+The [geometry program](docs/resizing.md) chooses a width, height or both,
+prints fresh dimensions and removes its disposable session:
+
+```console
+$ cabal run --verbose=0 resize-geometry -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
+```
+
+<!-- example-output: resize-geometry -->
+```text
+pane width: (50,39)
+pane height: (50,10)
+pane both: (50,20)
+window width: (100,60)
+window height: (100,40)
+window both: (80,30)
+invalid size refused: True
+bystander preserved: True
+original sessions after cleanup: True
+```
+
+Native layouts can clamp requested sizes. Every supplied axis must fit
+1 through 10000 cells before dispatch. More: [resizing and recovery](docs/resizing.md).
+
 ## Run a terminal application
 
 ### [`runProgram`](src/LibTmux/Server.hs): run, observe and clean up owned work
@@ -411,6 +440,7 @@ $ rm -r -- "$LIBTMUX_DEMO_DIR"
 | Capture, filter and navigate linked windows | [Observations and recovery](https://libtmux.org/en/haskell/latest/guides/capture/) |
 | Compose typed predicates, traverse relations and require one match | [Typed queries](https://libtmux.org/en/haskell/latest/guides/query/) |
 | Create sessions, windows and panes with recoverable targets | [Creation](https://libtmux.org/en/haskell/latest/guides/creation/) |
+| Set absolute pane and window geometry | [Resizing](docs/resizing.md) |
 | Rename sessions/windows, set pane titles and recover interrupted commands | [Mutations](https://libtmux.org/en/haskell/latest/guides/mutations/) |
 | Share ownership across independent Server scopes | [Shared Runtime](https://libtmux.org/en/haskell/latest/guides/shared-runtime/) |
 | Understand IDs, indices and validation errors | [Typed values](https://libtmux.org/en/haskell/latest/guides/typed-values/) |

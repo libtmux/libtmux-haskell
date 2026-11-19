@@ -31,6 +31,7 @@ extra-doc-files:
   docs/shared-runtime.md
   docs/query.md
   docs/creation.md
+  docs/resizing.md
   docs/programs.md
   docs/buffers.md
   docs/mutations.md
@@ -72,6 +73,12 @@ extra-doc-files:
   docs/contracts/acquisition.md
   docs/contracts/pane-commands.md
 extra-source-files:
+  examples/resize-geometry/Main.hs
+  examples/resize-geometry/README.md
+  examples/resize-geometry/expected.stdout
+  examples/resize-geometry/libtmux-resize-geometry.cabal
+  examples/resize-geometry/cabal.project
+  examples/resize-geometry/cabal.project.vcs
   capabilities.json
   examples/managed-program/Main.hs
   examples/managed-program/README.md

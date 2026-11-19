@@ -1,9 +1,9 @@
 # Pane and window operations
 
-These are proposed native contracts from the pinned Python and tmux 3.3/3.8
-sources. They are not implemented or runtime-qualified. Remaining output,
-encoding and capability questions are implementation gates, not permission to
-omit required operations.
+The matrix describes native contracts from the pinned Python and tmux 3.3/3.8
+sources. Implemented absolute resizing is described below; the broader modes
+remain proposed. Remaining output, encoding and capability questions are
+implementation gates, not permission to omit required operations.
 
 External acquisition and mutation use explicit `IO`, the pinned generation,
 no-start transport and bounded ownership. Validate mutually exclusive modes,
@@ -40,6 +40,29 @@ does not select a unique session. Contextual preflight is not a reservation.
 | C5 — `pane.copy-mode`, `pane.clock-mode` | Copy enter, page-up/down, exit-on-bottom, cancel, optional exact source pane; or clock entry. Mouse drag requires event-backed mode. | Return processing evidence, not a UI interaction result. Copy cancel resets modes. Unsupported page-down is an error, not silently ignored. Mode entry may be an accepted no-op; ordinary command execution does not provide a mouse event. |
 | C6 — `pane.choose-buffer/choose-client/choose-tree/customize-mode/find-window` | Explicit display pane/context. Tree collapse/sort/reverse/zoom are checked; format/filter and find pattern/dialect are explicit native languages. | Return mode-request completion only. No selected entity, buffer, or completed customization is returned. Empty buffer/client candidates can succeed without opening a chooser. `find-window` enters tree mode; it is not a collection query. Its regex lowering differs between 3.3 and 3.8, so common-subset semantics need qualification. |
 | C7 — `pane.clear-history`, `pane.clear`, `pane.reset` | Exact pane target; three separate actions: clear tmux history with gated hyperlink reset; send the text `reset` then Enter; reset tmux terminal state followed by clear-history. | Return processing or ordered step outcomes. `clear` requires an application that interprets that input as desired; it is not a terminal reset primitive. `reset` is a nontransactional sequence. Clear-history also exits modes; it does not prove all display content, shell history, or hyperlink state was cleared. |
+
+## Implemented absolute resizing
+
+The B5/B6 absolute subset is public as [`resizePane` and
+`resizeWindow`](../../src/LibTmux/Server.hs). [`Resize`](../../src/LibTmux/Value.hs)
+requires width, height or both. Every axis must fit 1 through 10000 cells,
+validated together before mutation admission. References retain generation
+checks and the ordinary mutation recovery owner. Fresh captures supply actual
+geometry; command completion does not promise the requested cells.
+
+Native pane resizing can unzoom and change one axis before validating the
+next. Prevalidation prevents that effect for oversized requests.
+Absolute window sizing changes the physical window through every link and
+sets `window-size` to `manual`; it does not require fit-client context.
+See the [runnable resizing guide](../resizing.md).
+
+The common bound and ordering come from the released tmux
+[3.3a pane handler](https://github.com/tmux/tmux/blob/0b355ae8114511e1ff6359272b164f1cdf718e80/cmd-resize-pane.c),
+[3.8 pane handler](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/cmd-resize-pane.c),
+and [window sizing](https://github.com/tmux/tmux/blob/0b355ae8114511e1ff6359272b164f1cdf718e80/cmd-resize-window.c).
+Directional adjustments, percentages, fit-client requests, zoom toggles,
+trimming, mouse actions and floating-specific modes remain outside this
+implemented subset.
 
 ## Protocol and migration qualifications
 
