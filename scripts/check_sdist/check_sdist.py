@@ -217,13 +217,13 @@ def check_public_commands(
         (consumer / name).write_bytes(archived(source, prefix + origin))
     (consumer / "Main.hs").write_text(
         "module Main (main) where\n"
-        "import Fixture (guardRetained)\n"
+        "import Fixture (guardRetained, withSandbox)\n"
         "import PublicMutationTest qualified\n"
         "import PublicCreationTest qualified\n"
         "import Test.Tasty (defaultMain, testGroup)\n"
         "main :: IO ()\n"
-        'main = guardRetained (defaultMain (testGroup "installed public commands"'
-        " [PublicMutationTest.tests, PublicCreationTest.tests]))\n"
+        'main = withSandbox (guardRetained (defaultMain (testGroup "installed public commands"'
+        " [PublicMutationTest.tests, PublicCreationTest.tests])))\n"
     )
     (consumer / "cabal.project").write_text(
         f"packages: . ../archives/libtmux-haskell-{version}.tar.gz\n"

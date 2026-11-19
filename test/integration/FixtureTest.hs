@@ -17,7 +17,9 @@ import Fixture
 import GHC.Clock (getMonotonicTime)
 import GHC.Conc (closeFdWith, threadWaitRead)
 import System.FilePath ((</>))
-import System.Posix.Files (createNamedPipe, readSymbolicLink, setFileMode)
+import System.Posix.Files (createNamedPipe, readSymbolicLink, setFileMode, getFileStatus, fileMode, fileOwner)
+import System.Posix.User (getEffectiveUserID)
+import Data.Bits ((.&.))
 import System.Posix.IO (OpenFileFlags (..), OpenMode (ReadOnly, WriteOnly), closeFd, defaultFileFlags, openFd)
 import System.Posix.Types (Fd (..))
 import System.Timeout (timeout)
@@ -29,7 +31,19 @@ import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
 tests :: TestTree
 tests = testGroup "owned tmux fixture"
-  [ testCase "observes daemon and initial pane exit after success" $ do
+  [ testCase "inherits a private sandbox without external socket selectors" $
+      withFixture $ \fixture -> do
+        for_ ["TMUX", "TMUX_PANE", "LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH"] $ \key ->
+          lookup key fixture.environment @?= Nothing
+        sandbox <- maybe (fail "fixture has no sandbox marker") pure
+          (lookup "LIBTMUX_TEST_SANDBOX" fixture.environment)
+        lookup "TMUX_TMPDIR" fixture.environment @?= Just sandbox
+        status <- getFileStatus sandbox
+        owner <- getEffectiveUserID
+        fileOwner status @?= owner
+        fileMode status .&. 0o077 @?= 0
+        assertBool "fixture socket exceeds the sandbox contract" (length fixture.socket < 100)
+  , testCase "observes daemon and initial pane exit after success" $ do
       fixture <- withFixture $ \fixture -> do
         (code, output, errors) <- command fixture ["list-sessions", "-F", "#{session_name}"]
         code @?= ExitSuccess

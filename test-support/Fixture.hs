@@ -1,6 +1,6 @@
 module Fixture
   ( Fixture (..), StartupStage (..), Daemon (..), Retirement (..), retirement
-  , withFixture, withFixtureAt, withDaemon, retireDaemon, awaitDaemon, pollDaemon, retainedDaemons, guardRetained
+  , withSandbox, withFixture, withFixtureAt, withDaemon, retireDaemon, awaitDaemon, pollDaemon, retainedDaemons, guardRetained
   , Client (..), Stdio (..), withClient, readSome
   , withAttachedClient, command, registerPane, withTrackedPane
   ) where
@@ -12,6 +12,7 @@ import Control.Exception
   , try, tryWithContext, uninterruptibleMask_
   )
 import Control.Monad (unless, when)
+import Data.Bits ((.&.))
 import Data.ByteString qualified as Strict
 import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy (ByteString)
@@ -19,6 +20,7 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as Bytes
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
+import Data.List (isPrefixOf)
 import Data.Word (Word8)
 import Foreign.C.Error (Errno (..), eAGAIN, eSRCH, errnoToIOError, throwErrnoIfMinus1)
 import Foreign.C.String (CString, withCString)
@@ -32,14 +34,16 @@ import GHC.Conc (closeFdWith, threadWaitRead, threadWaitWrite)
 import GHC.Foreign qualified as Foreign
 import GHC.IO.Encoding (getFileSystemEncoding)
 import System.Directory (removePathForcibly)
-import System.Environment (getEnvironment, lookupEnv)
+import System.Environment (getEnvironment, lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (..), exitWith)
 import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.IO (closeFd)
+import System.Posix.Files (fileMode, fileOwner, getSymbolicLinkStatus, isDirectory)
 import System.Posix.Temp (mkdtemp)
 import System.Posix.Types (Fd (..))
+import System.Posix.User (getEffectiveUserID)
 import System.Timeout (timeout)
 
 foreign import ccall unsafe "libtmux_fixture_watch"
@@ -84,19 +88,49 @@ data Fixture = Fixture
 
 data StartupStage = SocketReady | PaneCreated !ByteString
 
+-- | Establish process-wide isolation before the test runner starts any worker.
+withSandbox :: IO a -> IO a
+withSandbox run = scoped (mkdtemp "/tmp/libtmux-haskell-suite-") removeUnlessRetained $ \directory ->
+  scoped (traverse (\key -> (key,) <$> lookupEnv key) variables) restore $ \_ -> do
+    mapM_ unsetEnv selectors
+    setEnv "TMUX_TMPDIR" directory
+    setEnv "LIBTMUX_TEST_SANDBOX" directory
+    run
+  where
+    variables = selectors <> ["TMUX_TMPDIR", "LIBTMUX_TEST_SANDBOX"]
+    restore = mapM_ (\(key, value) -> maybe (unsetEnv key) (setEnv key) value)
+
+selectors :: [String]
+selectors = ["TMUX", "TMUX_PANE", "LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH"]
+
+requireSandbox :: IO FilePath
+requireSandbox = do
+  selected <- lookupEnv "LIBTMUX_TEST_SANDBOX"
+  temporary <- lookupEnv "TMUX_TMPDIR"
+  directory <- case selected of
+    Just path | temporary == selected && "/tmp/libtmux-haskell-" `isPrefixOf` path -> pure path
+    _ -> throwIO (userError "fixture requires an owned LIBTMUX_TEST_SANDBOX; use withSandbox")
+  status <- getSymbolicLinkStatus directory
+  owner <- getEffectiveUserID
+  unless (isDirectory status && fileOwner status == owner && fileMode status .&. 0o077 == 0) $
+    throwIO (userError "fixture sandbox must be an owner-only directory")
+  pure directory
+
 withFixture :: (Fixture -> IO a) -> IO a
 withFixture = withFixtureAt (\_ _ -> pure ())
 
 -- Checkpoints run after daemon ownership but before the pane tracking journal.
 withFixtureAt :: (StartupStage -> Fixture -> IO ()) -> (Fixture -> IO a) -> IO a
 withFixtureAt checkpoint action = do
+  sandbox <- requireSandbox
   paneExitObserved <- newIORef False
   executable <- fromMaybe "tmux" <$> lookupEnv "LIBTMUX_TEST_TMUX"
-  environment <- filter (\(key, _) -> key /= "TMUX" && key /= "TMUX_PANE") <$> getEnvironment
-  scoped (mkdtemp "/tmp/libtmux-haskell-") removeUnlessRetained $ \directory ->
+  environment <- filter (\(key, _) -> key `notElem` selectors) <$> getEnvironment
+  scoped (mkdtemp (sandbox </> "f-")) removeUnlessRetained $ \directory ->
     scoped (openWatch directory) closeFd $ \watch ->
       scoped (newIORef Nothing) (finishPane paneExitObserved) $ \pane -> do
         let socket = directory </> "socket"
+        when (length socket >= 100) (throwIO (userError "fixture socket must be shorter than 100 bytes"))
         withDaemon retirement directory executable ["-D", "-S", socket, "-f", "/dev/null"] environment $ \daemon -> do
           readiness <- race (awaitDaemon daemon) (waitReady watch)
           case readiness of
@@ -299,7 +333,7 @@ guardRetained run = run `finally` (retainedDaemons >>= report)
 -- | A retained owner still needs its directory.
 removeUnlessRetained :: FilePath -> IO ()
 removeUnlessRetained directory = do
-  kept <- any ((== directory) . (.home)) <$> readIORef retained
+  kept <- any (\owner -> owner.home == directory || (directory <> "/") `isPrefixOf` owner.home) <$> readIORef retained
   unless kept (removePathForcibly directory)
 
 -- | Run a tmux client against the fixture's server for the body. The client is owned like the

@@ -262,8 +262,8 @@ def test_generated_consumer_ends_through_the_retained_owner_guard(
     """Retirement writes no diagnostic, so only the runner's guard reports a retained owner."""
     public_consumer(0, "")
     runner = (tmp_path / "run-0-0/public-mutations/Main.hs").read_text()
-    assert "import Fixture (guardRetained)\n" in runner
-    assert "main = guardRetained (defaultMain (testGroup" in runner
+    assert "import Fixture (guardRetained, withSandbox)\n" in runner
+    assert "main = withSandbox (guardRetained (defaultMain (testGroup" in runner
 
 
 @pytest.mark.parametrize(

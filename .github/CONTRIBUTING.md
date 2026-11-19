@@ -264,8 +264,11 @@ describes how to run it.
 
 tmux tests and examples must use an isolated server. Give each run
 a unique socket and temporary directory with a `libtmux-haskell-` prefix.
-Clear inherited `TMUX` and `TMUX_PANE`, and address the owned socket
-explicitly. Keep socket paths short enough for Unix socket limits.
+The integration and archive runners establish `withSandbox` before starting
+workers. It clears `TMUX`, `TMUX_PANE`, `LIBTMUX_SOCKET` and
+`LIBTMUX_SOCKET_PATH`, and exports the same private, owner-only directory as
+`TMUX_TMPDIR` and `LIBTMUX_TEST_SANDBOX`. The fixture refuses a missing marker
+and keeps every socket path under 100 bytes. Address the owned socket explicitly.
 
 Clean up only the server, clients, processes, and files owned by that run,
 including after failure or cancellation. Verify that the owned server exits.
