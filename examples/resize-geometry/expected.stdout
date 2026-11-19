@@ -1,0 +1,9 @@
+pane width: (50,39)
+pane height: (50,10)
+pane both: (50,20)
+window width: (100,60)
+window height: (100,40)
+window both: (80,30)
+invalid size refused: True
+bystander preserved: True
+original sessions after cleanup: True

@@ -5,14 +5,14 @@ The public modules are:
 | Module | Read it for |
 | --- | --- |
 | [LibTmux](../src/LibTmux.hs) | Common observation, Server and scalar entry point |
-| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, creation, rename/title commands, deadlines and recovery |
+| [LibTmux.Server](../src/LibTmux/Server.hs) | Operational scope, capture, creation, mutations, geometry, deadlines and recovery |
 | [LibTmux.Program](../src/LibTmux/Program.hs) | Scoped application execution, input, exit, rendered output and cleanup |
 | [LibTmux.Capabilities](../src/LibTmux/Capabilities.hs) | Per-operation requirements from the connected daemon release |
 | [LibTmux.Creation](../src/LibTmux/Creation.hs) | Session options, process modes and historical created references |
 | [LibTmux.Snapshot](../src/LibTmux/Snapshot.hs) | Detached entities, typed references, collections and indexed navigation |
 | [LibTmux.Snapshot.Fixture](../src/LibTmux/Snapshot/Fixture.hs) | Pure fixture construction and graph validation |
 | [LibTmux.Id](../src/LibTmux/Id.hs) | Distinct entity IDs, canonical parsing, rendering and `IdError` |
-| [LibTmux.Value](../src/LibTmux/Value.hs) | Checked dimensions/indices, numeric access and `ValueError` |
+| [LibTmux.Value](../src/LibTmux/Value.hs) | Checked dimensions/indices, absolute resize requests and `ValueError` |
 | [LibTmux.Version](../src/LibTmux/Version.hs) | Release identity, ordering, minimum-version admission and `VersionError` |
 | [LibTmux.Query](../src/LibTmux/Query.hs) | Pure typed predicates, ordering, requirements, cardinality and explicit fresh fetch |
 | [LibTmux.Query.Pane](../src/LibTmux/Query/Pane.hs) | Physical pane fields and window relationship |
@@ -29,6 +29,7 @@ does. The common `LibTmux` module keeps snapshot collection access separate
 from query descriptions.
 The [program guide](programs.md) runs a terminal application, cancels and retries
 an observation, and distinguishes owning deadlines from observation timeouts.
+The [resizing program](resizing.md) changes absolute geometry and reports actual cells.
 The [creation program](creation.md) uses actual returned references and reads
 them from a new capture. The [mutation program](mutations.md) selects physical targets before issuing
 commands and compares their detached observations afterward.
@@ -94,7 +95,8 @@ URLs, prove that a raw directory is fresh, or publish anything.
 The complete [capture example](../examples/capture-graph/Main.hs),
 [shared Runtime example](../examples/shared-runtime/Main.hs),
 [typed query example](../examples/query-graph/Main.hs),
-[creation example](../examples/create-session/Main.hs) and
+[creation example](../examples/create-session/Main.hs),
+[geometry example](../examples/resize-geometry/Main.hs) and
 [typed-value example](../examples/typed-values/Main.hs) use only public
 exports. Their source and output are checked against the source archive by
 the [consumer check](../scripts/check_sdist/check_sdist.py).

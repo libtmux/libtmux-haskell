@@ -2,8 +2,9 @@
 
 Use the current source for detached observations and typed input values.
 The API is experimental. Public operations cover session/window rename, pane
-titles, session/window creation, pane splits, target removal, pane input and an
-initial Linux Program scope. These operations check the generation and retain recovery.
+titles, session/window creation, pane splits, absolute resizing, target removal,
+pane input and an initial Linux Program scope. These operations check the
+generation and retain recovery.
 
 | Component | Available to consumers |
 | --- | --- |
@@ -26,6 +27,7 @@ initial Linux Program scope. These operations check the generation and retain re
 | Contextual links, selection and named layouts | Implemented through `WindowSlot`; see [window links and focus](creation.md#link-select-and-arrange-windows) |
 | Named global and session environment entries | Implemented through `getEnvironment`, `setEnvironment`, `markEnvironmentRemoved` and `unsetEnvironment` |
 | Named binary buffers and explicit pane paste | Implemented through `loadBuffer`, `readBuffer` and `pasteBuffer`; see [paste buffers](buffers.md) |
+| Absolute pane/window width, height or both | Implemented through `resizePane` and `resizeWindow`; see [resizing](resizing.md). Other resize modes remain open. |
 | First-server bootstrap | Not implemented |
 | Query interchange and backend optimization | Not implemented |
 | General control-event and byte-stream APIs | Not implemented |

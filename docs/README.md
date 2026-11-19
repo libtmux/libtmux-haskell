@@ -10,6 +10,7 @@ and the [API guide](api.md).
 | Capture, filter and traverse the object graph | [Observations and recovery](capture.md) |
 | Inspect typed selections and check physical or contextual uniqueness | [Typed queries](query.md) |
 | Create a session and operate on its returned references | [Session creation](creation.md) |
+| Request absolute pane and window geometry | [Resizing](resizing.md) |
 | Run a terminal application, send input and clean up its scope | [Owned programs](programs.md) |
 | Transfer a named buffer and paste it to an explicit pane | [Paste buffers](buffers.md) |
 | Rename captured targets and handle interrupted commands | [Mutations and recovery](mutations.md) |

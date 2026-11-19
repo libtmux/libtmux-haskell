@@ -5,7 +5,8 @@
 -- in IO; detached observations change only when acquired again with 'capture'.
 -- 'createSession', 'createWindow' and 'splitPane' return historical identities;
 -- "LibTmux.Creation" describes their options and explicit link context.
--- Capture again for observations.
+-- 'resizePane' and 'resizeWindow' request absolute cells through checked
+-- 'Resize' values. Capture again for actual geometry.
 --
 -- "LibTmux.Server" documents ownership and failure recovery. Typed IDs,
 -- checked dimensions and release admission have their own pure modules.

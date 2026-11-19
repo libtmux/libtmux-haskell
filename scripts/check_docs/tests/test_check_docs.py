@@ -71,6 +71,7 @@ def test_registered_programs_are_valid(root: Path) -> None:
         "create-session",
         "managed-program",
         "paste-buffer",
+        "resize-geometry",
     }
 
 

@@ -67,6 +67,10 @@ Indices:
   tmux command can impose a smaller range; a valid dimension does not promise
   that command's maximum.
 
+The [`Resize`](../src/LibTmux/Value.hs) sum type requires a width, a height or
+both. It uses checked dimensions; the [resize operations](resizing.md) impose
+their 10000-cell maximum before dispatch.
+
 ## Release admission has a limited meaning
 
 - [`parseVersion`](../src/LibTmux/Version.hs) accepts the spellings tmux
