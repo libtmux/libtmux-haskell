@@ -2,7 +2,7 @@
 module LibTmux.Internal.Scope
   ( TmuxException (..), CleanupStatus (..), CleanupRecovery
   , runScope, runServerScope, cleanupRecoveries, cleanupFailure, cleanupObservation, inspectCleanup, resumeCleanup
-  , awaitCleanup, detachUnresolved
+  , awaitCleanup, detachUnresolved, operational
   ) where
 
 import Control.Concurrent.STM (STM, atomically)
@@ -10,11 +10,15 @@ import Control.Exception
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context qualified as Context
 import Data.ByteString (ByteString)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import Data.Text (Text)
+import LibTmux.Internal.Budget qualified as B
+import LibTmux.Internal.Capture qualified as C
 import LibTmux.Internal.Process qualified as P
+import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
+import LibTmux.Internal.SocketPin qualified as Pin
 import LibTmux.Options (OptionError)
 import LibTmux.Version qualified as Version
 
@@ -176,3 +180,19 @@ observed report =
         && null report.unresolved && null failures
   in CleanupStatus complete (length report.pending) (length report.readWorkers)
        report.unresolved failures
+
+operational :: IO a -> IO a
+operational action = catchNoPropagate action $ \original@(ExceptionWithContext context (problem :: SomeException)) ->
+  let known = or
+        [ isJust (fromException @IOException problem)
+        , isJust (fromException @Pin.PinError problem)
+        , isJust (fromException @R.ReadError problem)
+        , isJust (fromException @C.CaptureError problem)
+        , isJust (fromException @B.LimitError problem)
+        , isJust (fromException @P.OwnerError problem)
+        , isJust (fromException @N.Failure problem)
+        , isJust (fromException @S.AdmissionError problem)
+        ]
+  in if known && not (isJust (fromException @SomeAsyncException problem))
+       then rethrowIO (ExceptionWithContext context (OperationFailed problem))
+       else rethrowIO original

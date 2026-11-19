@@ -17,9 +17,8 @@
 -- Capture again to observe their effects.
 --
 -- Operational failures use t'TmuxException'. 'tryTmux' catches that type only.
--- Cancellation retains its original exception class. If bounded cleanup
--- cannot finish, 'cleanupRecoveries' retrieves the owning recovery scope
--- from the exception context. A failed callback remains the primary failure.
+-- Cancellation and callback failures keep their original exception class.
+-- Use "LibTmux.Recovery" to inspect retained owners after incomplete cleanup.
 module LibTmux.Server
   ( -- * Open and observe
     Server, ServerConfig (..), serverConfig, withServer, capture, serverGeneration, serverCapabilities
@@ -57,29 +56,14 @@ module LibTmux.Server
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
   , TmuxException (..), tryTmux
-    -- * Scope cleanup
-  , CleanupRecovery, CleanupStatus (..), cleanupRecoveries, cleanupFailure, cleanupObservation
-  , inspectCleanup, resumeCleanup, awaitCleanup, detachUnresolved
-    -- * Correlated capture recovery
-  , CaptureRecovery, captureRecoveries, recoveryOperation, recoveryGeneration
-  , ReadRecovery (..), inspectCaptureRecovery, resumeCaptureRecovery, detachCaptureRecovery
-    -- * Correlated creation recovery
-  , CreationRecovery, creationRecoveries, creationOperation, creationGeneration
-  , creationReceipt, inspectCreationRecovery, resumeCreationRecovery, awaitCreationRecovery, detachCreationRecovery
-    -- * Correlated mutation recovery
-  , MutationRecovery, mutationRecoveries, mutationOperation, mutationGeneration
-  , inspectMutationRecovery, resumeMutationRecovery, awaitMutationRecovery, detachMutationRecovery
-  , Operation, Status (..), Stage (..), Outcome (..), operationStatus
   ) where
 
 import Control.Concurrent.STM (atomically, readTVar)
 import Control.DeepSeq (force)
 import Control.Exception
-  ( ExceptionWithContext (..), IOException, SomeAsyncException, SomeException
-  , catchNoPropagate, evaluate, fromException, mask, rethrowIO, throwIO, tryWithContext
+  ( ExceptionWithContext (..)
+  , catchNoPropagate, evaluate, mask, rethrowIO, throwIO, tryWithContext
   )
-import Control.Exception.Context (ExceptionContext)
-import Control.Exception.Context qualified as Context
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
@@ -87,7 +71,6 @@ import Data.ByteString.Char8 qualified as Ascii
 import Data.Char (isAlphaNum, isAscii)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
 import Data.Time.Clock (NominalDiffTime)
@@ -101,25 +84,16 @@ import LibTmux.Internal.Capture (CaptureRecovery)
 import LibTmux.Internal.Capture qualified as C
 import LibTmux.Creation qualified as Creation
 import LibTmux.Capabilities qualified as Capabilities
-import LibTmux.Internal.Creation (CreationRecovery)
 import LibTmux.Internal.Creation qualified as Create
 import LibTmux.Internal.Command (NamedLayout (..))
 import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
-import LibTmux.Internal.Mutation (MutationRecovery)
 import LibTmux.Internal.Process qualified as P
-import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Program qualified as Program
 import LibTmux.Program (Program, ProgramOptions, ProgramResult)
-import LibTmux.Internal.Runtime (ReadRecovery (..))
 import LibTmux.Internal.Runtime qualified as R
-import LibTmux.Internal.Scheduler (Operation, Status (..), Stage (..), Outcome (..))
-import LibTmux.Internal.Scheduler qualified as S
-import LibTmux.Internal.Scope
-  ( TmuxException (..), CleanupRecovery, CleanupStatus (..)
-  , cleanupFailure, cleanupObservation, inspectCleanup, resumeCleanup, awaitCleanup
-  )
+import LibTmux.Internal.Scope (TmuxException (..), operational)
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
 import LibTmux.Options
@@ -152,8 +126,8 @@ newtype Runtime = Runtime R.Runtime
 -- The daemon remains running.
 --
 -- Callback failures and cancellation keep their original exception class.
--- Incomplete cleanup retains a t'CleanupRecovery' in the exception context;
--- use 'tryTmux' and 'cleanupRecoveries' to keep that responsibility reachable.
+-- Use 'tryTmux' to keep the exception context and "LibTmux.Recovery" to
+-- inspect its cleanup owners.
 withRuntime :: (Runtime -> IO a) -> IO a
 withRuntime action = do
   runtime <- R.newRuntime P.normalFork
@@ -165,7 +139,7 @@ withRuntime action = do
 -- Before the callback, opening refuses a daemon release older than 3.3a or an
 -- unrecognized version reply.
 --
--- Failed adoption can retain a t'CleanupRecovery' before a t'Server' exists.
+-- Failed adoption can retain a cleanup owner before a t'Server' exists.
 -- Inspection, retry and waiting through that owner stay scoped to the failed
 -- adoption. Cleanup preserves application exceptions, incoming masking state
 -- and cancellation; known acquisition failures use t'TmuxException'.
@@ -207,7 +181,7 @@ serverConfig socket = ServerConfig socket (Os.fromBytestring "tmux") (Path.takeD
 -- unrecognized reply fails before entering the callback.
 -- Cleanup never replaces a callback exception. Incomplete cleanup raises
 -- 'CleanupFailed' after success, or annotates the original callback failure
--- with a reachable t'CleanupRecovery'. No daemon shutdown is requested.
+-- with a reachable cleanup owner. The daemon stays running.
 withServer :: ServerConfig -> (Server -> IO a) -> IO a
 withServer config action = do
   (executable, duration) <- checkedConfiguration config
@@ -939,126 +913,11 @@ limitedDuration operation duration = do
     (throwIO (InvalidConfiguration (operation <> " timeout must be positive and at most ten seconds")))
   pure (fromInteger (ceiling (seconds * 1000000)))
 
--- | Correlated creation owners from 'tryTmux' or 'tryWithContext'. Keep the
--- context when handling failure, including an applied command's hook error.
-creationRecoveries :: ExceptionContext -> [CreationRecovery]
-creationRecoveries = Context.getExceptionAnnotations
-
--- | Metadata-only identity of the original creation operation.
-creationOperation :: CreationRecovery -> Operation
-creationOperation = R.receiptOperation . Create.recoveryReceipt
-
--- | Originating Server generation, including after the scope closes.
-creationGeneration :: CreationRecovery -> Generation
-creationGeneration = R.receiptGeneration . Create.recoveryReceipt
-
--- | Read any complete historical receipt already observed by the library.
--- This reads owned metadata without contacting tmux. 'Nothing' does not mean
--- no entity was created; unread or incomplete evidence cannot supply IDs.
-creationReceipt :: CreationRecovery -> IO (Maybe Creation.CreatedEntities)
-creationReceipt = atomically . Create.observedReceipt
-
--- | Inspect logical outcome and native ownership without external operations.
-inspectCreationRecovery :: CreationRecovery -> IO ReadRecovery
-inspectCreationRecovery = atomically . Create.inspectRecovery
-
--- | Resume existing cleanup; never execute the creation again.
-resumeCreationRecovery :: CreationRecovery -> IO ()
-resumeCreationRecovery = operational . Create.resumeRecovery
-
--- | Join the original native child and decoder. Logical uncertainty can
--- remain, and this wait proves no hook/background-job completion.
-awaitCreationRecovery :: CreationRecovery -> IO ReadRecovery
-awaitCreationRecovery = operational . Create.awaitRecovery
-
--- | Relinquish logical uncertainty while preserving physical cleanup owners.
--- This does not remove the created session or repeat the command.
-detachCreationRecovery :: CreationRecovery -> IO Bool
-detachCreationRecovery = operational . atomically . Create.detachRecovery
-
 -- | Catch library failures with their exception context. Retain this value
 -- when handling an error so cleanup and operation owners stay reachable.
 -- Application exceptions and asynchronous cancellation propagate.
 tryTmux :: IO a -> IO (Either (ExceptionWithContext TmuxException) a)
 tryTmux = tryWithContext
-
--- | Cleanup owners retained by a failed or cancelled scope. The context
--- comes from 'tryTmux' or 'tryWithContext'. Inspection performs no tmux IO.
--- Nested scopes can contribute overlapping owners; inspect and resume each
--- retained responsibility through 'inspectCleanup' and 'resumeCleanup'.
-cleanupRecoveries :: ExceptionContext -> [CleanupRecovery]
-cleanupRecoveries = Context.getExceptionAnnotations
-
--- | Relinquish one logical operation from this cleanup scope. This releases
--- no native resources and does not prove that daemon-side work completed.
-detachUnresolved :: CleanupRecovery -> Operation -> IO Bool
-detachUnresolved recovery = operational . Scope.detachUnresolved recovery
-
--- | Read owners retained by a capture or Server version check, including cancellation.
-captureRecoveries :: ExceptionContext -> [CaptureRecovery]
-captureRecoveries = Context.getExceptionAnnotations
-
--- | Metadata-only operation identity for the failed capture.
-recoveryOperation :: CaptureRecovery -> Operation
-recoveryOperation = R.receiptOperation . C.recoveryReceipt
-
--- | Correlate the failed capture with its Server generation.
-recoveryGeneration :: CaptureRecovery -> Generation
-recoveryGeneration = R.receiptGeneration . C.recoveryReceipt
-
--- | Observe logical outcome, decoder ownership and native cleanup locally.
--- This reads runtime metadata and performs no tmux command.
-inspectCaptureRecovery :: CaptureRecovery -> IO ReadRecovery
-inspectCaptureRecovery = atomically . C.inspectRecovery
-
--- | Resume existing cleanup without dispatching the capture again.
-resumeCaptureRecovery :: CaptureRecovery -> IO ()
-resumeCaptureRecovery = operational . C.resumeRecovery
-
--- | Explicitly detach logical uncertainty while preserving native ownership.
-detachCaptureRecovery :: CaptureRecovery -> IO Bool
-detachCaptureRecovery = operational . atomically . C.detachRecovery
-
--- | Recover the exact operation after failure, timeout or cancellation. The
--- context comes from 'tryTmux' or 'tryWithContext'; cancellation keeps its
--- original exception class and is not caught by 'tryTmux'.
-mutationRecoveries :: ExceptionContext -> [MutationRecovery]
-mutationRecoveries = Context.getExceptionAnnotations
-
--- | Metadata-only identity of the original command. 'operationStatus' remains
--- available after native cleanup; this value contains no command operands.
-mutationOperation :: MutationRecovery -> Operation
-mutationOperation = R.receiptOperation . M.recoveryReceipt
-
--- | Server generation associated with this mutation's recovery owner.
-mutationGeneration :: MutationRecovery -> Generation
-mutationGeneration = R.receiptGeneration . M.recoveryReceipt
-
--- | Inspect the original operation's logical and physical ownership locally.
--- This performs no tmux command. An unknown outcome does not become success
--- merely because the native child has exited.
-inspectMutationRecovery :: MutationRecovery -> IO ReadRecovery
-inspectMutationRecovery = atomically . M.inspectRecovery
-
--- | Resume existing native cleanup and decoder ownership, without repeating
--- the command. Allocation failure retains the same recovery owner.
-resumeMutationRecovery :: MutationRecovery -> IO ()
-resumeMutationRecovery = operational . M.resumeRecovery
-
--- | Wait for the original decoder and native child to retire. This may still
--- return retained 'OutcomeUnknown'; it does not wait for a daemon hook job.
--- Cancellation keeps this recovery owner in the new exception context.
-awaitMutationRecovery :: MutationRecovery -> IO ReadRecovery
-awaitMutationRecovery = operational . M.awaitRecovery
-
--- | Relinquish this operation's logical uncertainty. This neither cancels
--- daemon work nor releases native resources, and never repeats the mutation.
-detachMutationRecovery :: MutationRecovery -> IO Bool
-detachMutationRecovery = operational . atomically . M.detachRecovery
-
--- | Read retained operation metadata, including after its physical cleanup.
-operationStatus :: Operation -> IO Status
-operationStatus = atomically . S.status
 
 resolveExecutable :: PosixPath -> IO ByteString
 resolveExecutable executable = case Platform.coercionToPlatformTypes of
@@ -1070,19 +929,3 @@ resolveExecutable executable = case Platform.coercionToPlatformTypes of
 
 posixBytes :: PosixPath -> ByteString
 posixBytes = Bytes.pack . map (fromIntegral . fromEnum . Os.toChar) . Os.unpack
-
-operational :: IO a -> IO a
-operational action = catchNoPropagate action $ \original@(ExceptionWithContext context (problem :: SomeException)) ->
-  let known = or
-        [ isJust (fromException @IOException problem)
-        , isJust (fromException @Pin.PinError problem)
-        , isJust (fromException @R.ReadError problem)
-        , isJust (fromException @C.CaptureError problem)
-        , isJust (fromException @B.LimitError problem)
-        , isJust (fromException @P.OwnerError problem)
-        , isJust (fromException @N.Failure problem)
-        , isJust (fromException @S.AdmissionError problem)
-        ]
-  in if known && not (isJust (fromException @SomeAsyncException problem))
-       then rethrowIO (ExceptionWithContext context (OperationFailed problem))
-       else rethrowIO original

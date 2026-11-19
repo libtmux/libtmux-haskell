@@ -203,7 +203,7 @@ benchmark capture
 library
   import: modern
   hs-source-dirs: src internal
-  exposed-modules: LibTmux LibTmux.Capabilities LibTmux.Creation LibTmux.Environment LibTmux.Options LibTmux.Pane LibTmux.Program LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
+  exposed-modules: LibTmux LibTmux.Capabilities LibTmux.Creation LibTmux.Environment LibTmux.Options LibTmux.Pane LibTmux.Program LibTmux.Recovery LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
     LibTmux.Query LibTmux.Query.Pane LibTmux.Query.Session LibTmux.Query.Window
     LibTmux.Query.Link LibTmux.Query.Occurrence LibTmux.Query.Client
     LibTmux.Query.ClientAttachment LibTmux.Query.ServerInfo

@@ -5,6 +5,7 @@ module MutationApi where
 
 import Data.Text (Text)
 import LibTmux qualified as Tmux
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Server (MutationOptions (timeout), defaultMutationOptions, renameSessionWith)
 
 options :: MutationOptions
@@ -31,3 +32,6 @@ windowHeight server ref height = Tmux.resizeWindow server ref (Tmux.ResizeHeight
 
 windowSize :: Tmux.Server -> Tmux.WindowRef -> Tmux.Dimension -> Tmux.Dimension -> IO ()
 windowSize server ref width height = Tmux.resizeWindowWith options server ref (Tmux.ResizeBoth width height)
+
+inspect :: Recovery.CleanupRecovery -> IO Recovery.CleanupStatus
+inspect = Recovery.inspectCleanup
