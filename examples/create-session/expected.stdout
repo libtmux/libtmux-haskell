@@ -5,3 +5,4 @@ same created targets: True
 captured sessions: 1 -> 2
 created window links: 1
 duplicate name rejected: True
+original sessions after removal: True

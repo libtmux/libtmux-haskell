@@ -141,6 +141,10 @@ selection” guarantee across these commands.
 
 ## Destruction variants
 
+The public `killSession`, `killWindow` and `killPane` operations use
+generation-bound references. See the [creation guide](../creation.md#remove-a-target)
+for single-target effects and examples.
+
 | Intent | Required distinction |
 | --- | --- |
 | Kill one session | Exact session reference; other linked sessions/windows can survive. |

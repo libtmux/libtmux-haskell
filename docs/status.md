@@ -1,9 +1,9 @@
 # Implementation status
 
 Use the current source for detached observations and typed input values.
-The API is experimental. Public mutations currently cover session/window
-rename, pane titles and detached session creation, with generation checks
-and correlated recovery.
+The API is experimental. Public mutations cover session/window rename, pane
+titles, detached session creation and target removal. These operations check
+the server generation and expose correlated recovery.
 
 | Component | Available to consumers |
 | --- | --- |
@@ -17,6 +17,7 @@ and correlated recovery.
 | Typed predicates, relationships, ordering and cardinality | Implemented through `LibTmux.Query`; see [the complete program](query.md) |
 | Session/window rename and pane title | Implemented through `LibTmux.Server`; see [the complete program](mutations.md) |
 | Detached session creation on an existing daemon | Implemented through `LibTmux.Server` and `LibTmux.Creation`; see [the complete program](creation.md) |
+| Remove a session, window or pane | Implemented through `LibTmux.Server`; see [target removal](creation.md#remove-a-target) |
 | First-server bootstrap, window/pane creation, pane input and contextual window operations | Not implemented |
 | Query interchange and backend optimization | Not implemented |
 | Control events, streams and cancellation API | Not implemented |

@@ -311,8 +311,9 @@ $ cabal run --verbose=0 create-session -- \
     "$(command -v tmux)"
 ```
 
-It also checks duplicate-name rejection. The new session stays running until
-the demo server is stopped. More: [creation and recovery](docs/creation.md).
+After checking duplicate-name rejection, the example removes the targets it
+created and checks that the original sessions survive. See the
+[creation and removal guide](docs/creation.md#remove-a-target).
 
 ## Clean up
 
