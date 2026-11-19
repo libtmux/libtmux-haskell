@@ -1,9 +1,12 @@
-"""Run external commands under a time limit that also stops the processes they start."""
+"""Run external commands under a time limit in Linux process groups."""
 
 import contextlib
+import io
 import os
+import selectors
 import signal
 import subprocess
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -23,6 +26,50 @@ def stop_group(process: subprocess.Popen[Any]) -> None:
         os.killpg(process.pid, signal.SIGKILL)
 
 
+def stream_output(stream: object, data: bytearray) -> str | bytes | None:
+    if isinstance(stream, io.TextIOWrapper):
+        text = data.decode(stream.encoding, stream.errors or "strict")
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+    return bytes(data) if stream is not None else None
+
+
+def collect(
+    process: subprocess.Popen[Any], timeout: float, check: bool
+) -> tuple[str | bytes | None, str | bytes | None]:
+    out, err = bytearray(), bytearray()
+    deadline = time.monotonic() + timeout
+    exit_fd = os.pidfd_open(process.pid)
+    try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(exit_fd, selectors.EVENT_READ)
+            for stream, data in ((process.stdout, out), (process.stderr, err)):
+                if stream is not None:
+                    ready.register(stream, selectors.EVENT_READ, data)
+            while ready.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(
+                        process.args, timeout, bytes(out) or None, bytes(err) or None
+                    )
+                for key, _ in ready.select(remaining):
+                    if key.fd == exit_fd:
+                        ready.unregister(exit_fd)
+                        # Keep the leader's PID reserved until any group signal has been sent.
+                        if check:
+                            status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+                            if status and (status.si_code != os.CLD_EXITED or status.si_status):
+                                stop_group(process)
+                        continue
+                    chunk = os.read(key.fd, 65536)
+                    if chunk:
+                        key.data.extend(chunk)
+                    else:
+                        ready.unregister(key.fd)
+    finally:
+        os.close(exit_fd)
+    return stream_output(process.stdout, out), stream_output(process.stderr, err)
+
+
 def run(
     args: Command,
     *,
@@ -38,9 +85,8 @@ def run(
 ) -> subprocess.CompletedProcess[Any]:
     """Run ``args`` like ``subprocess.run``, in its own process group.
 
-    A timeout, an interrupt or any other error kills the whole group, so a
-    ``ghc`` below a ``cabal`` or a daemon below a runner cannot outlive the limit.
-    ``subprocess.run`` kills only the direct child.
+    A timeout, an interrupt or a nonzero exit with ``check=True`` kills every
+    process still in the group.
     """
     if capture_output:
         stdout = stderr = subprocess.PIPE
@@ -55,11 +101,12 @@ def run(
         pass_fds=pass_fds,
     ) as process:
         try:
-            out, err = process.communicate(timeout=timeout)
+            out, err = collect(process, timeout, check)
         except BaseException:
             stop_group(process)
             raise
-    result = subprocess.CompletedProcess(args, process.returncode, out, err)
+        status = process.wait()
+    result = subprocess.CompletedProcess(args, status, out, err)
     if check:
         result.check_returncode()
     return result

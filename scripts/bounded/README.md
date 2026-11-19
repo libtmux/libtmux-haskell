@@ -1,11 +1,10 @@
 # bounded
 
-Runs the support scripts' external commands under a time limit. When the limit
-passes, or the script is interrupted, it kills the command's whole process
-group, so a `ghc` below a `cabal` or a tmux server below an example runner
-cannot outlive the limit. `subprocess.run(timeout=)` kills only the direct
-child. Every script that starts `cabal`, `git`, `ghc` or a built program
-imports it, and a test fails when one calls `subprocess` directly.
+Runs the support scripts' external commands in separate Linux process groups.
+On a timeout, interruption or checked failure, it signals the processes still
+in the command's group. A pidfd reports exit while the unreaped leader still
+reserves the group ID. Timed-out commands report any captured output bytes.
+A test checks that scripts use this wrapper to launch external commands.
 
 | Name | What it does |
 | --- | --- |

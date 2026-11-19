@@ -11,27 +11,56 @@ import pytest
 
 import bounded
 
-# Starts a sleeping child that inherits the descriptor named in argv, then sleeps itself.
 PARENT = """
-import subprocess, sys, time
-inherited = int(sys.argv[1])
-subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], pass_fds=[inherited])
-time.sleep(60)
+import os, subprocess, sys
+witness, gate = map(int, sys.argv[1:3])
+subprocess.Popen(
+    [sys.executable, "-c", "import os, sys; os.read(int(sys.argv[1]), 1)", str(gate)],
+    pass_fds=[witness, gate], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+)
+sys.stdout.buffer.write(b"out\\r\\n")
+sys.stdout.flush()
+sys.stderr.buffer.write(b"err\\r\\n")
+sys.stderr.flush()
+if sys.argv[3] == "fail":
+    raise SystemExit(3)
+os.read(gate, 1)
 """
 
 
-def test_a_timeout_stops_the_children_of_the_command() -> None:
-    """Both processes hold the pipe's write end; it reaches end-of-file only if both die."""
-    reader, writer = os.pipe()
-    try:
-        with pytest.raises(subprocess.TimeoutExpired):
-            bounded.run([sys.executable, "-c", PARENT, str(writer)], timeout=0.5, pass_fds=[writer])
-        os.close(writer)
-        ready, _, _ = select.select([reader], [], [], 5)
-        assert ready, "a child of the timed-out command is still running"
-        assert os.read(reader, 1) == b""
-    finally:
-        os.close(reader)
+@pytest.mark.parametrize(
+    ("mode", "error"),
+    [("block", subprocess.TimeoutExpired), ("fail", subprocess.CalledProcessError)],
+)
+def test_a_command_error_stops_the_process_group(mode: str, error: type[Exception]) -> None:
+    """Both processes hold the witness open until they exit."""
+    witness, writer = os.pipe()
+    gate, release = os.pipe()
+    with (
+        os.fdopen(witness, "rb") as retired,
+        os.fdopen(writer, "wb") as parent_witness,
+        os.fdopen(gate, "rb"),
+        os.fdopen(release, "wb"),
+    ):
+        with pytest.raises(error) as failure:
+            bounded.run(
+                [sys.executable, "-c", PARENT, str(writer), str(gate), mode],
+                timeout=0.5,
+                check=True,
+                capture_output=True,
+                text=True,
+                pass_fds=[writer, gate],
+            )
+        parent_witness.close()
+        ready, _, _ = select.select([retired], [], [], 0.25)
+        assert ready, "a child of the failed command is still running"
+        assert retired.read(1) == b""
+        problem = failure.value
+        if isinstance(problem, subprocess.TimeoutExpired):
+            assert (problem.output, problem.stderr) == (b"out\r\n", b"err\r\n")
+        else:
+            assert isinstance(problem, subprocess.CalledProcessError)
+            assert (problem.returncode, problem.output, problem.stderr) == (3, "out\n", "err\n")
 
 
 def test_a_finished_command_returns_its_output_and_status() -> None:
