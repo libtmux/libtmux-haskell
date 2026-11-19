@@ -8,6 +8,10 @@
   in STM. The scope reports queue overflow, daemon exit and framing failure
   and retains an owner when cleanup cannot finish. ([#48])
 
+- Capture session groups, unzoomed layouts and zoom state, contextual window
+  flags, base-screen cursors and pane modes, and client tty sizes. Typed query
+  fields select the same detached values; absent group, mode and tty height
+  remain explicit. ([#12])
 - Set, read or remove scalar options at an explicit scope. `LocalOption`
   and `EffectiveOption` distinguish an override from inherited values. ([#29])
 - Set individual numeric entries for built-in hooks, read their native
@@ -82,6 +86,10 @@
   raw-paste requirements, which are outside the shared vocabulary. ([#15])
 - Import `LibTmux.Recovery` to inspect operation owners or resume cleanup.
   `tryTmux` still catches contextual library failures through `LibTmux`. ([#12])
+- Supply the new metadata fields when constructing `Session`, `Window`,
+  `WindowLink`, `Pane`, `Client` and `Fixture.AttachedClient` values offline.
+  Cursor, mode-depth and client-size values retain zero; client height uses
+  `Maybe Integer`. ([#12])
 - Share opaque creation identities through `CreatedEntities`; `CreatedSession`,
   `CreatedWindow` and `CreatedPane` name each command's result. Window and pane
   receipts include existing parents; cleanup must target the entity created
