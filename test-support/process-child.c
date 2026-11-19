@@ -5,6 +5,9 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 static int put(int fd, const void *data, size_t size) {
@@ -30,6 +33,28 @@ static int frame(const char *value) {
 }
 
 int main(int argc, char **argv, char **env) {
+    if (argc > 2 && !strcmp(argv[1], "--self-witness")) {
+        int peer = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+        struct sockaddr_un address = {.sun_family = AF_UNIX};
+        if (peer < 0 || strlen(argv[2]) >= sizeof address.sun_path) return 70;
+        strcpy(address.sun_path, argv[2]);
+        if (connect(peer, (struct sockaddr *)&address, sizeof address)) return 71;
+        int pid = getpid();
+        int witness = syscall(SYS_pidfd_open, pid, 0);
+        if (witness < 0) return 72;
+        struct iovec io = {&pid, sizeof pid};
+        char ancillary[CMSG_SPACE(sizeof witness)] = {0};
+        struct msghdr message = {.msg_iov = &io, .msg_iovlen = 1,
+            .msg_control = ancillary, .msg_controllen = sizeof ancillary};
+        struct cmsghdr *rights = CMSG_FIRSTHDR(&message);
+        rights->cmsg_level = SOL_SOCKET; rights->cmsg_type = SCM_RIGHTS;
+        rights->cmsg_len = CMSG_LEN(sizeof witness);
+        memcpy(CMSG_DATA(rights), &witness, sizeof witness);
+        if (sendmsg(peer, &message, 0) != sizeof pid) return 73;
+        close(witness);
+        char byte;
+        return read(peer, &byte, 1) == 1 ? 0 : 74;
+    }
     if (argc > 1 && !strcmp(argv[1], "--signal")) { raise(SIGTERM); return 25; }
     if (argc > 2 && (!strcmp(argv[1], "--gate") || !strcmp(argv[1], "--gated-echo") ||
                     !strcmp(argv[1], "--error-gate"))) {

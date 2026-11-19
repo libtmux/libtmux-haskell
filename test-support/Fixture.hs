@@ -26,7 +26,7 @@ import Foreign.Marshal.Array (allocaArray, withArray0)
 import Foreign.Marshal.Utils (withMany)
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek, peekElemOff)
-import GHC.Conc (closeFdWith, threadWaitRead)
+import GHC.Conc (closeFdWith, getNumCapabilities, threadWaitRead)
 import GHC.Foreign qualified as Foreign
 import GHC.IO.Encoding (getFileSystemEncoding)
 import System.Directory (removePathForcibly)
@@ -361,10 +361,11 @@ inIsolatedProcess selected action = lookupEnv "LIBTMUX_ISOLATED_TEST" >>= \case
   Just current | current == selected -> putStrLn marker >> action
   _ -> do
     executable <- getExecutablePath
+    capabilities <- getNumCapabilities
     environment <- filter ((/= "LIBTMUX_ISOLATED_TEST") . fst) <$> getEnvironment
     (code, output, errors) <- readProcess $ setEnv (("LIBTMUX_ISOLATED_TEST", selected) : environment) $
       setStdin nullStream $ proc executable
-        ["--pattern", "/" <> selected <> "/", "--num-threads", "1", "+RTS", "-N1", "-RTS"]
+        ["--pattern", "/" <> selected <> "/", "--num-threads", "1", "+RTS", "-N" <> show capabilities, "-RTS"]
     unless (code == ExitSuccess && Lazy.null errors) $
       fail ("isolated test failed: " <> show (code, output, errors))
     let shown = Lazy.toStrict output
