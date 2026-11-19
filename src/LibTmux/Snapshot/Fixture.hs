@@ -81,6 +81,8 @@ data AttachedClient = AttachedClient
   , window :: !WindowId -- ^ Selected physical window ID.
   , index :: !WindowIndex -- ^ Selected window-link index in the attachment session.
   , pane :: !PaneId -- ^ The selected physical pane, not an independent client focus.
+  , width :: !Integer -- ^ Unsigned native tty width, including zero.
+  , height :: !(Maybe Integer) -- ^ Native tty height, absent when the terminal has not started.
   }
   deriving stock (Eq, Show)
 
@@ -108,7 +110,7 @@ validateFixture origin input = do
     G.assembleEntityGraph (fixtureGeneration origin)
       input.sessions input.windows input.panes input.windowLinks
   let clients =
-        [ G.ClientInput row.name row.pid row.tty row.session row.window row.index row.pane
+        [ G.ClientInput row.name row.pid row.tty row.session row.window row.index row.pane row.width row.height
         | row <- input.clients
         ]
   first (InvalidSnapshot . Text.pack . show) (G.assembleSnapshot input.info graph clients)

@@ -16,17 +16,27 @@ import Test.Tasty.QuickCheck qualified as Q
 
 tests :: TestTree
 tests = testGroup "tagged graph records"
-  [ testCase "validates contextual repetition and retains typed owned fields" $ withNonce $ \nonce -> do
+  [ testCase "decodes observed session group metadata" $ withNonce $ \nonce -> do
+      let grouped = row "S" [("session.id", "$1"), ("session.name", "work"),
+            ("session.attached", "0"), ("session.group", "build")]
+      graph <- require (R.decodeGraph generation nonce
+        (wire (grouped <> window "editor" <> link "$1" "1" "1" <> pane)))
+      map (.group) (G.graphSessions graph) @?= [Just "build"]
+  , testCase "validates contextual repetition and retains typed owned fields" $ withNonce $ \nonce -> do
       graph <- require (R.decodeGraph generation nonce
         (wire (session <> window "lo\\147s" <> link "$1" "1" "1" <> pane
           <> window "lo\\147s" <> link "$1" "4" "0" <> pane)))
       length (G.graphOccurrences graph) @?= 2
       map (.attached) (G.graphSessions graph) @?= [0]
+      map (.flags) (G.graphLinks graph) @?= ["*Z", "Z"]
+      map (.layout) (G.graphWindows graph) @?= ["native-layout"]
+      map (.zoomed) (G.graphWindows graph) @?= [True]
       map (Label.toBytes . (.name)) (G.graphWindows graph) @?= ["logs"]
       case G.graphPanes graph of
         [observed] -> do
           Value.dimensionValue observed.width @?= 120
           Value.dimensionValue observed.height @?= 40
+          (observed.cursorX, observed.cursorY, observed.modeCount, observed.mode) @?= (120, 3, 2, Just "copy-mode")
           observed.title @?= "editor\nline"
           observed.currentCommand @?= Os.fromBytestring "cmd\255"
           observed.currentPath @?= Os.fromBytestring "/tmp/g"
@@ -76,6 +86,8 @@ tests = testGroup "tagged graph records"
       map (.pid) (G.clients snapshot) @?= [11, 22]
       map (.name) (G.clients snapshot) @?= replicate 2 (Os.fromBytestring "tty\255")
       map (.tty) (G.clients snapshot) @?= [Nothing, Nothing]
+      map (.width) (G.clients snapshot) @?= [120, 120]
+      map (.height) (G.clients snapshot) @?= [Nothing, Nothing]
       mapM_ (\bytes -> assertBool "incomplete Snapshot admitted" (isLeft (R.decodeSnapshot generation nonce bytes)))
         [valid, snapshotWire "" (client "1"), snapshotWire "" "" <> "hook\n",
          marker <> ":O:1\n" <> server <> marker <> ":Z\n",
@@ -98,17 +110,19 @@ token, marker, valid, session, pane :: ByteString
 token = Bytes.replicate 64 97
 marker = "g" <> token
 valid = wire (session <> window "lo\\147s" <> link "$1" "1" "1" <> pane)
-session = row "S" [("session.id", "$1"), ("session.name", "work"), ("session.attached", "0")]
+session = row "S" [("session.id", "$1"), ("session.name", "work"), ("session.attached", "0"), ("session.group", "")]
 pane = row "P" [("pane.id", "%9"), ("pane.window", "@7"), ("pane.index", "0"),
   ("pane.width", "120"), ("pane.height", "40"), ("pane.active", "1"), ("pane.dead", "0"),
-  ("pane.title", "editor\\nline"), ("pane.currentCommand", "cmd\\377"), ("pane.currentPath", "/tmp/\\147")]
+  ("pane.title", "editor\\nline"), ("pane.currentCommand", "cmd\\377"), ("pane.currentPath", "/tmp/\\147"),
+  ("pane.cursorX", "120"), ("pane.cursorY", "3"), ("pane.modeCount", "2"), ("pane.mode", "copy-mode")]
 
 window :: ByteString -> ByteString
-window name = row "W" [("window.id", "@7"), ("window.name", name), ("window.width", "120"), ("window.height", "40")]
+window name = row "W" [("window.id", "@7"), ("window.name", name), ("window.width", "120"), ("window.height", "40"),
+  ("window.layout", "native-layout"), ("window.zoomed", "1")]
 
 link :: ByteString -> ByteString -> ByteString -> ByteString
 link owner index active = row "L" [("windowLink.session", owner), ("windowLink.window", "@7"),
-  ("windowLink.index", index), ("windowLink.active", active)]
+  ("windowLink.index", index), ("windowLink.active", active), ("windowLink.flags", if active == "1" then "*Z" else "Z")]
 
 row :: ByteString -> [(ByteString, ByteString)] -> ByteString
 row tag fields = marker <> ":" <> tag <> "\n"
@@ -124,7 +138,7 @@ server = row "I" [("server.pid", "100"), ("server.startedAt", "1700000000"),
 
 client :: ByteString -> ByteString
 client pid = row "C" [("client.name", "tty\\377"), ("client.pid", pid), ("client.tty", ""),
-  ("client.session", "$1"), ("client.window", "@7"), ("client.windowIndex", "1"), ("client.pane", "%9")]
+  ("client.session", "$1"), ("client.window", "@7"), ("client.windowIndex", "1"), ("client.pane", "%9"), ("client.width", "120"), ("client.height", "")]
 
 snapshotWire :: ByteString -> ByteString -> ByteString
 snapshotWire physical attached = marker <> ":O:1\n" <> server <> physical <> marker <> ":A\n"

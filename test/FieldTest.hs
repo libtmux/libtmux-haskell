@@ -15,7 +15,12 @@ import Test.Tasty.QuickCheck qualified as Q
 
 tests :: TestTree
 tests = testGroup "typed observation fields"
-  [ testCase "checks numeric domains without accepting absence or narrowing" $ do
+  [ testCase "registers native observation metadata" $ do
+      let actual = [F.fieldKey field | F.SomeField field <- F.catalogue]
+      mapM_ (\key -> assertBool ("missing field " <> show key) (key `elem` actual))
+        ["session.group", "window.layout", "window.zoomed", "windowLink.flags",
+         "pane.cursorX", "pane.cursorY", "pane.modeCount", "pane.mode", "client.width", "client.height"]
+  , testCase "checks numeric domains without accepting absence or narrowing" $ do
       mapM_ (rejected F.PaneWidth) ["", "0", "-1", "1.0", "4294967296", " 1", "1\n"]
       mapM_ (rejected F.LinkIndex) ["", "-1", "2147483648"]
       mapM_ (rejected F.PaneIndex) ["", "-1", "4294967296"]
@@ -23,6 +28,20 @@ tests = testGroup "typed observation fields"
       mapM_ (rejected F.PaneActive) ["", "true", "2", "00"]
       F.decodeField F.PaneActive "0" @?= Right False
       F.decodeField F.LinkActive "1" @?= Right True
+      mapM_ (rejected F.PaneCursorX) ["", "-1", "4294967296"]
+      mapM_ (rejected F.PaneCursorY) ["", "-1", "4294967296"]
+      mapM_ (rejected F.PaneModeCount) ["", "-1", "4294967296"]
+      mapM_ (rejected F.ClientWidth) ["", "-1", "4294967296"]
+      mapM_ (rejected F.ClientHeight) ["-1", "4294967296"]
+      F.decodeField F.PaneCursorX "0" @?= Right 0
+      F.decodeField F.PaneModeCount "2" @?= Right 2
+      F.decodeField F.ClientWidth "0" @?= Right 0
+      F.decodeField F.ClientHeight "" @?= Right Nothing
+      F.decodeField F.ClientHeight "0" @?= Right (Just 0)
+      F.decodeField F.PaneMode "" @?= Right Nothing
+      F.decodeField F.PaneMode "copy-mode" @?= Right (Just "copy-mode")
+      F.decodeField F.SessionGroup "" @?= Right Nothing
+      rejected F.WindowLayout ""
       rejected F.SessionId "@1"
       rejected F.WindowId "%1"
       rejected F.PaneId "$1"
@@ -33,6 +52,9 @@ tests = testGroup "typed observation fields"
       F.decodeField F.PanePath bytes @?= Right (Os.fromBytestring bytes)
       rejected F.SessionName bytes
       rejected F.PaneTitle bytes
+      F.decodeField F.SessionGroup bytes @?= Right (Just (Label.fromBytes bytes))
+      rejected F.PaneMode bytes
+      rejected F.WindowLayout bytes
       rejected F.PaneCommand "x\NULy"
       rejected F.WindowName "x\NULy"
       rejected F.PaneTitle (Bytes.replicate 1048577 120)
@@ -47,11 +69,11 @@ tests = testGroup "typed observation fields"
       height <- require (V.mkDimension 40)
       let sessionRef = G.SessionRef generation sessionId
           windowRef = G.WindowRef generation windowId
-          session = G.Session sessionRef "work" 2
-          window = G.Window windowRef "editor" width height
+          session = G.Session sessionRef "work" 2 (Just "build")
+          window = G.Window windowRef "editor" width height "layout" True
           pane = G.Pane (G.PaneRef generation paneId) windowRef paneIndex
-            width height True False "title" (Os.fromBytestring "nvim") (Os.fromBytestring "/work")
-          link = G.WindowLink sessionRef index windowRef False
+            width height True False "title" (Os.fromBytestring "nvim") (Os.fromBytestring "/work") 120 3 2 (Just "copy-mode")
+          link = G.WindowLink sessionRef index windowRef False "##"
       F.project F.SessionId session @?= sessionId
       F.project F.WindowId window @?= windowId
       F.project F.PaneId pane @?= paneId
@@ -62,6 +84,14 @@ tests = testGroup "typed observation fields"
       F.project F.LinkActive link @?= False
       F.project F.PaneActive pane @?= True
       F.project F.PanePath pane @?= Os.fromBytestring "/work"
+      F.project F.SessionGroup session @?= Just "build"
+      F.project F.WindowLayout window @?= "layout"
+      F.project F.WindowZoomed window @?= True
+      F.project F.LinkFlags link @?= "##"
+      F.project F.PaneCursorX pane @?= 120
+      F.project F.PaneCursorY pane @?= 3
+      F.project F.PaneModeCount pane @?= 2
+      F.project F.PaneMode pane @?= Just "copy-mode"
   , Q.testProperty "decodes every valid wire dimension as its mathematical value" $
       Q.forAll (Q.chooseInteger (1, 4294967295)) $ \value ->
         fmap V.dimensionValue (F.decodeField F.PaneWidth (Ascii.pack (show value))) Q.=== Right value

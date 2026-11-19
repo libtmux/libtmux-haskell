@@ -5,6 +5,9 @@ import Control.Concurrent.STM (atomically, newEmptyTMVarIO, putTMVar, readTMVar,
 import Control.Exception (ExceptionWithContext (..), MaskingState (..), finally, fromException, getMaskingState, mask_, throwIO, try)
 import Control.Monad (forM_, when)
 import Data.ByteString.Char8 qualified as Bytes
+import Data.ByteString.Lazy qualified as Lazy
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Utf8
 import Data.IORef
 import Data.List (isPrefixOf)
 import Fixture qualified
@@ -58,6 +61,84 @@ tests = testGroup "public Server API"
         (code, _, errors) <- Fixture.command fixture ["display-message", "-p", "#{pid}"]
         code @?= ExitSuccess
         errors @?= ""
+
+  , testCase "observes native metadata and retains earlier snapshots" $
+      Fixture.withFixture $ \fixture -> Fixture.withAttachedClient fixture "$0" $ do
+        let config = (Tmux.serverConfig (Os.fromBytestring (Bytes.pack fixture.socket)))
+              { Tmux.executable = Os.fromBytestring (Bytes.pack fixture.executable) }
+            run args = do
+              (code, output, errors) <- Fixture.command fixture args
+              (code, errors) @?= (ExitSuccess, "")
+              pure (Lazy.toStrict output)
+            change args = run args >> pure ()
+            only rows = case rows of [one] -> pure one; _ -> fail "one observed row required"
+        Tmux.withServer config $ \server -> do
+          initial <- Tmux.capture server
+          map (.group) (Tmux.sessions initial) @?= [Nothing]
+          control <- only (Tmux.clients initial)
+          control.height @?= Nothing
+          change ["refresh-client", "-t", map Os.toChar (Os.unpack control.name), "-C", "120x40"]
+          change ["set-window-option", "-t", "@0", "window-size", "manual"]
+          change ["resize-window", "-t", "@0", "-x", "100", "-y", "30"]
+          change ["link-window", "-s", "@0", "-t", "$0:4"]
+          change ["new-session", "-d", "-s", "group-peer", "-t", "$0"]
+          receipt <- run ["split-window", "-d", "-t", "$0:0", "-P", "-F", "#{pane_id} #{pane_pid}",
+            "/bin/sh", "-c", "printf '\\033[2J\\033[1;1Hmetadata-ready\\033[4;7H'; exec /bin/cat -"]
+          case Bytes.words receipt of
+            [paneId, pid] -> Fixture.withTrackedPane (Lazy.fromStrict (pid <> "\n"))
+              (change ["kill-pane", "-t", Bytes.unpack paneId]) $ do
+                ident <- either (fail . show) pure (Tmux.parsePaneId (Utf8.decodeUtf8 paneId))
+                pending <- Tmux.capture server
+                observed <- either (fail . show) pure (Tmux.lookupPaneId pending ident)
+                Tmux.waitForText server observed.ref Tmux.defaultPaneWait "metadata-ready" >>= \case
+                  Tmux.PaneTextMatched _ -> pure ()
+                  Tmux.PaneTextTimedOut _ retained -> do
+                    forM_ retained $ \owner -> do
+                      Tmux.recoveryGeneration owner @?= Tmux.serverGeneration server
+                      Tmux.resumeCaptureRecovery owner
+                      _ <- Tmux.detachCaptureRecovery owner
+                      pure ()
+                    assertFailure "owned pane output was not observed"
+                  Tmux.PaneTextExited _ -> assertFailure "owned metadata pane exited"
+                change ["select-pane", "-t", Bytes.unpack paneId]
+                before <- Tmux.capture server
+                pane <- either (fail . show) pure (Tmux.lookupPane before observed.ref)
+                (pane.cursorX, pane.cursorY, pane.modeCount, pane.mode) @?= (6, 3, 0, Nothing)
+                group <- case map (.group) (Tmux.sessions before) of
+                  [Just first, Just second] | first == second -> pure first
+                  other -> assertFailure ("session group metadata missing: " <> show other) >> fail "unreachable"
+                assertBool "empty session group label" (not (Bytes.null (Tmux.labelBytes group)))
+                window <- only (Tmux.windows before)
+                window.zoomed @?= False
+                (Tmux.dimensionValue window.width, Tmux.dimensionValue window.height) @?= (100, 30)
+                assertBool "layout missing" (not (Text.null window.layout))
+                sized <- only (Tmux.clients before)
+                (sized.width, sized.height) @?= (120, Nothing)
+                forM_ (Tmux.windowLinks before) $ \link -> do
+                  let target = Text.unpack (Tmux.renderSessionId (Tmux.sessionId link.session))
+                        <> ":" <> show (Tmux.windowIndexValue link.index)
+                  native <- run ["display-message", "-p", "-t", target, "#{window_flags}"]
+                  Utf8.encodeUtf8 link.flags <> "\n" @?= native
+                assertBool "link-local selection flags were collapsed"
+                  (any (Text.isInfixOf "*") (map (.flags) (Tmux.windowLinks before))
+                    && any (not . Text.isInfixOf "*") (map (.flags) (Tmux.windowLinks before)))
+                change ["copy-mode", "-t", Bytes.unpack paneId]
+                change ["send-keys", "-X", "-t", Bytes.unpack paneId, "cursor-up"]
+                inMode <- Tmux.capture server
+                modePane <- either (fail . show) pure (Tmux.lookupPane inMode pane.ref)
+                (modePane.modeCount, modePane.mode) @?= (1, Just "copy-mode")
+                (modePane.cursorX, modePane.cursorY) @?= (pane.cursorX, pane.cursorY)
+                change ["send-keys", "-X", "-t", Bytes.unpack paneId, "cancel"]
+                change ["resize-pane", "-Z", "-t", Bytes.unpack paneId]
+                zoomed <- Tmux.capture server
+                zoomWindow <- only (Tmux.windows zoomed)
+                (zoomWindow.zoomed, zoomWindow.layout) @?= (True, window.layout)
+                assertBool "zoom flags missing" (all (Text.isInfixOf "Z" . (.flags)) (Tmux.windowLinks zoomed))
+                afterPane <- either (fail . show) pure (Tmux.lookupPane zoomed pane.ref)
+                (afterPane.modeCount, afterPane.mode) @?= (0, Nothing)
+                (pane.modeCount, pane.mode, window.zoomed) @?= (0, Nothing, False)
+                map (.group) (Tmux.sessions initial) @?= [Nothing]
+            other -> assertFailure ("invalid owned-pane receipt: " <> show other)
 
   , testCase "Server adoption refuses an unqualified executable before entering the callback" $
       Fixture.withFixture $ \fixture -> forM_ [False, True] $ \shared -> do

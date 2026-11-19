@@ -1,6 +1,6 @@
 -- | Numeric topology for the serial capture comparison path.
 --
--- 'decodeTopology' leaves textual fields unhydrated. Its graph must not be
+-- 'decodeTopology' leaves observation metadata unhydrated. Its graph must not be
 -- published as a complete observation. "LibTmux.Internal.Record" supplies the
 -- tagged production profile, including text fields and their boundaries.
 module LibTmux.Internal.Topology (TopologyError (..), topologyFormat, decodeTopology) where
@@ -64,7 +64,7 @@ decodeTopology generation bytes = do
         ["S", sid, attached] -> do
           ref <- sessionId sid
           count <- field Field.SessionAttached attached
-          values <- insert ref (G.Session ref "" count) G.ConflictingSession rows.sessions
+          values <- insert ref (G.Session ref "" count Nothing) G.ConflictingSession rows.sessions
           pure rows {sessions = values}
         ["W", sid, wid, index, active, width, height] -> do
           session <- sessionId sid
@@ -73,11 +73,11 @@ decodeTopology generation bytes = do
           selected <- field Field.LinkActive active
           w <- field Field.WindowWidth width
           h <- field Field.WindowHeight height
-          values <- insert window (G.Window window "" w h) G.ConflictingWindow rows.windows
+          values <- insert window (G.Window window "" w h "" False) G.ConflictingWindow rows.windows
           when (Map.member (session, position) rows.links)
             (Left (TopologyGraphError (G.DuplicateWindowSlot session position)))
           pure rows {windows = values, links = Map.insert (session, position)
-            (G.WindowLink session position window selected) rows.links}
+            (G.WindowLink session position window selected "") rows.links}
         ["P", wid, pid, index, width, height, active, dead] -> do
           window <- windowId wid
           pane <- paneId pid
@@ -86,7 +86,7 @@ decodeTopology generation bytes = do
           h <- field Field.PaneHeight height
           selected <- field Field.PaneActive active
           exited <- field Field.PaneDead dead
-          values <- insert pane (G.Pane pane window position w h selected exited "" Os.empty Os.empty)
+          values <- insert pane (G.Pane pane window position w h selected exited "" Os.empty Os.empty 0 0 0 Nothing)
             G.ConflictingPane rows.panes
           pure rows {panes = values}
         _ -> Left MalformedTopology

@@ -4,6 +4,9 @@ import Data.ByteString qualified as Bytes
 import Data.Either (isLeft)
 import LibTmux.Id
 import LibTmux.Internal.Graph
+import LibTmux.Internal.Graph qualified as Window (Window (..))
+import LibTmux.Internal.Graph qualified as Pane (Pane (..))
+import LibTmux.Internal.Graph qualified as Link (WindowLink (..))
 import LibTmux.Internal.Graph qualified as Info (ServerInfo (..))
 import LibTmux.Internal.Graph qualified as Input (ClientInput (..))
 import LibTmux.Internal.Field qualified as Field
@@ -27,7 +30,8 @@ tests = testGroup "detached entity graph"
         panesForWindow graph window.ref @?= Right [pane]
   , testCase "rejects conflicting observations of the same physical object" $
       fixture $ \generation session window pane first _ -> do
-        let changed = Window window.ref "changed" window.width window.height
+        let changed :: Window
+            changed = window {Window.name = "changed"}
         assembleEntityGraph generation [session] [window, changed] [pane] [first]
           @?= Left (ConflictingWindow window.ref)
         assembleEntityGraph generation [session] [window] [pane, pane {title = "changed"}] [first]
@@ -49,13 +53,17 @@ tests = testGroup "detached entity graph"
         panesForWindow graph foreignRef @?= Left ForeignGeneration
   , testCase "validates selected links, active panes and pane indices" $
       fixture $ \generation session window pane first second -> do
-        let selected = WindowLink second.session second.index second.window True
-            inactive = Pane pane.ref pane.window pane.index pane.width pane.height False
-              pane.dead pane.title pane.currentCommand pane.currentPath
+        let selected :: WindowLink
+            selected = second {Link.active = True}
+            inactive :: Pane
+            inactive = pane {Pane.active = False}
         assembleEntityGraph generation [session] [window] [pane] [first, selected]
           @?= Left (InvalidSessionSelection session.ref 2)
         assembleEntityGraph generation [session] [window] [inactive] [first]
           @?= Left (InvalidPaneSelection window.ref 0)
+        mapM_ (\invalid -> assembleEntityGraph generation [session] [window] [invalid] [first]
+          @?= Left (InvalidPaneMetadata pane.ref))
+          [pane {cursorX = -1}, pane {cursorY = 4294967296}, pane {modeCount = -1}]
         anotherRef <- PaneRef generation <$> require (parsePaneId "%2")
         assembleEntityGraph generation [session] [window] [pane, pane {ref = anotherRef, active = False}] [first]
           @?= Left (DuplicatePaneIndex window.ref pane.index)
@@ -65,7 +73,7 @@ tests = testGroup "detached entity graph"
         graphOccurrences empty @?= []
         graphSessions empty @?= []
         let renamed :: Window
-            renamed = Window window.ref "renamed" window.width window.height
+            renamed = window {Window.name = "renamed"}
         assertBool "renamed observation compares equal" (window /= renamed)
         renamed.ref @?= window.ref
         assembleEntityGraph generation [session {attached = -1}] [] [] []
@@ -86,7 +94,7 @@ tests = testGroup "detached entity graph"
             WindowRef _ windowId = window.ref
             PaneRef _ paneId = pane.ref
             named = Os.fromBytestring "same\255"
-            client = ClientInput named 2 Nothing sessionId windowId first.index paneId
+            client = ClientInput named 2 Nothing sessionId windowId first.index paneId 0 Nothing
         snapshot <- require (assembleSnapshot info graph [client, client {Input.pid = 1}])
         map (.pid) (clients snapshot) @?= [1, 2]
         map (.name) (clients snapshot) @?= [named, named]
@@ -94,7 +102,7 @@ tests = testGroup "detached entity graph"
           (Just (ClientAttachment (session {attached = 0}) window (PaneOccurrence pane first)))
         repeated <- require (assembleSnapshot info graph [client, client])
         length (clients repeated) @?= 2
-        let offline = Client named 1 Nothing Nothing
+        let offline = Client named 1 Nothing Nothing 0 Nothing
         offline.attachment @?= Nothing
         Field.project Field.ClientName offline @?= named
   , testCase "rejects foreign metadata and missing or changed client attachment contexts" $
@@ -105,11 +113,15 @@ tests = testGroup "detached entity graph"
             SessionRef _ sessionId = session.ref
             WindowRef _ windowId = window.ref
             PaneRef _ paneId = pane.ref
-            client = ClientInput (Os.fromBytestring "client") 2 Nothing sessionId windowId first.index paneId
+            client = ClientInput (Os.fromBytestring "client") 2 Nothing sessionId windowId first.index paneId 120 (Just 40)
             otherGeneration = Generation (EndpointIdentity 7 11) (Bytes.replicate 32 2)
         assembleSnapshot (info {Info.generation = otherGeneration}) graph [] @?= Left (InvalidReference ForeignGeneration)
         assembleSnapshot (info {Info.pid = 0}) graph [] @?= Left InvalidServerInfo
         assembleSnapshot info graph [client {Input.pid = 0}] @?= Left InvalidClientMetadata
+        assembleSnapshot info graph [client {Input.width = -1}] @?= Left InvalidClientMetadata
+        assembleSnapshot info graph [client {Input.height = Just 4294967296}] @?= Left InvalidClientMetadata
+        sized <- require (assembleSnapshot info graph [client])
+        map (\row -> (row.width, row.height)) (clients sized) @?= [(120, Just 40)]
         assembleSnapshot info graph [client {Input.index = second.index}] @?= Left ChangedClientAttachment
         missing <- require (mkWindowIndex 9)
         assembleSnapshot info graph [client {Input.index = missing}] @?= Left (MissingClientLink session.ref missing)
@@ -140,10 +152,10 @@ fixture action = do
   firstIndex <- require (mkWindowIndex 1)
   secondIndex <- require (mkWindowIndex 4)
   paneIndex <- require (mkPaneIndex 0)
-  let session = Session sessionRef "work" 2
-      window = Window windowRef "editor" width height
+  let session = Session sessionRef "work" 2 Nothing
+      window = Window windowRef "editor" width height "layout" False
       pane = Pane paneRef windowRef paneIndex width height True False "editor"
-        (Os.fromBytestring "nvim") (Os.fromBytestring "/work")
-      first = WindowLink sessionRef firstIndex windowRef True
-      second = WindowLink sessionRef secondIndex windowRef False
+        (Os.fromBytestring "nvim") (Os.fromBytestring "/work") 0 0 0 Nothing
+      first = WindowLink sessionRef firstIndex windowRef True "*"
+      second = WindowLink sessionRef secondIndex windowRef False ""
   action generation session window pane first second

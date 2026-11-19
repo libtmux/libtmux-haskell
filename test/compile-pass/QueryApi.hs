@@ -40,3 +40,19 @@ operational = flip Q.fetch selected
 
 local :: Tmux.Snapshot -> Either Q.QueryError [Tmux.Pane]
 local = flip Q.runQuery selected
+
+grouped :: Query Tmux.Session
+grouped = Q.sessions & Q.matching (Q.eq Session.group (Just "team"))
+
+zoomedLayout :: Query Tmux.Window
+zoomedLayout = Q.windows & Q.matching (Q.allOf [Q.eq Window.zoomed True, Q.contains Window.layout "layout"])
+
+flagged :: Query Tmux.WindowLink
+flagged = Q.windowLinks & Q.matching (Q.contains Link.flags "Z")
+
+modeCursor :: Query Tmux.Pane
+modeCursor = Q.panes & Q.matching (Q.allOf [Q.ge Pane.cursorX 0, Q.ge Pane.cursorY 0,
+  Q.ge Pane.modeCount 1, Q.eq Pane.mode (Just "copy-mode")])
+
+sized :: Query Tmux.Client
+sized = Q.clients & Q.matching (Q.allOf [Q.ge Client.width 80, Q.eq Client.height Nothing])

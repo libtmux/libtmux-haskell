@@ -57,6 +57,7 @@ import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.SocketPin
 import LibTmux.Internal.Topology qualified as Topology
+import LibTmux.Value qualified as Value
 import LibTmux.Environment (EnvironmentVisibility)
 import LibTmux.Id qualified as Id
 import LibTmux.Version qualified as Version
@@ -181,8 +182,11 @@ data ResultDecoder value where
 
 -- | Closed scalar acquisition targets; callers cannot supply format fragments.
 data EntityField
-  = SessionName !Id.SessionId | WindowName !Id.WindowId
+  = SessionName !Id.SessionId | SessionGroup !Id.SessionId
+  | WindowName !Id.WindowId | WindowLayout !Id.WindowId | WindowZoomed !Id.WindowId
+  | LinkFlags !Id.SessionId !Value.WindowIndex
   | PaneTitle !Id.PaneId | PaneCommand !Id.PaneId | PanePath !Id.PaneId
+  | PaneCursorX !Id.PaneId | PaneCursorY !Id.PaneId | PaneModeCount !Id.PaneId | PaneMode !Id.PaneId
   | ProgramState !Id.PaneId
   deriving stock (Eq, Show)
 
@@ -714,6 +718,15 @@ commandArguments nonce command = case command of
 entityField :: EntityField -> (ByteString, ByteString, ByteString)
 entityField (SessionName ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident),
   fieldFormat Field.SessionId, Field.formatVariable Field.SessionName)
+entityField (SessionGroup ident) = (Utf8.encodeUtf8 (Id.renderSessionId ident),
+  fieldFormat Field.SessionId, Field.formatVariable Field.SessionGroup)
+entityField (WindowLayout ident) = (Utf8.encodeUtf8 (Id.renderWindowId ident),
+  fieldFormat Field.WindowId, Field.formatVariable Field.WindowLayout)
+entityField (WindowZoomed ident) = (Utf8.encodeUtf8 (Id.renderWindowId ident),
+  fieldFormat Field.WindowId, Field.formatVariable Field.WindowZoomed)
+entityField (LinkFlags session index) =
+  (Utf8.encodeUtf8 (Id.renderSessionId session) <> ":" <> Ascii.pack (show (Value.windowIndexValue index)),
+   fieldFormat Field.LinkSession <> ":" <> fieldFormat Field.LinkIndex, Field.formatVariable Field.LinkFlags)
 entityField (WindowName ident) = (Utf8.encodeUtf8 (Id.renderWindowId ident),
   fieldFormat Field.WindowId, Field.formatVariable Field.WindowName)
 entityField (PaneTitle ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
@@ -722,6 +735,14 @@ entityField (PaneCommand ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
   fieldFormat Field.PaneId, Field.formatVariable Field.PaneCommand)
 entityField (PanePath ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
   fieldFormat Field.PaneId, Field.formatVariable Field.PanePath)
+entityField (PaneCursorX ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, Field.formatVariable Field.PaneCursorX)
+entityField (PaneCursorY ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, Field.formatVariable Field.PaneCursorY)
+entityField (PaneModeCount ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, Field.formatVariable Field.PaneModeCount)
+entityField (PaneMode ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
+  fieldFormat Field.PaneId, Field.formatVariable Field.PaneMode)
 entityField (ProgramState ident) = (Utf8.encodeUtf8 (Id.renderPaneId ident),
   fieldFormat Field.PaneId, "")
 

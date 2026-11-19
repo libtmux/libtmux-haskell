@@ -4,9 +4,10 @@
 -- several 'windowLinks'; its name and pane set are shared across them.
 -- Window names use lossless t'TmuxText' because older supported tmux
 -- releases can retain labels that are not valid UTF-8.
-module LibTmux.Query.Window (id, name, width, height, panes, windowLinks) where
+module LibTmux.Query.Window (id, name, width, height, layout, zoomed, panes, windowLinks) where
 
-import Prelude ()
+import Prelude (Bool)
+import Data.Text (Text)
 import LibTmux.Id (WindowId)
 import LibTmux.Internal.Field qualified as F
 import LibTmux.Internal.Query qualified as Q
@@ -29,6 +30,15 @@ width = F.WindowWidth
 -- | Positive physical window height in cells.
 height :: Field Window Dimension
 height = F.WindowHeight
+
+-- | Native unzoomed layout encoding, possibly including pane selections.
+-- Treat it as opaque, release-dependent text.
+layout :: Field Window Text
+layout = F.WindowLayout
+
+-- | Whether a pane currently occupies the window through zoom.
+zoomed :: Field Window Bool
+zoomed = F.WindowZoomed
 
 -- | Physical panes in this window, ordered by pane index.
 panes :: ToMany Window Pane

@@ -243,21 +243,33 @@ captureGraphWith checkpoint runtime client executable duration =
       before <- topology
       sessions <- forM (G.graphSessions before) $ \row -> do
         name <- decoded Field.SessionName (R.SessionName (Field.project Field.SessionId row))
-        pure row {Session.name = name}
+        group <- decoded Field.SessionGroup (R.SessionGroup (Field.project Field.SessionId row))
+        pure row {Session.name = name, Session.group = group}
       windows <- forM (G.graphWindows before) $ \row -> do
         name <- decoded Field.WindowName (R.WindowName (Field.project Field.WindowId row))
-        pure row {Window.name = name}
+        let ident = Field.project Field.WindowId row
+        layout <- decoded Field.WindowLayout (R.WindowLayout ident)
+        zoomed <- decoded Field.WindowZoomed (R.WindowZoomed ident)
+        pure row {Window.name = name, Window.layout = layout, Window.zoomed = zoomed}
       panes <- forM (G.graphPanes before) $ \row -> do
         let ident = Field.project Field.PaneId row
         title <- decoded Field.PaneTitle (R.PaneTitle ident)
         command <- decoded Field.PaneCommand (R.PaneCommand ident)
         path <- decoded Field.PanePath (R.PanePath ident)
-        pure row {G.title = title, G.currentCommand = command, G.currentPath = path}
+        x <- decoded Field.PaneCursorX (R.PaneCursorX ident)
+        y <- decoded Field.PaneCursorY (R.PaneCursorY ident)
+        count <- decoded Field.PaneModeCount (R.PaneModeCount ident)
+        mode <- decoded Field.PaneMode (R.PaneMode ident)
+        pure row {G.title = title, G.currentCommand = command, G.currentPath = path,
+          G.cursorX = x, G.cursorY = y, G.modeCount = count, G.mode = mode}
+      links <- forM (G.graphLinks before) $ \row -> do
+        flags <- decoded Field.LinkFlags (R.LinkFlags (Field.project Field.LinkSession row) row.index)
+        pure row {G.flags = flags}
       checkpoint
       after <- topology
       when (before /= after) (throwIO CaptureChanged)
       graph <- either (const (throwIO CaptureChanged)) pure
-        (G.assembleEntityGraph generation sessions windows panes (G.graphLinks before))
+        (G.assembleEntityGraph generation sessions windows panes links)
       evaluate (force graph)
 
 withinDeadline :: NFData value => R.Runtime -> R.ServerHandle -> Int

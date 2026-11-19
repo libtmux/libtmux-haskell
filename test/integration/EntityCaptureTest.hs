@@ -52,6 +52,8 @@ tests = testGroup "entity capture"
         length (G.graphOccurrences graph) @?= 4
         map (.name) (G.graphSessions graph) @?= ["fixture", "other"]
         map (.title) (G.graphPanes graph) @?= ["editor g λ"]
+        (_, _, serial) <- C.captureGraphWith (pure ()) runtime client (Bytes.pack fixture.executable) 2000000
+        serial @?= graph
         command fixture ["rename-session", "-t", "$0", "after-capture"]
         atomically (R.usage runtime) >>= (@?= B.Usage True 1 0 0)
         pure graph

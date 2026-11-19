@@ -171,6 +171,12 @@ More: [capture and recovery](https://libtmux.org/en/haskell/latest/guides/captur
 [`withRuntime`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withruntime/) for
 [shared lifetimes](https://libtmux.org/en/haskell/latest/guides/shared-runtime/).
 
+Use [`Window.zoomed`](src/LibTmux/Query/Window.hs) to select zoomed windows,
+or [`Pane.mode`](src/LibTmux/Query/Pane.hs) to find panes in copy mode.
+[Captured metadata](docs/capture.md#read-captured-metadata) explains coordinates,
+link flags and optional client sizes; [offline selections](docs/fixtures.md)
+show the typed predicates.
+
 ## Find sessions, windows and panes
 
 ### [`runQuery`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-runquery/): typed predicates over a capture

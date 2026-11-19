@@ -3,7 +3,7 @@
 -- t'Client' means an observed tmux client, not the operational Server handle.
 -- The tmux 3.3a baseline captures attached clients. 'tty' can be
 -- absent for a control client; bytes retain endpoint path semantics.
-module LibTmux.Query.Client (name, pid, tty, attachment) where
+module LibTmux.Query.Client (name, pid, tty, width, height, attachment) where
 
 import LibTmux.Internal.Field qualified as F
 import LibTmux.Internal.Query qualified as Q
@@ -23,6 +23,14 @@ pid = F.ClientPid
 -- | Observed client tty, or 'Nothing' when tmux reports no tty.
 tty :: Field Client (Maybe PosixPath)
 tty = F.ClientTty
+
+-- | Reported unsigned tty width in cells. Control clients can report zero.
+width :: Field Client Integer
+width = F.ClientWidth
+
+-- | Tty height when tmux has started the terminal; absent for control clients.
+height :: Field Client (Maybe Integer)
+height = F.ClientHeight
 
 -- | Optional captured selection, used with 'LibTmux.Query.optionalRelated'. Absence fails
 -- that positive predicate and satisfies its negation.

@@ -3,8 +3,9 @@
 -- Use with "LibTmux.Query". All tokens belong to the tmux 3.3a baseline.
 -- The same physical window can occur at several indices in one session;
 -- t'WindowLink' retains each appearance. 'active' is contextual to the session.
-module LibTmux.Query.Link (sessionId, windowId, index, active, session, window, panes) where
+module LibTmux.Query.Link (sessionId, windowId, index, active, flags, session, window, panes) where
 
+import Data.Text (Text)
 import LibTmux.Id (SessionId, WindowId)
 import LibTmux.Internal.Field qualified as F
 import LibTmux.Internal.Query qualified as Q
@@ -27,6 +28,10 @@ index = F.LinkIndex
 -- | Whether this link is selected in its session.
 active :: Field WindowLink Bool
 active = F.LinkActive
+
+-- | Native window_flags for this appearance. Retains tmux's doubled @#@ escaping.
+flags :: Field WindowLink Text
+flags = F.LinkFlags
 
 -- | Resolve the session in the supplied snapshot with 'LibTmux.Query.related'.
 session :: ToOne WindowLink Session

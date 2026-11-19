@@ -62,8 +62,37 @@ Values:
 - Compare sizes with `dimensionValue pane.width`; dimensions have no
   [`Num`](https://hackage-content.haskell.org/package/base-4.22.0.0/docs/Prelude.html#t:Num)
   instance.
-- Paths and command names keep POSIX bytes. Window labels are `TmuxText`;
+- Paths and command names keep POSIX bytes. Window and group labels are `TmuxText`;
   converting to text is explicit and can fail.
+
+## Read captured metadata
+
+Record dot and the matching [query field tokens](query.md) read the same
+captured values. Later state changes leave earlier snapshots unchanged.
+The [offline example](fixtures.md) constructs and selects these fields.
+
+| Observation | Fields | Native meaning |
+| --- | --- | --- |
+| `Session` | `group :: Maybe TmuxText` | Reported group label; `Nothing` for an ungrouped session. |
+| `Window` | `layout :: Text`, `zoomed :: Bool` | Opaque unzoomed layout encoding and current zoom state. A zoomed window retains its saved unzoomed layout. |
+| `WindowLink` | `flags :: Text` | `window_flags` for this session/index appearance, including tmux's doubled `#` escaping. |
+| `Pane` | `cursorX`, `cursorY :: Integer` | Zero-based base-screen coordinates, independent of a mode's cursor. A pending wrap can put `cursorX` at the pane width. |
+| `Pane` | `modeCount :: Integer`, `mode :: Maybe Text` | Mode-stack depth and current mode name. Zero and `Nothing` describe an ordinary pane. |
+| `Client` | `width :: Integer`, `height :: Maybe Integer` | Native tty size. Width can be zero; height is absent until tmux starts the terminal. Control clients have no reported height. |
+
+Numeric cursor, mode and client-size values retain tmux's unsigned range,
+including zero. They are not positive `Dimension` values. Layout text is
+release-dependent and can include pane-selection metadata; the library does
+not parse it. Flags belong to a link,
+so a physical window's appearances can have different selections and alerts.
+Group labels preserve bytes like window names; use `labelText` when text is
+required.
+
+These meanings follow the native callbacks in
+[tmux 3.3a](https://github.com/tmux/tmux/blob/0b355ae8114511e1ff6359272b164f1cdf718e80/format.c) and
+[tmux 3.8](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/format.c).
+Live checks exercise control-client sizing and absent height on both releases;
+terminal-client height is represented and checked in offline fixtures.
 
 ## Errors and recovery
 

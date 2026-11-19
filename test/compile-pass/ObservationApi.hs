@@ -32,3 +32,9 @@ sessionFields Session.Session {Session.ref = ident, Session.name = label, Sessio
 
 offlineReference :: Tmux.PaneId -> Tmux.PaneRef
 offlineReference = F.paneRef (F.fixtureOrigin "type-contract")
+
+observationMetadata :: Tmux.Session -> Tmux.Window -> Tmux.WindowLink -> Tmux.Pane -> Tmux.Client
+  -> (Maybe Tmux.TmuxText, Text, Bool, Text, Integer, Integer, Integer, Maybe Text, Integer, Maybe Integer)
+observationMetadata session window link pane client =
+  (session.group, window.layout, window.zoomed, link.flags, pane.cursorX, pane.cursorY,
+   pane.modeCount, pane.mode, client.width, client.height)

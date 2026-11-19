@@ -41,12 +41,12 @@ makeGraph linkCount paneCount = do
     ref <- PaneRef generation <$> checked (parsePaneId ("%" <> Text.pack (show index)))
     paneIndex <- checked (mkPaneIndex (fromIntegral index))
     pure (Pane ref window paneIndex width height (index == 0) False "pane"
-      (Os.fromBytestring "cat") (Os.fromBytestring "/work"))) [0 .. paneCount - 1]
+      (Os.fromBytestring "cat") (Os.fromBytestring "/work") 0 0 0 Nothing)) [0 .. paneCount - 1]
   links <- traverse (\index -> do
     windowIndex <- checked (mkWindowIndex (fromIntegral index))
-    pure (WindowLink session windowIndex window (index == 0))) [0 .. linkCount - 1]
-  checked (assembleEntityGraph generation [Session session "work" 0]
-    [Window window "editor" width height] panes links)
+    pure (WindowLink session windowIndex window (index == 0) "")) [0 .. linkCount - 1]
+  checked (assembleEntityGraph generation [Session session "work" 0 Nothing]
+    [Window window "editor" width height "layout" False] panes links)
 
 checked :: Show e => Either e a -> Either String a
 checked = either (Left . show) Right

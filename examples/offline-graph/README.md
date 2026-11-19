@@ -11,7 +11,8 @@
 
 [Main.hs](Main.hs) builds a fixture with
 [`validateFixture`](https://libtmux.org/en/haskell/latest/reference/libtmux-snapshot-fixture-v-validatefixture/) and selects
-active panes by width.
+active panes by width, then queries group, layout, link, pane and client
+metadata.
 
 - Opens no socket and starts no process.
 - Links one window twice, so physical entities and appearances differ.

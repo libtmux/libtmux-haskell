@@ -34,6 +34,8 @@ data Field row value where
   ClientName :: Field G.Client PosixString
   ClientPid :: Field G.Client Integer
   ClientTty :: Field G.Client (Maybe PosixPath)
+  ClientWidth :: Field G.Client Integer
+  ClientHeight :: Field G.Client (Maybe Integer)
   ClientSession :: Field G.ClientAttachment Id.SessionId
   ClientWindow :: Field G.ClientAttachment Id.WindowId
   ClientWindowIndex :: Field G.ClientAttachment V.WindowIndex
@@ -41,10 +43,13 @@ data Field row value where
   SessionId :: Field G.Session Id.SessionId
   SessionName :: Field G.Session Text
   SessionAttached :: Field G.Session Integer
+  SessionGroup :: Field G.Session (Maybe Label.TmuxText)
   WindowId :: Field G.Window Id.WindowId
   WindowName :: Field G.Window Label.TmuxText
   WindowWidth :: Field G.Window V.Dimension
   WindowHeight :: Field G.Window V.Dimension
+  WindowLayout :: Field G.Window Text
+  WindowZoomed :: Field G.Window Bool
   PaneId :: Field G.Pane Id.PaneId
   PaneWindow :: Field G.Pane Id.WindowId
   PaneIndex :: Field G.Pane V.PaneIndex
@@ -55,10 +60,15 @@ data Field row value where
   PaneTitle :: Field G.Pane Text
   PaneCommand :: Field G.Pane PosixString
   PanePath :: Field G.Pane PosixPath
+  PaneCursorX :: Field G.Pane Integer
+  PaneCursorY :: Field G.Pane Integer
+  PaneModeCount :: Field G.Pane Integer
+  PaneMode :: Field G.Pane (Maybe Text)
   LinkSession :: Field G.WindowLink Id.SessionId
   LinkWindow :: Field G.WindowLink Id.WindowId
   LinkIndex :: Field G.WindowLink V.WindowIndex
   LinkActive :: Field G.WindowLink Bool
+  LinkFlags :: Field G.WindowLink Text
 
 -- | The finite native catalogue, without erasing each descriptor's evidence.
 data SomeField where
@@ -67,13 +77,15 @@ data SomeField where
 catalogue :: [SomeField]
 catalogue =
   [ SomeField ServerPid, SomeField ServerStartedAt, SomeField ServerVersion, SomeField ServerSocketPath
-  , SomeField ClientName, SomeField ClientPid, SomeField ClientTty
+  , SomeField ClientName, SomeField ClientPid, SomeField ClientTty, SomeField ClientWidth, SomeField ClientHeight
   , SomeField ClientSession, SomeField ClientWindow, SomeField ClientWindowIndex, SomeField ClientPane
-  , SomeField SessionId, SomeField SessionName, SomeField SessionAttached
+  , SomeField SessionId, SomeField SessionName, SomeField SessionAttached, SomeField SessionGroup
   , SomeField WindowId, SomeField WindowName, SomeField WindowWidth, SomeField WindowHeight
+  , SomeField WindowLayout, SomeField WindowZoomed
   , SomeField PaneId, SomeField PaneWindow, SomeField PaneIndex, SomeField PaneWidth, SomeField PaneHeight
   , SomeField PaneActive, SomeField PaneDead, SomeField PaneTitle, SomeField PaneCommand, SomeField PanePath
-  , SomeField LinkSession, SomeField LinkWindow, SomeField LinkIndex, SomeField LinkActive
+  , SomeField PaneCursorX, SomeField PaneCursorY, SomeField PaneModeCount, SomeField PaneMode
+  , SomeField LinkSession, SomeField LinkWindow, SomeField LinkIndex, SomeField LinkActive, SomeField LinkFlags
   ]
 
 -- | Checked wire domains. POSIX path and string share a representation but
@@ -83,6 +95,9 @@ data WireType value where
   WindowIdValue :: WireType Id.WindowId
   PaneIdValue :: WireType Id.PaneId
   TextValue :: WireType Text
+  NonEmptyTextValue :: WireType Text
+  OptionalTextValue :: WireType (Maybe Text)
+  OptionalLabelValue :: WireType (Maybe Label.TmuxText)
   LabelValue :: WireType Label.TmuxText
   PosixStringValue :: WireType PosixString
   PosixPathValue :: WireType PosixPath
@@ -95,7 +110,8 @@ data WireType value where
   DimensionValue :: WireType V.Dimension
   PaneIndexValue :: WireType V.PaneIndex
   WindowIndexValue :: WireType V.WindowIndex
-  AttachedCountValue :: WireType Integer
+  UnsignedValue :: WireType Integer
+  OptionalUnsignedValue :: WireType (Maybe Integer)
   BooleanValue :: WireType Bool
 
 data Descriptor row value = Descriptor !Text !ByteString !(WireType value) !(row -> value)
@@ -109,17 +125,22 @@ descriptor = \case
   ClientName -> Descriptor "client.name" "client_name" NonEmptyPosixStringValue (.name)
   ClientPid -> Descriptor "client.pid" "client_pid" ProcessIdValue (.pid)
   ClientTty -> Descriptor "client.tty" "client_tty" OptionalPosixPathValue (.tty)
+  ClientWidth -> Descriptor "client.width" "client_width" UnsignedValue (.width)
+  ClientHeight -> Descriptor "client.height" "client_height" OptionalUnsignedValue (.height)
   ClientSession -> Descriptor "client.session" "session_id" SessionIdValue (\row -> sessionId row.session.ref)
   ClientWindow -> Descriptor "client.window" "window_id" WindowIdValue (\row -> windowId row.window.ref)
   ClientWindowIndex -> Descriptor "client.windowIndex" "window_index" WindowIndexValue (\row -> row.pane.link.index)
   ClientPane -> Descriptor "client.pane" "pane_id" PaneIdValue (\row -> paneId row.pane.pane.ref)
   SessionId -> Descriptor "session.id" "session_id" SessionIdValue (sessionId . (.ref))
   SessionName -> Descriptor "session.name" "session_name" TextValue (.name)
-  SessionAttached -> Descriptor "session.attached" "session_attached" AttachedCountValue (.attached)
+  SessionAttached -> Descriptor "session.attached" "session_attached" UnsignedValue (.attached)
+  SessionGroup -> Descriptor "session.group" "session_group" OptionalLabelValue (.group)
   WindowId -> Descriptor "window.id" "window_id" WindowIdValue (windowId . (.ref))
   WindowName -> Descriptor "window.name" "window_name" LabelValue (.name)
   WindowWidth -> Descriptor "window.width" "window_width" DimensionValue (.width)
   WindowHeight -> Descriptor "window.height" "window_height" DimensionValue (.height)
+  WindowLayout -> Descriptor "window.layout" "window_layout" NonEmptyTextValue (.layout)
+  WindowZoomed -> Descriptor "window.zoomed" "window_zoomed_flag" BooleanValue (.zoomed)
   PaneId -> Descriptor "pane.id" "pane_id" PaneIdValue (paneId . (.ref))
   PaneWindow -> Descriptor "pane.window" "window_id" WindowIdValue (windowId . (.window))
   PaneIndex -> Descriptor "pane.index" "pane_index" PaneIndexValue (.index)
@@ -130,10 +151,15 @@ descriptor = \case
   PaneTitle -> Descriptor "pane.title" "pane_title" TextValue (.title)
   PaneCommand -> Descriptor "pane.currentCommand" "pane_current_command" PosixStringValue (.currentCommand)
   PanePath -> Descriptor "pane.currentPath" "pane_current_path" PosixPathValue (.currentPath)
+  PaneCursorX -> Descriptor "pane.cursorX" "cursor_x" UnsignedValue (.cursorX)
+  PaneCursorY -> Descriptor "pane.cursorY" "cursor_y" UnsignedValue (.cursorY)
+  PaneModeCount -> Descriptor "pane.modeCount" "pane_in_mode" UnsignedValue (.modeCount)
+  PaneMode -> Descriptor "pane.mode" "pane_mode" OptionalTextValue (.mode)
   LinkSession -> Descriptor "windowLink.session" "session_id" SessionIdValue (sessionId . (.session))
   LinkWindow -> Descriptor "windowLink.window" "window_id" WindowIdValue (windowId . (.window))
   LinkIndex -> Descriptor "windowLink.index" "window_index" WindowIndexValue (.index)
   LinkActive -> Descriptor "windowLink.active" "window_active" BooleanValue (.active)
+  LinkFlags -> Descriptor "windowLink.flags" "window_flags" TextValue (.flags)
 
 sessionId :: G.SessionRef -> Id.SessionId
 sessionId (G.SessionRef _ ident) = ident
@@ -188,7 +214,10 @@ decodeValue valueType bytes = case valueType of
   SessionIdValue -> ident Id.parseSessionId
   WindowIdValue -> ident Id.parseWindowId
   PaneIdValue -> ident Id.parsePaneId
-  TextValue -> either (const (Left InvalidEncoding)) (Right . Text.copy) (Utf8.decodeUtf8' bytes)
+  TextValue -> text
+  NonEmptyTextValue -> if Bytes.null bytes then Left InvalidSyntax else text
+  OptionalTextValue -> if Bytes.null bytes then Right Nothing else Just <$> text
+  OptionalLabelValue -> Right (if Bytes.null bytes then Nothing else Just (Label.fromBytes bytes))
   LabelValue -> Right (Label.fromBytes bytes)
   PosixStringValue -> Right (Os.fromBytestring bytes)
   PosixPathValue -> Right (Os.fromBytestring bytes)
@@ -204,12 +233,14 @@ decodeValue valueType bytes = case valueType of
   DimensionValue -> natural 4294967295 >>= checked V.mkDimension
   PaneIndexValue -> natural 4294967295 >>= checked V.mkPaneIndex
   WindowIndexValue -> natural 2147483647 >>= checked V.mkWindowIndex
-  AttachedCountValue -> natural 4294967295
+  UnsignedValue -> natural 4294967295
+  OptionalUnsignedValue -> if Bytes.null bytes then Right Nothing else Just <$> natural 4294967295
   BooleanValue -> case bytes of
     "0" -> Right False
     "1" -> Right True
     _ -> Left InvalidSyntax
   where
+    text = either (const (Left InvalidEncoding)) (Right . Text.copy) (Utf8.decodeUtf8' bytes)
     ident :: (Text -> Either error value) -> Either FieldFailure value
     ident parse
       | Bytes.length bytes > 11 = Left InvalidSyntax

@@ -44,16 +44,18 @@ spec = describe "validated offline fixtures" $ do
     wid <- checked (Tmux.parseWindowId "@2")
     pid <- checked (Tmux.parsePaneId "%3")
     index <- checked (Tmux.mkWindowIndex 4)
-    let client = F.AttachedClient (Os.fromBytestring "control-client") 7 Nothing sid wid index pid
+    let client = F.AttachedClient (Os.fromBytestring "control-client") 7 Nothing sid wid index pid 120 (Just 40)
     case F.validateFixture origin (input {F.clients = [client]}) of
       Left (F.InvalidSnapshot _) -> pure ()
       other -> expectationFailure ("inactive client context was not rejected: " <> show other)
     selected <- checked (Tmux.mkWindowIndex 0)
     snapshot <- checked (F.validateFixture origin (input {F.clients = [client {F.index = selected}]}))
     case Tmux.clients snapshot of
-      [observed] -> case observed.attachment of
-        Just attachment -> attachment.pane.link.index `shouldBe` selected
-        Nothing -> expectationFailure "attached fixture client lost its context"
+      [observed] -> do
+        (observed.width, observed.height) `shouldBe` (120, Just 40)
+        case observed.attachment of
+          Just attachment -> attachment.pane.link.index `shouldBe` selected
+          Nothing -> expectationFailure "attached fixture client lost its context"
       _ -> expectationFailure "attached fixture client disappeared"
 
 fixture :: IO (F.FixtureOrigin, F.Fixture)
@@ -68,14 +70,14 @@ fixture = do
   first <- checked (Tmux.mkWindowIndex 0)
   second <- checked (Tmux.mkWindowIndex 4)
   let origin = F.fixtureOrigin "reports"
-      session = Tmux.Session (F.sessionRef origin sid) "work" 0
-      window = Tmux.Window (F.windowRef origin wid) "editor" width height
+      session = Tmux.Session (F.sessionRef origin sid) "work" 0 Nothing
+      window = Tmux.Window (F.windowRef origin wid) "editor" width height "layout" False
       pane = Tmux.Pane (F.paneRef origin pid) window.ref paneIndex width height True False "editor"
-        (Os.fromBytestring "ghci") (Os.fromBytestring "/offline/project")
+        (Os.fromBytestring "ghci") (Os.fromBytestring "/offline/project") 0 0 0 Nothing
       input = (F.emptyFixture origin version)
         { F.sessions = [session], F.windows = [window], F.panes = [pane]
-        , F.windowLinks = [Tmux.WindowLink session.ref first window.ref True,
-                          Tmux.WindowLink session.ref second window.ref False]
+        , F.windowLinks = [Tmux.WindowLink session.ref first window.ref True "*",
+                          Tmux.WindowLink session.ref second window.ref False ""]
         }
   pure (origin, input)
 

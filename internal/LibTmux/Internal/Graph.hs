@@ -1,6 +1,7 @@
 -- | Detached physical entities, contextual links and validated graph indexes.
 --
--- Window labels use 'TmuxText'; process names and paths preserve POSIX bytes.
+-- Window and session-group labels use 'TmuxText'; process names and paths
+-- preserve POSIX bytes.
 -- Reading an observation or navigating the graph performs no IO.
 -- 'assembleEntityGraph' validates references, unique positions and selections
 -- for its ordered views and lookup indexes. 'assembleSnapshot' joins
@@ -128,7 +129,7 @@ type CreatedSession = CreatedEntities
 -- in a query. Field tokens describe captured values and never contact tmux.
 --
 -- 'LibTmux.Query.Session.id', 'LibTmux.Query.Session.name',
--- 'LibTmux.Query.Session.attached'
+-- 'LibTmux.Query.Session.attached', 'LibTmux.Query.Session.group'
 --
 -- __Follow a session to its windows and clients, or back.__ A session reaches
 -- its windows through links, and one window can be linked more than once. A
@@ -206,10 +207,11 @@ data Session = Session
   { ref :: !SessionRef -- ^ Target identity in the observation's generation.
   , name :: !Text -- ^ Session name as reported and decoded by tmux.
   , attached :: !Integer -- ^ Nonnegative reported count, independent of the captured client listing.
+  , group :: !(Maybe TmuxText) -- ^ Reported session-group label; absent when this session is ungrouped.
   }
   deriving stock (Eq, Show)
 instance NFData Session where
-  rnf (Session ref name attached) = rnf (ref, name, attached)
+  rnf (Session ref name attached group) = rnf (ref, name, attached, group)
 
 -- | Detached physical window, independent of its session and index appearances.
 --
@@ -245,7 +247,8 @@ instance NFData Session where
 -- you need text.
 --
 -- * Field tokens: 'LibTmux.Query.Window.id', 'LibTmux.Query.Window.name',
---   'LibTmux.Query.Window.width', 'LibTmux.Query.Window.height'
+--   'LibTmux.Query.Window.width', 'LibTmux.Query.Window.height',
+--   'LibTmux.Query.Window.layout', 'LibTmux.Query.Window.zoomed'
 -- * The name as bytes: t'TmuxText', 'LibTmux.Snapshot.labelText',
 --   'LibTmux.Snapshot.labelBytes', 'LibTmux.Snapshot.labelFromBytes'
 --
@@ -352,10 +355,12 @@ data Window = Window
   , name :: !TmuxText -- ^ Reported bytes, including non-text names on older tmux.
   , width :: !Dimension -- ^ Positive terminal width in cells.
   , height :: !Dimension -- ^ Positive terminal height in cells.
+  , layout :: !Text -- ^ Native unzoomed layout encoding, opaque and release-dependent.
+  , zoomed :: !Bool -- ^ Whether a pane currently occupies this window through zoom.
   }
   deriving stock (Eq, Show)
 instance NFData Window where
-  rnf (Window ref name width height) = rnf (ref, name, width, height)
+  rnf (Window ref name width height layout zoomed) = rnf (ref, name, width, height, layout, zoomed)
 
 -- | Detached physical pane. Its window can appear in several session contexts;
 -- t'PaneOccurrence' preserves an appearance without duplicating physical identity.
@@ -395,7 +400,9 @@ instance NFData Window where
 -- 'LibTmux.Query.Pane.index', 'LibTmux.Query.Pane.width',
 -- 'LibTmux.Query.Pane.height', 'LibTmux.Query.Pane.active',
 -- 'LibTmux.Query.Pane.dead', 'LibTmux.Query.Pane.title',
--- 'LibTmux.Query.Pane.currentCommand', 'LibTmux.Query.Pane.currentPath'
+-- 'LibTmux.Query.Pane.currentCommand', 'LibTmux.Query.Pane.currentPath',
+-- 'LibTmux.Query.Pane.cursorX', 'LibTmux.Query.Pane.cursorY',
+-- 'LibTmux.Query.Pane.modeCount', 'LibTmux.Query.Pane.mode'
 --
 -- __Follow a pane to its window and back.__ A window's panes come in
 -- pane-index order. Resolve a pane's window in a query.
@@ -525,11 +532,15 @@ data Pane = Pane
   , title :: !Text -- ^ Valid UTF-8 pane title reported by tmux.
   , currentCommand :: !PosixString -- ^ Reported process name; tmux may normalize it.
   , currentPath :: !PosixPath -- ^ Endpoint data, without local path interpretation.
+  , cursorX :: !Integer -- ^ Zero-based base-screen column; may equal width at pending wrap.
+  , cursorY :: !Integer -- ^ Zero-based base-screen row, independent of a mode cursor.
+  , modeCount :: !Integer -- ^ Native pane mode-stack depth, rather than a Boolean.
+  , mode :: !(Maybe Text) -- ^ Name of the current mode; absent when no mode is active.
   }
   deriving stock (Eq, Show)
 instance NFData Pane where
-  rnf (Pane ref window index width height active dead title command path) =
-    rnf ((ref, window, index, width, height), (active, dead, title, command, path))
+  rnf (Pane ref window index width height active dead title command path x y count mode) =
+    rnf ((ref, window, index, width, height), (active, dead, title, command, path), (x, y, count, mode))
 
 -- | One observed session/index/window binding. Indices are reusable positions;
 -- this value describes captured context. The same window may appear repeatedly.
@@ -538,10 +549,11 @@ data WindowLink = WindowLink
   , index :: !WindowIndex -- ^ Position of this link within the session.
   , window :: !WindowRef -- ^ Physical window shared by its appearances.
   , active :: !Bool -- ^ Whether this is the session's selected window link.
+  , flags :: !Text -- ^ Native window_flags for this link, including tmux's doubled @#@ escaping.
   }
   deriving stock (Eq, Show)
 instance NFData WindowLink where
-  rnf (WindowLink session index window active) = rnf (session, index, window, active)
+  rnf (WindowLink session index window active flags) = rnf (session, index, window, active, flags)
 
 -- | A physical pane together with one contextual window appearance.
 data PaneOccurrence = PaneOccurrence
@@ -585,10 +597,12 @@ data Client = Client
   , pid :: !Integer -- ^ Reported positive client process ID.
   , tty :: !(Maybe PosixPath) -- ^ Reported terminal path, when present.
   , attachment :: !(Maybe ClientAttachment) -- ^ Attachment values resolved within this capture.
+  , width :: !Integer -- ^ Reported unsigned tty width in cells; may be zero for a control client.
+  , height :: !(Maybe Integer) -- ^ Reported tty height only when tmux has started its terminal.
   }
   deriving stock (Eq, Show)
 instance NFData Client where
-  rnf (Client name pid tty attachment) = rnf (name, pid, tty, attachment)
+  rnf (Client name pid tty attachment width height) = rnf (name, pid, tty, attachment, width, height)
 
 -- Required native context from the attached-only listing, before graph lookup.
 data ClientInput = ClientInput
@@ -599,6 +613,8 @@ data ClientInput = ClientInput
   , window :: !WindowId
   , index :: !WindowIndex
   , pane :: !PaneId
+  , width :: !Integer
+  , height :: !(Maybe Integer)
   }
 
 -- | Validated metadata, physical graph and attached-client observations.
@@ -681,6 +697,7 @@ data GraphError
   | UnlinkedWindow !WindowRef
   | InvalidServerInfo
   | InvalidClientMetadata
+  | InvalidPaneMetadata !PaneRef
   | MissingClientLink !SessionRef !WindowIndex
   | ChangedClientAttachment
   | InvalidCaptureInterval
@@ -727,6 +744,8 @@ assembleEntityGraph generation sessionRows windowRows paneRows linkRows = do
       let PaneRef actual _ = row.ref
       checkGeneration actual
       checkWindowRef row.window
+      unless (all unsigned [row.cursorX, row.cursorY, row.modeCount]) (Left (InvalidPaneMetadata row.ref))
+    unsigned value = value >= 0 && value <= 4294967295
     checkLink row = checkSessionRef row.session >> checkWindowRef row.window
     insertLink rows row
       | Map.member (row.session, row.index) rows = Left (DuplicateWindowSlot row.session row.index)
@@ -808,11 +827,13 @@ assembleSnapshot info graph inputs = do
   let snapshot = Snapshot info graph (sortOn (\row -> (row.name, row.pid)) rows) Nothing
   snapshot `deepseq` Right snapshot
   where
+    unsigned value = value >= 0 && value <= 4294967295
     positivePid value = value > 0 && value <= toInteger (maxBound @CInt)
     validString value = Os.length value <= 1048576 && not (any ((== '\NUL') . Os.toChar) (Os.unpack value))
     hydrate input = do
       unless (positivePid input.pid && validString input.name && not (Os.null input.name)
-        && maybe True (\path -> validString path && not (Os.null path)) input.tty) (Left InvalidClientMetadata)
+        && maybe True (\path -> validString path && not (Os.null path)) input.tty
+        && unsigned input.width && maybe True unsigned input.height) (Left InvalidClientMetadata)
       session <- first InvalidReference (lookupSession graph (SessionRef graph.generation input.session))
       window <- first InvalidReference (lookupWindow graph (WindowRef graph.generation input.window))
       pane <- first InvalidReference (lookupPane graph (PaneRef graph.generation input.pane))
@@ -821,4 +842,4 @@ assembleSnapshot info graph inputs = do
       unless (link.window == window.ref && pane.window == window.ref && link.active && pane.active)
         (Left ChangedClientAttachment)
       let attachment = ClientAttachment session window (PaneOccurrence pane link)
-      pure (Client input.name input.pid input.tty (Just attachment))
+      pure (Client input.name input.pid input.tty (Just attachment) input.width input.height)

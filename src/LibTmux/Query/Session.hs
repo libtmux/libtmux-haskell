@@ -3,7 +3,7 @@
 -- All tokens describe the tmux 3.3a baseline. 'windowLinks' preserves each
 -- observed index, including several links to one physical window. 'clients'
 -- describes captured attachments and may be a known empty relationship.
-module LibTmux.Query.Session (id, name, attached, windowLinks, clients) where
+module LibTmux.Query.Session (id, name, attached, group, windowLinks, clients) where
 
 import Prelude hiding (id)
 import Data.Text (Text)
@@ -11,7 +11,7 @@ import LibTmux.Id (SessionId)
 import LibTmux.Internal.Field qualified as F
 import LibTmux.Internal.Query qualified as Q
 import LibTmux.Query (Field, ToMany)
-import LibTmux.Snapshot (Session, WindowLink, Client)
+import LibTmux.Snapshot (Session, WindowLink, Client, TmuxText)
 
 -- | Native session ID without a connection-generation guarantee.
 id :: Field Session SessionId
@@ -24,6 +24,10 @@ name = F.SessionName
 -- | Nonnegative count of attached clients as observed by tmux.
 attached :: Field Session Integer
 attached = F.SessionAttached
+
+-- | Lossless reported group label, or 'Nothing' for an ungrouped session.
+group :: Field Session (Maybe TmuxText)
+group = F.SessionGroup
 
 -- | Every window link owned by this session, retaining index and multiplicity.
 windowLinks :: ToMany Session WindowLink

@@ -48,6 +48,19 @@ evaluatorTests = testGroup "typed query evaluation"
       paneKeys (Q.runQuery snapshot selected) @?= Right ["%0", "%2"]
       paneKeys (Q.runQuery snapshot (Q.matching
         (Q.oneOf F.PaneCommand [Os.fromBytestring "ghci"]) Q.panes)) @?= Right ["%1"]
+  , testCase "metadata predicates preserve native scope and optional absence" $ do
+      snapshot <- checked Fixture.snapshot
+      sessionKeys (Q.runQuery snapshot (Q.matching (Q.eq F.SessionGroup (Just "team")) Q.sessions))
+        @?= Right ["$0"]
+      windowKeys (Q.runQuery snapshot (Q.matching (Q.allOf
+        [Q.contains F.WindowLayout "split", Q.eq F.WindowZoomed True]) Q.windows)) @?= Right ["@0"]
+      fmap (map (.flags)) (Q.runQuery snapshot (Q.matching (Q.eq F.LinkFlags "Z") Q.windowLinks))
+        @?= Right ["Z"]
+      paneKeys (Q.runQuery snapshot (Q.matching (Q.allOf
+        [Q.eq F.PaneCursorX 80, Q.eq F.PaneCursorY 3, Q.ge F.PaneModeCount 2,
+         Q.eq F.PaneMode (Just "copy-mode")]) Q.panes)) @?= Right ["%1"]
+      fmap (map (.width)) (Q.runQuery snapshot (Q.matching (Q.allOf
+        [Q.ge F.ClientWidth 120, Q.eq F.ClientHeight Nothing]) Q.clients)) @?= Right [120]
   , testCase "mathematical thresholds do not narrow checked values" $ do
       snapshot <- checked Fixture.snapshot
       let huge = 10 ^ (100 :: Int)
@@ -86,7 +99,7 @@ evaluatorTests = testGroup "typed query evaluation"
         @?= Right ["$1"]
   , testCase "optional absence remains distinct from unavailable data" $ do
       snapshot <- checked Fixture.snapshot
-      let detached = G.Client (Os.fromBytestring "unattached") 12 Nothing Nothing
+      let detached = G.Client (Os.fromBytestring "unattached") 12 Nothing Nothing 0 Nothing
           attached = Q.optionalRelated Q.ClientAttachment (Q.allOf [])
           native = Q.nativeProfile
           blocked = native {Q.availableFields = Set.delete "client.tty" native.availableFields}

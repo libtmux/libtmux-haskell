@@ -6,7 +6,7 @@
 -- from the endpoint rather than promising UTF-8 or local path semantics.
 module LibTmux.Query.Pane
   ( id, windowId, index, width, height, active, dead, title, currentCommand
-  , currentPath, window
+  , currentPath, cursorX, cursorY, modeCount, mode, window
   ) where
 
 import Prelude hiding (id)
@@ -59,6 +59,22 @@ currentCommand = F.PaneCommand
 -- | Observed current directory on the tmux endpoint, preserving POSIX bytes.
 currentPath :: Field Pane PosixPath
 currentPath = F.PanePath
+
+-- | Zero-based base-screen column; may equal width when a wrap is pending.
+cursorX :: Field Pane Integer
+cursorX = F.PaneCursorX
+
+-- | Zero-based base-screen row, independent of the current mode's cursor.
+cursorY :: Field Pane Integer
+cursorY = F.PaneCursorY
+
+-- | Native pane mode-stack depth, including zero.
+modeCount :: Field Pane Integer
+modeCount = F.PaneModeCount
+
+-- | Current mode name, or 'Nothing' when no mode is active.
+mode :: Field Pane (Maybe Text)
+mode = F.PaneMode
 
 -- | Resolve the pane's physical window in the supplied snapshot with 'LibTmux.Query.related'.
 window :: ToOne Pane Window

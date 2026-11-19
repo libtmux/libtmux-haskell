@@ -30,20 +30,20 @@ snapshot = do
   index2 <- checked (V.mkWindowIndex 2)
   index4 <- checked (V.mkWindowIndex 4)
   index7 <- checked (V.mkWindowIndex 7)
-  let s0 = G.Session (G.SessionRef generation sid0) "work" 1
-      s1 = G.Session (G.SessionRef generation sid1) "other" 0
-      w0 = G.Window (G.WindowRef generation wid0) "work" outerWidth height
-      w1 = G.Window (G.WindowRef generation wid1) (Label.fromBytes "bad\255") width2 height
+  let s0 = G.Session (G.SessionRef generation sid0) "work" 1 (Just "team")
+      s1 = G.Session (G.SessionRef generation sid1) "other" 0 Nothing
+      w0 = G.Window (G.WindowRef generation wid0) "work" outerWidth height "split-layout" True
+      w1 = G.Window (G.WindowRef generation wid1) (Label.fromBytes "bad\255") width2 height "single-layout" False
       p0 = G.Pane (G.PaneRef generation pid0) w0.ref pane0 width0 height True False "caf\233"
-        (Os.fromBytestring "cat") (Os.fromBytestring "/offline/project")
+        (Os.fromBytestring "cat") (Os.fromBytestring "/offline/project") 0 0 0 Nothing
       p1 = G.Pane (G.PaneRef generation pid1) w0.ref pane1 width1 height False False "other"
-        (Os.fromBytestring "ghci") (Os.fromBytestring "/offline/project")
+        (Os.fromBytestring "ghci") (Os.fromBytestring "/offline/project") 80 3 2 (Just "copy-mode")
       p2 = G.Pane (G.PaneRef generation pid2) w1.ref pane0 width2 height True False "cafe\769"
-        (Os.fromBytestring "cat") (Os.fromBytestring "/offline/project")
-      links = [G.WindowLink s0.ref index0 w0.ref True, G.WindowLink s0.ref index4 w0.ref False,
-               G.WindowLink s0.ref index7 w1.ref False, G.WindowLink s1.ref index2 w1.ref True]
+        (Os.fromBytestring "cat") (Os.fromBytestring "/offline/project") 0 0 0 Nothing
+      links = [G.WindowLink s0.ref index0 w0.ref True "*Z", G.WindowLink s0.ref index4 w0.ref False "Z",
+               G.WindowLink s0.ref index7 w1.ref False "", G.WindowLink s1.ref index2 w1.ref True "*"]
       info = G.ServerInfo generation 7 0 version (Os.fromBytestring "fixture:query")
-      client = G.ClientInput (Os.fromBytestring "control") 11 Nothing sid0 wid0 index0 pid0
+      client = G.ClientInput (Os.fromBytestring "control") 11 Nothing sid0 wid0 index0 pid0 120 Nothing
   graph <- checked (G.assembleEntityGraph generation [s0, s1] [w0, w1] [p0, p1, p2] links)
   checked (G.assembleSnapshot info graph [client])
 

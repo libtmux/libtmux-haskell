@@ -43,17 +43,17 @@ data Row row where
 
 sessionRow :: G.Generation -> Row G.Session
 sessionRow generation = Row
-  (Field.SessionId :> Field.SessionName :> Field.SessionAttached :> End)
+  (Field.SessionId :> Field.SessionName :> Field.SessionAttached :> Field.SessionGroup :> End)
   (\ident name attached -> G.Session (G.SessionRef generation ident) name attached)
 
 windowRow :: G.Generation -> Row G.Window
 windowRow generation = Row
-  (Field.WindowId :> Field.WindowName :> Field.WindowWidth :> Field.WindowHeight :> End)
+  (Field.WindowId :> Field.WindowName :> Field.WindowWidth :> Field.WindowHeight :> Field.WindowLayout :> Field.WindowZoomed :> End)
   (\ident -> G.Window (G.WindowRef generation ident))
 
 linkRow :: G.Generation -> Row G.WindowLink
 linkRow generation = Row
-  (Field.LinkSession :> Field.LinkWindow :> Field.LinkIndex :> Field.LinkActive :> End)
+  (Field.LinkSession :> Field.LinkWindow :> Field.LinkIndex :> Field.LinkActive :> Field.LinkFlags :> End)
   (\session window index active -> G.WindowLink (G.SessionRef generation session)
     index (G.WindowRef generation window) active)
 
@@ -61,7 +61,8 @@ paneRow :: G.Generation -> Row G.Pane
 paneRow generation = Row
   (Field.PaneId :> Field.PaneWindow :> Field.PaneIndex :> Field.PaneWidth
     :> Field.PaneHeight :> Field.PaneActive :> Field.PaneDead :> Field.PaneTitle
-    :> Field.PaneCommand :> Field.PanePath :> End)
+    :> Field.PaneCommand :> Field.PanePath :> Field.PaneCursorX :> Field.PaneCursorY
+    :> Field.PaneModeCount :> Field.PaneMode :> End)
   (\pane window -> G.Pane (G.PaneRef generation pane) (G.WindowRef generation window))
 
 serverRow :: G.Generation -> Row G.ServerInfo
@@ -72,7 +73,8 @@ serverRow generation = Row
 clientRow :: Row G.ClientInput
 clientRow = Row
   (Field.ClientName :> Field.ClientPid :> Field.ClientTty :> Field.ClientSession
-    :> Field.ClientWindow :> Field.ClientWindowIndex :> Field.ClientPane :> End)
+    :> Field.ClientWindow :> Field.ClientWindowIndex :> Field.ClientPane
+    :> Field.ClientWidth :> Field.ClientHeight :> End)
   G.ClientInput
 
 -- | Generate S/W/P loops present in tmux 3.3. Physical rows repeat through
