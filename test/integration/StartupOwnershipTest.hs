@@ -17,6 +17,7 @@ import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.OwnedServer qualified as OS
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
+import LibTmux.Internal.Scope (CleanupStatus (..))
 import ProcessGate qualified as Gate
 import System.Directory (doesPathExist)
 import System.Environment (lookupEnv)
