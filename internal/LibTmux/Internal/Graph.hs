@@ -7,7 +7,7 @@
 -- metadata and attached clients, then forces the complete detached value.
 module LibTmux.Internal.Graph
   ( EndpointIdentity (..), Generation (..)
-  , SessionRef (..), WindowRef (..), PaneRef (..), CreatedSession (..)
+  , SessionRef (..), WindowRef (..), PaneRef (..), CreatedEntities (..), CreatedSession
   , Session (..), Window (..), Pane (..), WindowLink (..), PaneOccurrence (..)
   , EntityGraph, GraphError (..), LookupError (..), assembleEntityGraph
   , graphSessions, graphWindows, graphPanes, graphLinks, graphOccurrences
@@ -72,26 +72,29 @@ data PaneRef = PaneRef !Generation !PaneId
 instance NFData PaneRef where
   rnf (PaneRef generation ident) = rnf generation `seq` rnf ident
 
--- | Historical identities printed during detached new-session. A later hook
+-- | Historical identities printed during session, window or pane creation. A later hook
 -- may already have removed them. Resolve through a fresh captured snapshot;
 -- these references do not constitute hydrated observations or prove liveness.
 -- Read these fields with record dot; construction remains private.
 --
 -- [#v:serverPid# @serverPid@ :: 'Integer'] Daemon PID printed with the receipt.
--- [#v:session# @session@ :: t'SessionRef'] Created session in the originating generation.
--- [#v:window# @window@ :: t'WindowRef'] Initial physical window.
--- [#v:pane# @pane@ :: t'PaneRef'] Initial physical pane.
--- [#v:windowIndex# @windowIndex@ :: t'WindowIndex'] Initial link index printed by tmux.
-data CreatedSession = CreatedSession
+-- [#v:session# @session@ :: t'SessionRef'] Session containing the creation.
+-- [#v:window# @window@ :: t'WindowRef'] Physical window containing the new pane.
+-- [#v:pane# @pane@ :: t'PaneRef'] Created physical pane.
+-- [#v:windowIndex# @windowIndex@ :: t'WindowIndex'] Link index printed by tmux.
+data CreatedEntities = CreatedEntities
   { serverPid :: !Integer -- ^ Daemon PID printed with the creation receipt.
-  , session :: !SessionRef -- ^ Actual created session in the originating generation.
-  , window :: !WindowRef -- ^ Actual initial physical window.
-  , pane :: !PaneRef -- ^ Actual initial physical pane.
-  , windowIndex :: !WindowIndex -- ^ Initial link index printed by tmux.
+  , session :: !SessionRef -- ^ Session containing the new pane in the originating generation.
+  , window :: !WindowRef -- ^ Physical window containing the new pane.
+  , pane :: !PaneRef -- ^ Actual created physical pane.
+  , windowIndex :: !WindowIndex -- ^ Link index printed by tmux before after-hooks.
   } deriving stock (Eq, Show)
-instance NFData CreatedSession where
-  rnf (CreatedSession pid session window pane index) =
+instance NFData CreatedEntities where
+  rnf (CreatedEntities pid session window pane index) =
     rnf pid `seq` rnf session `seq` rnf window `seq` rnf pane `seq` rnf index
+
+-- | A 'CreatedEntities' receipt from new-session: all three entities are new.
+type CreatedSession = CreatedEntities
 
 -- | Detached physical session. Navigate its appearances through t'WindowLink'.
 data Session = Session

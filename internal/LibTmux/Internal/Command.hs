@@ -12,6 +12,7 @@ module LibTmux.Internal.Command
   , SessionReceipt (..), SessionCreationReply (..)
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
   , compileSessionCreation, sessionCreationFormat, decodeSessionCreation
+  , CreationCommand (..), WindowPlacement (..), compileCreation
   ) where
 
 import Control.DeepSeq (NFData (rnf))
@@ -25,6 +26,7 @@ import Data.Text.Encoding qualified as Utf8
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NonEmpty
 import LibTmux.Creation (SessionOptions (..), InitialProcess (..), defaultSessionOptions)
+import LibTmux.Creation qualified as Creation
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Field qualified as Field
 import LibTmux.Internal.Frame qualified as Frame
@@ -74,15 +76,104 @@ data ArgumentError
   = NulOperand !Text | EncodedCommandTooLarge !Text | InvalidOperand !Text !Text
   deriving stock (Eq, Show)
 
+-- | Closed creation requests. The public facade checks every generation;
+-- the compiler retains exact contextual targets without observing the daemon.
+data CreationCommand
+  = NewSession !SessionOptions
+  | NewWindow !WindowPlacement !Creation.WindowOptions
+  | SplitPane !Id.SessionId !Value.WindowIndex !Id.PaneId !Creation.SplitOptions
+  deriving stock (Eq)
+
+data WindowPlacement
+  = NextFree !Id.SessionId
+  | At !Id.SessionId !Value.WindowIndex
+  | Before !Id.SessionId !Value.WindowIndex
+  | After !Id.SessionId !Value.WindowIndex
+  deriving stock (Eq)
+
+compileCreation :: Frame.Nonce -> CreationCommand -> Either ArgumentError [ByteString]
+compileCreation nonce (NewSession options) = compileSessionCreation nonce options
+compileCreation nonce (NewWindow placement options) = do
+  (target, insertion) <- case placement of
+    NextFree session -> Right (creationSessionTarget session <> ":", [])
+    At session index -> (, []) <$> slotBytes session index
+    Before session index -> (, ["-b"]) <$> slotBytes session index
+    After session index -> (, ["-a"]) <$> slotBytes session index
+  compileSpawn "window.creation"
+    (map (literal "window.creation")
+       (["new-window"] <> ["-d" | not options.selectWindow]
+        <> ["-P", "-F", sessionCreationFormat nonce, "-t", target]
+        <> insertion <> ["-k" | options.collision == Creation.ReplaceOccupied])
+     <> optional "window.name" "-n" Snapshot.labelBytes options.windowLabel
+     <> optional "workingDirectory" "-c" osBytes options.windowDirectory)
+    options.windowEnvironment options.windowProcess
+compileCreation nonce (SplitPane session index pane options) = do
+  target <- slotBytes session index
+  size <- case options.size of
+    Creation.DefaultSplitSize -> Right []
+    Creation.SplitCells cells
+      | Value.dimensionValue cells > 2147483647 ->
+          Left (InvalidOperand "split.size" "size exceeds 2147483647 cells")
+      | otherwise -> Right ["-l", Ascii.pack (show (Value.dimensionValue cells))]
+    Creation.SplitPercent percentage
+      | percentage < 1 || percentage > 100 ->
+          Left (InvalidOperand "split.size" "percentage must be between 1 and 100")
+      | otherwise -> Right ["-l", Ascii.pack (show percentage) <> "%"]
+  compileSpawn "pane.creation"
+    (map (literal "pane.creation")
+       (["split-window"] <> ["-d" | not options.selectPane]
+        <> ["-P", "-F", sessionCreationFormat nonce,
+            "-t", target <> "." <> Utf8.encodeUtf8 (Id.renderPaneId pane)]
+        <> ["-h" | options.direction == Creation.LeftRight]
+        <> ["-b" | options.before] <> ["-f" | options.fullWindow]
+        <> ["-Z" | options.zoom] <> size)
+     <> optional "workingDirectory" "-c" osBytes options.splitDirectory)
+    options.splitEnvironment options.splitProcess
+
+creationSessionTarget :: Id.SessionId -> ByteString
+creationSessionTarget = Utf8.encodeUtf8 . Id.renderSessionId
+
+slotBytes :: Id.SessionId -> Value.WindowIndex -> Either ArgumentError ByteString
+slotBytes session index = do
+  when (Value.windowIndexValue index > 2147483647)
+    (Left (InvalidOperand "window.index" "index exceeds 2147483647"))
+  pure (creationSessionTarget session <> ":" <> Ascii.pack (show (Value.windowIndexValue index)))
+
 -- | Validate and lower one detached creation, including its receipt format.
 -- Command argv must fit one native tmux message, including NUL terminators.
 -- The native layer independently bounds the full launch vector before admission.
 -- Paths and names expand once in tmux; environment and process argv do not.
 compileSessionCreation :: Frame.Nonce -> SessionOptions -> Either ArgumentError [ByteString]
 compileSessionCreation nonce options = do
-  unless (length (take 4097 options.environment) <= 4096)
+  columns <- dimension "width" "-x" options.width
+  rows <- dimension "height" "-y" options.height
+  compileSpawn "session.creation"
+    (map (literal "session.creation") ["new-session", "-d", "-P", "-F", sessionCreationFormat nonce]
+     <> optional "session.name" "-s" Utf8.encodeUtf8 options.name
+     <> optional "window.name" "-n" Snapshot.labelBytes options.windowName
+     <> optional "workingDirectory" "-c" osBytes options.workingDirectory
+     <> columns <> rows
+     <> [literal "session.creation" "-E" | not options.updateEnvironment])
+    options.environment options.process
+  where
+    dimension key flag = maybe (Right []) $ \value ->
+      if Value.dimensionValue value > 65535
+        then Left (InvalidOperand key "dimension exceeds 65535 cells")
+        else Right [literal key flag, literal key (Ascii.pack (show (Value.dimensionValue value)))]
+
+type Argument = (Text, Bool, ByteString)
+
+literal :: Text -> ByteString -> Argument
+literal key value = (key, False, value)
+
+optional :: Text -> ByteString -> (value -> ByteString) -> Maybe value -> [Argument]
+optional key flag encode = maybe [] (\value -> [literal key flag, (key, True, encode value)])
+
+compileSpawn :: Text -> [Argument] -> [(PosixString, PosixString)] -> InitialProcess -> Either ArgumentError [ByteString]
+compileSpawn operation prefix environment initialProcess = do
+  unless (length (take 4097 environment) <= 4096)
     (Left (InvalidOperand "environment" "variable count exceeds 4096"))
-  process <- case options.process of
+  process <- case initialProcess of
     DefaultProcess -> Right []
     ShellCommand command -> Right [literal "initialProcess" command]
     DirectCommand executable arguments -> do
@@ -90,37 +181,22 @@ compileSessionCreation nonce options = do
         (Left (InvalidOperand "initialProcess" "argument count exceeds 4096"))
       when (Os.null executable) (Left (InvalidOperand "initialProcess" "empty executable"))
       Right (map (literal "initialProcess" . osBytes) (executable : NonEmpty.toList arguments))
-  columns <- dimension "width" "-x" options.width
-  rows <- dimension "height" "-y" options.height
-  let arguments = map (literal "session.creation")
-        ["new-session", "-d", "-P", "-F", sessionCreationFormat nonce]
-        <> optional "session.name" "-s" Utf8.encodeUtf8 options.name
-        <> optional "window.name" "-n" Snapshot.labelBytes options.windowName
-        <> optional "workingDirectory" "-c" osBytes options.workingDirectory
-        <> columns <> rows
-        <> [literal "session.creation" "-E" | not options.updateEnvironment]
+  let arguments = prefix
         <> concatMap (\(key, value) -> [literal "environment" "-e",
-             literal "environment" (osBytes key <> "=" <> osBytes value)]) options.environment
-        <> [literal "session.creation" "--"] <> process
+             literal "environment" (osBytes key <> "=" <> osBytes value)]) environment
+        <> [literal operation "--"] <> process
       rawCost = sum [toInteger (Bytes.length value) + 1 | (_, _, value) <- arguments]
   -- The native argv also holds the executable, -u, -N, -S, socket and -C.
-  when (length arguments + 6 > 4096) (Left (EncodedCommandTooLarge "session.creation"))
-  when (rawCost > commandLimitBytes) (Left (EncodedCommandTooLarge "session.creation"))
+  when (length arguments + 6 > 4096) (Left (EncodedCommandTooLarge operation))
+  when (rawCost > commandLimitBytes) (Left (EncodedCommandTooLarge operation))
   mapM_ (\(key, _, value) -> when (Bytes.elem 0 value) (Left (NulOperand key))) arguments
   mapM_ (\(key, _) -> when (Os.null key || Bytes.elem 61 (osBytes key))
-    (Left (InvalidOperand "environment" "invalid variable name"))) options.environment
+    (Left (InvalidOperand "environment" "invalid variable name"))) environment
   let expansion = sum [if format then 6 * toInteger (Bytes.count 35 value) else 0 |
         (_, format, value) <- arguments]
         + toInteger (length [() | (_, _, value) <- arguments, endsSeparator value])
-  when (rawCost + expansion > commandLimitBytes) (Left (EncodedCommandTooLarge "session.creation"))
+  when (rawCost + expansion > commandLimitBytes) (Left (EncodedCommandTooLarge operation))
   pure [protectSeparator (if format then protectFormat value else value) | (_, format, value) <- arguments]
-  where
-    literal key value = (key, False, value)
-    optional key flag encode = maybe [] (\value -> [literal key flag, (key, True, encode value)])
-    dimension key flag = maybe (Right []) $ \value ->
-      if Value.dimensionValue value > 65535
-        then Left (InvalidOperand key "dimension exceeds 65535 cells")
-        else Right [literal key flag, literal key (Ascii.pack (show (Value.dimensionValue value)))]
 
 osBytes :: PosixString -> ByteString
 osBytes = Bytes.pack . map (fromIntegral . fromEnum . Os.toChar) . Os.unpack
@@ -138,7 +214,8 @@ instance NFData MutationReply where
 data ReplyError = UnexpectedReply | ReplyTooLarge
   deriving stock (Eq, Show)
 
--- | IDs printed by new-session before its after-hooks. They do not establish
+-- | IDs printed by session/window creation or a split before its after-hooks.
+-- Parent identities can already exist. These fields do not establish
 -- current liveness, process exec success or completion of background jobs.
 -- 'decodeSessionCreation' retains them independently of completion evidence.
 data SessionReceipt = SessionReceipt
@@ -171,7 +248,7 @@ instance NFData SessionCreationReply where
   rnf (SessionCreationRejected diagnostic) = rnf diagnostic
   rnf (SessionCreationUnknown receipt problem) = rnf receipt `seq` problem `seq` ()
 
--- | The line-safe identity format for detached @new-session -P -F@.
+-- | Shared line-safe identity format for creation's @-P -F@ output.
 sessionCreationFormat :: Frame.Nonce -> ByteString
 sessionCreationFormat nonce = Frame.scalarFormat nonce (Bytes.intercalate " "
   [formatted Field.ServerPid, formatted Field.SessionId, formatted Field.WindowId,
@@ -180,7 +257,7 @@ sessionCreationFormat nonce = Frame.scalarFormat nonce (Bytes.intercalate " "
     formatted :: Field.Field row value -> ByteString
     formatted field = "#{" <> Field.formatVariable field <> "}"
 
--- | Decode the closed detached new-session profile through an existing pin.
+-- | Decode the closed session/window/split creation profile through an existing pin.
 -- Bounded prefix decoding preserves a receipt when later output exceeds limits.
 -- Startup/configuration output and persistent control clients need other profiles.
 decodeSessionCreation :: Frame.Nonce -> Maybe Int -> ByteString -> ByteString -> SessionCreationReply

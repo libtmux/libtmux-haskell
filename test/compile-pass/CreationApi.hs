@@ -19,3 +19,14 @@ create server = Tmux.createSession server options
 
 targets :: Tmux.CreatedSession -> (Tmux.SessionRef, Tmux.WindowRef, Tmux.PaneRef, Tmux.WindowIndex, Integer)
 targets created = (created.session, created.window, created.pane, created.windowIndex, created.serverPid)
+
+window :: Tmux.Server -> Tmux.CreatedSession -> IO Tmux.CreatedWindow
+window server created = Tmux.createWindow server (Creation.NextFree created.session)
+  Creation.defaultWindowOptions
+
+split :: Tmux.Server -> Tmux.CreatedWindow -> IO Tmux.CreatedPane
+split server created = Tmux.splitPane server
+  (Creation.WindowSlot created.session created.windowIndex) created.pane Creation.defaultSplitOptions
+
+receipt :: Tmux.CreatedEntities -> Tmux.PaneRef
+receipt created = created.pane
