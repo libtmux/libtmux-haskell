@@ -9,6 +9,8 @@
 - Set individual numeric entries for built-in hooks, read their native
   listing and remove a local hook override. ([#30])
 
+- Report `IncompatibleTmuxClientProtocol` when an older daemon rejects the
+  selected client's wire protocol, without inventing a daemon release. ([#15])
 - Resize physical panes and windows with `resizePane`, `resizeWindow` and
   their `With` variants. `ResizeWidth`, `ResizeHeight` and `ResizeBoth` use
   checked dimensions and refuse axes above 10000 cells before native effects.
@@ -68,6 +70,9 @@
 
 ### Changed
 
+- Publish only defined shared claims in `capabilities.json`, using
+  `libtmux-capabilities/1`. Use `capabilityRegistry` for Haskell Program and
+  raw-paste requirements, which are outside the shared vocabulary. ([#15])
 - Share opaque creation identities through `CreatedEntities`; `CreatedSession`,
   `CreatedWindow` and `CreatedPane` name each command's result. Window and pane
   receipts include existing parents; cleanup must target the entity created
@@ -76,8 +81,8 @@
 - Admit tmux 3.3a and every newer release in `LibTmux.Version.requireSupported`,
   `withServer`, `withServerIn` and the server version recorded in snapshots,
   with no upper bound. Releases after 3.8 and patch letters such as 3.8a now
-  pass. 3.3 and older still raise `UnsupportedVersion` or
-  `UnsupportedTmuxVersion`. CI tests only 3.3a and 3.8. ([#15])
+  pass. Observed releases of 3.3 and older still raise `UnsupportedVersion`
+  or `UnsupportedTmuxVersion`. ([#15])
 - Parse and order `next-X.Y`, `X.Y-rc` and `X.Y-rcN` in
   `LibTmux.Version.parseVersion`, ranked
   `next-X.Y < X.Y-rc < X.Y-rcN < X.Y < X.Ya`. Numeric components compare as
@@ -93,6 +98,9 @@
 
 ### Fixed
 
+- Refuse legacy daemons promptly when they retain a version client's stdout.
+  A hook-free failed option lookup reads releases before `run-shell -C`
+  became available. ([#15])
 - Refuse insertion after window index 2147483647 before dispatch, avoiding an
   unexpected tmux 3.3a daemon exit at its signed-index boundary. ([#33])
 - Mask watch retirement during `ProgramRecovery` cleanup so asynchronous
