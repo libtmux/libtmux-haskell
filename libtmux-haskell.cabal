@@ -80,6 +80,12 @@ extra-source-files:
   examples/resize-geometry/libtmux-resize-geometry.cabal
   examples/resize-geometry/cabal.project
   examples/resize-geometry/cabal.project.vcs
+  examples/configure-session/Main.hs
+  examples/configure-session/README.md
+  examples/configure-session/expected.stdout
+  examples/configure-session/libtmux-configure-session.cabal
+  examples/configure-session/cabal.project
+  examples/configure-session/cabal.project.vcs
   capabilities.json
   examples/managed-program/Main.hs
   examples/managed-program/README.md

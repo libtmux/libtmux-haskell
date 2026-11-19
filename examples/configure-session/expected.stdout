@@ -1,0 +1,2 @@
+local history-limit = 500
+rename hook recorded the change

@@ -29,6 +29,7 @@ generation and retain recovery.
 | Named binary buffers and explicit pane paste | Implemented through `loadBuffer`, `readBuffer` and `pasteBuffer`; see [paste buffers](buffers.md) |
 | Absolute pane/window width, height or both | Implemented through `resizePane` and `resizeWindow`; see [resizing](resizing.md). Other resize modes remain open. |
 | Built-in options and hooks by daemon release | Implemented through `LibTmux.Options`; see [options and hooks](options.md) |
+| Scoped scalar settings and built-in hooks | `readOption`, `setOption`, `readHook` and `setHook`; see [scope and values](options.md#select-a-store) |
 | First-server bootstrap | Not implemented |
 | Query interchange and backend optimization | Not implemented |
 | General control-event and byte-stream APIs | Not implemented |

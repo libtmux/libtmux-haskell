@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 1b318bf614200f9b7385335103e29e62dc295102
+  tag: e5675b360590ebacf99131afb3dacd0361c9f7db
 ```
 
 Update the package index:
@@ -367,6 +367,23 @@ observes the output of a pane after pasting text with preserved line feeds.
 Pass `serverCapabilities server` to look up native settings or hooks for
 the connected daemon. See [options and hooks](docs/options.md) for the
 pinned releases and list operations.
+
+### [`setOption`](src/LibTmux/Server.hs) and [`setHook`](src/LibTmux/Server.hs) to configure a session
+
+The [session settings program](docs/options.md) reads a local history limit
+and observes a rename hook's effect.
+
+```console
+$ cabal run --verbose=0 configure-session -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
+```
+
+<!-- example-output: configure-session -->
+```text
+local history-limit = 500
+rename hook recorded the change
+```
 
 ## Resize panes and windows
 

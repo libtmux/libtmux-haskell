@@ -1,12 +1,13 @@
 # Options and hooks
 
-Proposed contracts from pinned Python and tmux 3.3/3.8 source. Runtime,
-intermediate capability boundaries and lossless listing remain unqualified.
+The [settings guide](../options.md) covers the implemented scalar operations
+and built-in hook entries. This contract records the remaining native modes
+from pinned Python and tmux source.
 
 ## Scope and values
 
-Use `ServerOptions`, `GlobalSessionOptions`, `SessionOptions SessionRef`,
-`GlobalWindowOptions`, `WindowOptions WindowRef` and `PaneOptions PaneRef`.
+Use `ServerOptions`, `GlobalSessionOptions`, `SessionOptionsAt SessionRef`,
+`GlobalWindowOptions`, `WindowOptionsAt WindowRef` and `PaneOptionsAt PaneRef`.
 There is no global-pane store. Built-in names select their supported scope;
 user `@` options use the explicit scope flags. Window storage is physical,
 while value-format evaluation can require a separate session/link context.
