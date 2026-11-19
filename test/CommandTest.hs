@@ -7,7 +7,7 @@ import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.TmuxText qualified as Label
 import LibTmux.Pane qualified as Pane
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
 tests :: TestTree
 tests = testGroup "typed mutation arguments"
@@ -92,6 +92,12 @@ tests = testGroup "typed mutation arguments"
       C.decodePaneCapture 64 (Just 0) (begin <> payload <> ended) ""
         @?= Left C.UnexpectedReply
 
+  , testCase "a failed capture hook leaves a known native outcome" $ do
+      let primary = "%begin 1794000000 27 0\nREADY\n%end 1794000000 27 0\n"
+          failedHook = "%begin 1794000000 28 0\ndelay invalid\n%error 1794000000 28 0\n"
+      case C.decodePaneCapture 64 (Just 1) (primary <> failedHook <> "%exit\n") "" of
+        Left problem -> assertFailure ("A completed reply lost its native outcome: " <> show problem)
+        Right _ -> pure ()
   , testCase "closed control replies separate primary and following failures" $ do
       let begin = "%begin 1794000000 27 0\n"
           ended = "%end 1794000000 27 0\n"
