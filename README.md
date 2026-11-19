@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: b7531729f4643678be17f1623f4b588fc1d77fe3
+  tag: ca11d553b4abe9884639a32af6cee1953ed90baf
 ```
 
 Update the package index:
@@ -337,6 +337,13 @@ Read the captured rows with `paneText`. The creation example checks that the
 visible row count matches the pane height. The
 [pane capture guide](docs/mutations.md#read-pane-text) shows how to read
 retained history and keep ANSI styling.
+
+### [`waitForText`](src/LibTmux/Server.hs) to wait for new output
+
+The creation example waits for a readiness marker, captures a baseline,
+sends input and waits for a new occurrence with `FreshSince baseline`.
+See [text waits](docs/mutations.md#wait-for-pane-text) for timeout and exit
+results.
 
 ## Run a terminal application
 

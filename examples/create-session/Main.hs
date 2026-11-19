@@ -36,11 +36,18 @@ main = getArgs >>= \case
         Creation.defaultWindowOptions {Creation.windowLabel = Just "worker", Creation.windowProcess = options.process}
       split <- Tmux.splitPane server
         (Creation.WindowSlot added.session added.windowIndex) added.pane
-        Creation.defaultSplitOptions {Creation.direction = Creation.LeftRight,
-          Creation.size = Creation.SplitPercent 25, Creation.splitProcess = options.process}
+        Creation.defaultSplitOptions
+          { Creation.direction = Creation.LeftRight
+          , Creation.size = Creation.SplitPercent 25
+          , Creation.splitProcess = Creation.ShellCommand
+              "stty -echo; printf 'input-ready\\n'; exec /bin/cat -"
+          }
+      _ <- awaitText server split.pane Tmux.defaultPaneWait "input-ready"
+      baseline <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
       Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
       Tmux.sendKeys server split.pane (Tmux.NamedKeys ("Enter" :| []))
-      screen <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
+      screen <- awaitText server split.pane
+        Tmux.defaultPaneWait {Tmux.waitMatch = Tmux.FreshSince baseline} "Enter"
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -78,10 +85,19 @@ main = getArgs >>= \case
         putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
         putStrLn $ "captured pane rows match height: " <> show
           (toInteger (length (Text.lines (Tmux.paneText screen))) == Tmux.dimensionValue splitPane.height)
+        putStrLn "captured pane text"
+        putStr (Text.unpack (Text.unlines (filter (not . Text.null) (Text.lines (Tmux.paneText screen)))))
         putStrLn $ "duplicate name rejected: " <> show rejected
         putStrLn $ "original sessions after removal: " <> show
           (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))
   _ -> die "Usage: create-session SOCKET TMUX_EXECUTABLE"
+
+awaitText :: Tmux.Server -> Tmux.PaneRef -> Tmux.PaneWaitOptions -> Text.Text -> IO Tmux.PaneText
+awaitText server pane options expected =
+  Tmux.waitForText server pane options expected >>= \case
+    Tmux.PaneTextMatched screen -> pure screen
+    Tmux.PaneTextTimedOut _ _ -> die "Timed out waiting for pane text"
+    Tmux.PaneTextExited _ -> die "Pane exited before producing text"
 
 require :: Show problem => String -> Either problem a -> IO a
 require context = either (die . ((context <> ": ") <>) . show) pure

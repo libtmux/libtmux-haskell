@@ -16,12 +16,14 @@ $ cabal run --verbose=0 create-session -- \
     "$(command -v tmux)"
 ```
 
-The program starts `/bin/cat -`, adds a window, splits an explicit pane and uses
-[`sendKeys`](mutations.md#send-input-to-a-pane) to send literal text followed
-by a named Enter. [`capturePane`](mutations.md#read-pane-text) reads the new
-pane's visible rows. The program checks duplicate-name rejection, removes its targets and
-checks that the original sessions survive. Captures remain readable after
-the handle closes. Follow the [README's teardown](../README.md#clean-up)
+The program adds a window and splits an explicit pane. The new pane
+disables terminal echo, prints a readiness marker and starts `/bin/cat -`.
+The caller waits for the marker and [captures a baseline](mutations.md#read-pane-text).
+It [sends literal text and a named Enter](mutations.md#send-input-to-a-pane),
+then [waits for fresh text](mutations.md#wait-for-pane-text) from the pane.
+The program checks duplicate-name rejection, removes its targets and verifies
+that the original sessions survive. Captures remain readable after the handle
+closes. Follow the [README's teardown](../README.md#clean-up)
 for the borrowed demonstration server.
 
 <!-- example: create-session -->
@@ -64,11 +66,18 @@ main = getArgs >>= \case
         Creation.defaultWindowOptions {Creation.windowLabel = Just "worker", Creation.windowProcess = options.process}
       split <- Tmux.splitPane server
         (Creation.WindowSlot added.session added.windowIndex) added.pane
-        Creation.defaultSplitOptions {Creation.direction = Creation.LeftRight,
-          Creation.size = Creation.SplitPercent 25, Creation.splitProcess = options.process}
+        Creation.defaultSplitOptions
+          { Creation.direction = Creation.LeftRight
+          , Creation.size = Creation.SplitPercent 25
+          , Creation.splitProcess = Creation.ShellCommand
+              "stty -echo; printf 'input-ready\\n'; exec /bin/cat -"
+          }
+      _ <- awaitText server split.pane Tmux.defaultPaneWait "input-ready"
+      baseline <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
       Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
       Tmux.sendKeys server split.pane (Tmux.NamedKeys ("Enter" :| []))
-      screen <- Tmux.capturePane server split.pane Tmux.defaultPaneCapture
+      screen <- awaitText server split.pane
+        Tmux.defaultPaneWait {Tmux.waitMatch = Tmux.FreshSince baseline} "Enter"
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -106,10 +115,19 @@ main = getArgs >>= \case
         putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
         putStrLn $ "captured pane rows match height: " <> show
           (toInteger (length (Text.lines (Tmux.paneText screen))) == Tmux.dimensionValue splitPane.height)
+        putStrLn "captured pane text"
+        putStr (Text.unpack (Text.unlines (filter (not . Text.null) (Text.lines (Tmux.paneText screen)))))
         putStrLn $ "duplicate name rejected: " <> show rejected
         putStrLn $ "original sessions after removal: " <> show
           (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))
   _ -> die "Usage: create-session SOCKET TMUX_EXECUTABLE"
+
+awaitText :: Tmux.Server -> Tmux.PaneRef -> Tmux.PaneWaitOptions -> Text.Text -> IO Tmux.PaneText
+awaitText server pane options expected =
+  Tmux.waitForText server pane options expected >>= \case
+    Tmux.PaneTextMatched screen -> pure screen
+    Tmux.PaneTextTimedOut _ _ -> die "Timed out waiting for pane text"
+    Tmux.PaneTextExited _ -> die "Pane exited before producing text"
 
 require :: Show problem => String -> Either problem a -> IO a
 require context = either (die . ((context <> ": ") <>) . show) pure
@@ -129,6 +147,9 @@ new window: worker
 new window panes: 2
 split exact target: True
 captured pane rows match height: True
+captured pane text
+input-ready
+Enter
 duplicate name rejected: True
 original sessions after removal: True
 ```
