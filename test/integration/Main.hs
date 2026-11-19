@@ -5,6 +5,7 @@ import FrameIntegrationTest qualified
 import SocketPinTest qualified
 import ProcessTest qualified
 import OwnedGuardianTest qualified
+import GenerationKillTest qualified
 import RuntimeTest qualified
 import RuntimeReadTest qualified
 import RuntimeCreationTest qualified
@@ -30,4 +31,4 @@ main = withSandbox $ guardRetained $ do
     [FixtureTest.tests, FrameIntegrationTest.tests, SocketPinTest.tests,
      RuntimeTest.tests, RuntimeReadTest.tests, RuntimeMutationTest.tests, RuntimeCreationTest.tests, ScopeTest.tests, PublicServerTest.tests, PublicMutationTest.tests, PublicCreationTest.tests,
      EntityCaptureTest.tests, CommandIntegrationTest.tests, PublicWindowCreationTest.tests,
-     OwnedGuardianTest.tests, PublicResizeTest.tests, PublicSettingsTest.tests, PublicControlTest.tests, programTests, processTests]
+     OwnedGuardianTest.tests, GenerationKillTest.tests, PublicResizeTest.tests, PublicSettingsTest.tests, PublicControlTest.tests, programTests, processTests]
