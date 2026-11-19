@@ -146,20 +146,17 @@ minimum release in the catalogue. CI runs them on 3.8 and repeats the eligible
 programs on 3.3a with the same archive builds. The archive check also runs the
 public Haddock examples and the installed mutation and recovery tests.
 
-The shared Runtime program reuses the capture fixture with its declared
-executable and expected output. The catalogue checks both bindings, and the
-archive consumer executes the installed program with an independent fixture.
-It checks generation separation, selected closure, continued capture and
-detached navigation.
+The shared Runtime program starts its own daemon and checks generation
+separation, selected closure, continued capture and detached navigation.
 
-The [query program](../docs/query.md) uses that fixture to compare a typed
+The [query program](../docs/query.md) creates its own graph and compares a typed
 predicate with native Haskell over one detached snapshot. It also checks
 physical versus contextual cardinality, nested relationships, ordering,
 limits, requirement inspection and an explicitly separate fresh capture.
 
-The [mutation program](../docs/mutations.md) checks cardinality before sending
-session/window rename and pane-title commands, then compares old and fresh
-observations. The archive check also compiles the public mutation integration
+The [mutation program](../docs/mutations.md) keeps references from creation
+for rename and pane-title commands, then compares old and fresh observations.
+The archive check also compiles the public mutation integration
 cases as an external executable against the archived library. Those cases
 import no private library modules and exercise accepted cancellation, custom
 deadlines, correlated recovery, reference rejection and later progress.

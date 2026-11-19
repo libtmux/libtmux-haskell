@@ -98,10 +98,10 @@ jobs:
         run: cabal test specs --offline --test-show-details=direct --test-options='--strict --fail-on=empty'
       - name: Unit tests
         run: cabal test unit --offline --test-show-details=direct
-      - name: Capture-graph runner and README tests
+      - name: Capture benchmark fixture tests
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
-        run: uv run --locked pytest -q examples/capture-graph/test_run.py examples/capture-graph/test_readme.py
+        run: uv run --locked pytest -q examples/capture-graph/test_run.py
       - name: Documented example command
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}

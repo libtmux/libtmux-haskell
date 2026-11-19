@@ -162,80 +162,35 @@ def test_stale_workflow_locator_is_rejected(
 
 
 @pytest.mark.parametrize(
-    ("key", "value", "message"),
-    [
-        ("runner", "docs/README.md", "runner must belong"),
-        ("command", ["python3", "docs/README.md"], "command must execute"),
-    ],
+    "command",
+    [["python3", "runner.py"], ["cabal", "run", "--verbose=0", "another-program"]],
 )
-def test_runner_and_command_stay_bound_to_the_example(
-    root: Path, catalogue: Catalogue, key: str, value: object, message: str
+def test_documented_command_runs_its_own_executable(
+    root: Path, catalogue: Catalogue, command: list[str]
 ) -> None:
-    """A runner or command that is not the example's own runner fails."""
+    """Checkout and installed checks must run the same program."""
     document = catalogue.load()
-    catalogue.entry(document, "capture-graph")[key] = value
+    catalogue.entry(document, "capture-graph")["command"] = command
     catalogue.save(document)
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="command must run its declared Cabal executable"):
         check_docs.check(root)
 
 
-@pytest.mark.parametrize(
-    ("key", "value", "message"),
-    [
-        ("fixture_panes", 0, "physical pane count"),
-        ("fixture_panes", True, "physical pane count"),
-        ("fixture_panes", 3, "command must execute"),
-    ],
-)
-def test_fixture_pane_count_stays_bound_to_the_command(
-    root: Path, catalogue: Catalogue, key: str, value: object, message: str
+def test_live_examples_find_the_selected_releases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The declared pane count must be valid and match the runner's ``--expected-panes``."""
-    document = catalogue.load()
-    catalogue.entry(document, "create-session")[key] = value
-    catalogue.save(document)
-    with pytest.raises(ValueError, match=message):
-        check_docs.check(root)
-
-
-@pytest.fixture
-def shared_runner(root: Path, catalogue: Catalogue) -> dict[str, Any]:
-    """Declare that ``offline-graph`` uses the ``capture-graph`` runner."""
-    document = catalogue.load()
-    entry = catalogue.entry(document, "offline-graph")
-    entry["runner"] = "examples/capture-graph/run.py"
-    entry["minimum_tmux"] = "3.3a"
-    entry["command"] = [
-        "python3",
-        entry["runner"],
-        "--executable",
-        entry["executable"],
-        "--expected-output",
-        entry["stdout"],
+    """Cabal examples resolve each explicit tmux through its own PATH."""
+    current = tmp_path / "current" / "tmux"
+    floor = tmp_path / "floor" / "tmux"
+    monkeypatch.setenv("LIBTMUX_TEST_TMUX", str(current))
+    monkeypatch.setenv("LIBTMUX_TEST_FLOOR_TMUX", str(floor))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    endpoints = check_docs.example_endpoints("3.3a")
+    assert [(label, env["PATH"]) for label, env in endpoints if env] == [
+        ("configured endpoint", f"{current.parent}:/usr/bin"),
+        ("tmux 3.3a", f"{floor.parent}:/usr/bin"),
     ]
-    catalogue.save(document)
-    return document
-
-
-def test_shared_runner_with_its_declared_program_and_output_is_valid(
-    root: Path, shared_runner: dict[str, Any]
-) -> None:
-    """The positive control for the shared-runner mutations below."""
-    assert check_docs.check(root)
-
-
-@pytest.mark.parametrize(
-    ("argument", "value"),
-    [(3, "capture-graph"), (5, "examples/capture-graph/expected.stdout")],
-)
-def test_shared_runner_binds_the_declared_program_and_output(
-    root: Path, catalogue: Catalogue, shared_runner: dict[str, Any], argument: int, value: str
-) -> None:
-    """Pointing the shared runner at another program or output fails."""
-    catalogue.entry(shared_runner, "offline-graph")["command"][argument] = value
-    catalogue.save(shared_runner)
-    with pytest.raises(ValueError, match="command must execute"):
-        check_docs.check(root)
+    assert check_docs.example_endpoints("3.8") == endpoints[:1]
 
 
 @pytest.mark.parametrize("timeout", [0, 901, 1.5, True, "60"])

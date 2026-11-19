@@ -41,13 +41,14 @@
       "project": "examples/capture-graph/cabal.project",
       "vcs_project": "examples/capture-graph/cabal.project.vcs",
       "stdout": "examples/capture-graph/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "capture-graph",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "capture-graph"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -106,17 +107,14 @@
       "project": "examples/shared-runtime/cabal.project",
       "vcs_project": "examples/shared-runtime/cabal.project.vcs",
       "stdout": "examples/shared-runtime/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "shared-runtime",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "shared-runtime",
-        "--expected-output",
-        "examples/shared-runtime/expected.stdout"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "shared-runtime"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -142,17 +140,14 @@
       "project": "examples/query-graph/cabal.project",
       "vcs_project": "examples/query-graph/cabal.project.vcs",
       "stdout": "examples/query-graph/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "query-graph",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "query-graph",
-        "--expected-output",
-        "examples/query-graph/expected.stdout"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "query-graph"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -178,17 +173,14 @@
       "project": "examples/mutate-graph/cabal.project",
       "vcs_project": "examples/mutate-graph/cabal.project.vcs",
       "stdout": "examples/mutate-graph/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "mutate-graph",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "mutate-graph",
-        "--expected-output",
-        "examples/mutate-graph/expected.stdout"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "mutate-graph"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -214,19 +206,14 @@
       "project": "examples/create-session/cabal.project",
       "vcs_project": "examples/create-session/cabal.project.vcs",
       "stdout": "examples/create-session/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "create-session",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "create-session",
-        "--expected-output",
-        "examples/create-session/expected.stdout",
-        "--expected-panes",
-        "1"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "create-session"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -243,8 +230,7 @@
           "stderr-empty",
           "archive-consumer"
         ]
-      },
-      "fixture_panes": 1
+      }
     },
     {
       "id": "managed-program",
@@ -253,17 +239,14 @@
       "project": "examples/managed-program/cabal.project",
       "vcs_project": "examples/managed-program/cabal.project.vcs",
       "stdout": "examples/managed-program/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "managed-program",
       "capability": "tmux 3.8, Linux 6.9 process-group pidfds and Bash timed reads",
       "minimum_tmux": "3.8",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "managed-program",
-        "--expected-output",
-        "examples/managed-program/expected.stdout"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "managed-program"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -289,19 +272,14 @@
       "project": "examples/paste-buffer/cabal.project",
       "vcs_project": "examples/paste-buffer/cabal.project.vcs",
       "stdout": "examples/paste-buffer/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "paste-buffer",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "paste-buffer",
-        "--expected-output",
-        "examples/paste-buffer/expected.stdout",
-        "--expected-panes",
-        "1"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "paste-buffer"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -318,8 +296,7 @@
           "stderr-empty",
           "archive-consumer"
         ]
-      },
-      "fixture_panes": 1
+      }
     },
     {
       "id": "resize-geometry",
@@ -328,19 +305,14 @@
       "project": "examples/resize-geometry/cabal.project",
       "vcs_project": "examples/resize-geometry/cabal.project.vcs",
       "stdout": "examples/resize-geometry/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "resize-geometry",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "resize-geometry",
-        "--expected-output",
-        "examples/resize-geometry/expected.stdout",
-        "--expected-panes",
-        "1"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "resize-geometry"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -357,8 +329,7 @@
           "stderr-empty",
           "archive-consumer"
         ]
-      },
-      "fixture_panes": 1
+      }
     },
     {
       "id": "configure-session",
@@ -367,19 +338,14 @@
       "project": "examples/configure-session/cabal.project",
       "vcs_project": "examples/configure-session/cabal.project.vcs",
       "stdout": "examples/configure-session/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "configure-session",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "configure-session",
-        "--expected-output",
-        "examples/configure-session/expected.stdout",
-        "--expected-panes",
-        "1"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "configure-session"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -396,8 +362,7 @@
           "stderr-empty",
           "archive-consumer"
         ]
-      },
-      "fixture_panes": 1
+      }
     },
     {
       "id": "watch-window",
@@ -406,19 +371,14 @@
       "project": "examples/watch-window/cabal.project",
       "vcs_project": "examples/watch-window/cabal.project.vcs",
       "stdout": "examples/watch-window/expected.stdout",
-      "runner": "examples/capture-graph/run.py",
       "executable": "watch-window",
       "capability": "tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
-        "python3",
-        "examples/capture-graph/run.py",
-        "--executable",
-        "watch-window",
-        "--expected-output",
-        "examples/watch-window/expected.stdout",
-        "--expected-panes",
-        "1"
+        "cabal",
+        "run",
+        "--verbose=0",
+        "watch-window"
       ],
       "verification": {
         "workflow": ".github/workflows/ci.yml",
@@ -435,8 +395,7 @@
           "stderr-empty",
           "archive-consumer"
         ]
-      },
-      "fixture_panes": 1
+      }
     }
   ]
 }

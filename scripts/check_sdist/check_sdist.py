@@ -166,7 +166,7 @@ def check_example_consumers(
     for entry in examples:
         consumer = workspace / entry["id"]
         consumer.mkdir()
-        for field in ["source", "package", *(["runner", "stdout"] if "runner" in entry else [])]:
+        for field in ["source", "package"]:
             (consumer / Path(entry[field]).name).write_bytes(read_source(entry[field]))
     packages = " ".join(entry["id"] for entry in examples)
     (workspace / "cabal.project").write_text(
@@ -175,23 +175,15 @@ def check_example_consumers(
     run(["cabal", "build", "all", "--offline", "--jobs=2"], workspace, BUILD)
     floor_runs = 0
     for entry in examples:
-        consumer = workspace / entry["id"]
         target = "exe:" + entry["executable"]
         executable = output(
             ["cabal", "list-bin", target, "--offline"], cwd=workspace, timeout=QUICK
         ).strip()
-        command = (
-            [sys.executable, str(consumer / Path(entry["runner"]).name), "--program", executable]
-            if "runner" in entry
-            else [executable]
-        )
-        if "fixture_panes" in entry:
-            command += ["--expected-panes", str(entry["fixture_panes"])]
         expected = read_source(entry["stdout"])
         endpoints = example_endpoints(entry.get("minimum_tmux"))
         for label, env in endpoints:
             result = bounded_run(
-                command,
+                [executable],
                 cwd=workspace,
                 capture_output=True,
                 timeout=entry.get("timeout", DEFAULT_TIMEOUT),

@@ -146,7 +146,6 @@ extra-source-files:
   examples/capture-graph/run.py
   examples/capture-graph/test_run.py
   examples/capture-graph/conftest.py
-  examples/capture-graph/test_readme.py
   examples/offline-graph/Main.hs
   examples/offline-graph/README.md
   examples/offline-graph/expected.stdout

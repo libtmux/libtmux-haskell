@@ -35,10 +35,17 @@ type Endpoint = tuple[str, dict[str, str] | None]
 
 def example_endpoints(minimum_tmux: str | None) -> tuple[Endpoint, ...]:
     """Add the configured 3.3a fixture for programs that support it."""
-    default: Endpoint = ("configured endpoint", None)
+
+    def environment(binary: str) -> dict[str, str]:
+        directory = str(Path(binary).absolute().parent)
+        search = os.pathsep.join((directory, os.environ.get("PATH", os.defpath)))
+        return dict(os.environ, LIBTMUX_TEST_TMUX=binary, PATH=search)
+
+    binary = os.environ.get("LIBTMUX_TEST_TMUX")
+    default: Endpoint = ("configured endpoint", environment(binary) if binary else None)
     floor = os.environ.get("LIBTMUX_TEST_FLOOR_TMUX")
     if floor and minimum_tmux == "3.3a":
-        return (default, ("tmux 3.3a", dict(os.environ, LIBTMUX_TEST_TMUX=floor)))
+        return (default, ("tmux 3.3a", environment(floor)))
     return (default,)
 
 
@@ -72,54 +79,25 @@ def check_catalogue(root: Path) -> dict[str, Entry]:
     examples: dict[str, Entry] = {}
     paths = {"source", "package", "project", "vcs_project", "stdout"}
     fields = paths | {"id", "executable", "capability", "minimum_tmux", "command", "verification"}
-    optional = {"runner", "fixture_panes", "timeout"}
+    optional = {"timeout"}
     for entry in entries:
         keys = set(entry)
-        if (
-            not fields <= keys <= fields | optional
-            or ("fixture_panes" in keys and "runner" not in keys)
-            or entry["id"] in examples
-        ):
+        if not fields <= keys <= fields | optional or entry["id"] in examples:
             raise ValueError("Invalid or duplicate example entry")
         minimum_tmux = entry["minimum_tmux"]
-        if minimum_tmux not in (None, "3.3a", "3.8") or (minimum_tmux is None and "runner" in keys):
+        if minimum_tmux not in (None, "3.3a", "3.8"):
             raise ValueError(f"Invalid minimum tmux version for {entry['id']}")
         timeout = entry.get("timeout", DEFAULT_TIMEOUT)
         if type(timeout) is not int or not 1 <= timeout <= MAX_TIMEOUT:
             raise ValueError(f"Invalid example timeout for {entry['id']}")
-        for key in paths | ({"runner"} if "runner" in entry else set()):
+        for key in paths:
             path = Path(entry[key])
             if path.is_absolute() or ".." in path.parts or not (root / path).is_file():
                 raise ValueError(f"Missing or invalid {key} for {entry['id']}")
         if Path(entry["source"]).parts != ("examples", entry["id"], "Main.hs"):
             raise ValueError("An example must have one Main.hs in its own directory")
-        if "runner" in entry:
-            runner = Path(entry["runner"]).parts
-            if (
-                len(runner) != 3
-                or runner[0] != "examples"
-                or runner[2] != "run.py"
-                or not any(
-                    owner["id"] == runner[1] and owner.get("runner") == entry["runner"]
-                    for owner in entries
-                )
-            ):
-                raise ValueError("An example runner must belong to a declared example directory")
-            command = ["python3", entry["runner"]]
-            if runner[1] != entry["id"]:
-                command += [
-                    "--executable",
-                    entry["executable"],
-                    "--expected-output",
-                    entry["stdout"],
-                ]
-            if "fixture_panes" in entry:
-                panes = entry["fixture_panes"]
-                if type(panes) is not int or not 1 <= panes <= 10000:
-                    raise ValueError("Invalid example physical pane count")
-                command += ["--expected-panes", str(panes)]
-            if entry["command"] != command:
-                raise ValueError("An example command must execute its declared runner")
+        if entry["command"] != ["cabal", "run", "--verbose=0", entry["executable"]]:
+            raise ValueError("An example command must run its declared Cabal executable")
         examples[entry["id"]] = entry
         proof = entry["verification"]
         if set(proof) != {"workflow", "job", "step", "command", "checks"}:
