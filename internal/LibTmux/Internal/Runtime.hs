@@ -22,7 +22,7 @@ module LibTmux.Internal.Runtime
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
   , mutateWith, programMutationWith, validateKeyWith
-  , readPaneCaptureWith, readPaneAliveWith, readEnvironmentWith
+  , readPaneCaptureWith, readPaneAliveWith, readEnvironmentWith, readSettingWith
   , SessionCreation, CreationJournal, createSessionWith, createWith
   , creationRequest, creationJournal, journalReceipt
   ) where
@@ -163,6 +163,8 @@ data NativeCommand value where
   ValidateKey :: !Text -> NativeCommand Bool
   CapturePane :: !Id.PaneId -> !PaneCaptureOptions -> NativeCommand Command.ControlDataReply
   ReadEnvironment :: !(Maybe Id.SessionId) -> !EnvironmentVisibility -> !ByteString
+    -> NativeCommand Command.ControlDataReply
+  ReadSetting :: !Command.OptionDestination -> !ByteString -> !Command.SettingRead
     -> NativeCommand Command.ControlDataReply
   Create :: !N.Spec -> !Command.CreationCommand -> !CreationJournal
     -> NativeCommand Command.SessionCreationReply
@@ -618,6 +620,11 @@ readEnvironmentWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString
 readEnvironmentWith hooks duration runtime client executable scope visibility name =
   startNative (ReadEnvironment scope visibility name) hooks duration runtime client executable ScalarRead
 
+readSettingWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString
+  -> Command.OptionDestination -> ByteString -> Command.SettingRead -> IO (Request Command.ControlDataReply)
+readSettingWith hooks duration runtime client executable destination name request =
+  startNative (ReadSetting destination name request) hooks duration runtime client executable ScalarRead
+
 -- | Create through an existing pin in the serialized mutation lane. The launch
 -- context contributes file, cwd and environment; its argv is replaced by the
 -- closed compiler. Failure before Request handoff retains journal annotations
@@ -812,6 +819,9 @@ compileNative _ (CapturePane pane options) = do
 compileNative _ (ReadEnvironment scope visibility name) = do
   arguments <- Command.compileEnvironmentRead scope visibility name
   pure (ControlDataResult P.streamLimitBytes, "-C" : arguments, P.KeepInputOpen)
+compileNative _ (ReadSetting destination name request) = do
+  arguments <- Command.compileSettingRead destination name request
+  pure (ControlDataResult Command.settingReadLimit, "-C" : arguments, P.KeepInputOpen)
 compileNative nonce (Create _ command journal) = do
   arguments <- Command.compileCreation nonce command
   pure (CreationResult journal, "-C" : arguments, P.KeepInputOpen)

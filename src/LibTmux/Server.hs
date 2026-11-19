@@ -35,6 +35,9 @@ module LibTmux.Server
     -- * Environment
   , getEnvironment, setEnvironment, setEnvironmentWith
   , markEnvironmentRemoved, markEnvironmentRemovedWith, unsetEnvironment, unsetEnvironmentWith
+    -- * Option and hook stores
+  , readOption, setOption, setOptionWith, unsetOption, unsetOptionWith
+  , readHook, setHook, setHookWith, unsetHook, unsetHookWith
     -- * Window links, selection and layout
   , linkWindow, linkWindowWith, unlinkWindow, unlinkWindowWith
   , selectWindowLink, selectWindowLinkWith, selectExactPane, selectExactPaneWith
@@ -80,12 +83,16 @@ import Control.Exception.Context qualified as Context
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
+import Data.ByteString.Char8 qualified as Ascii
+import Data.Char (isAlphaNum, isAscii)
+import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
 import Data.Time.Clock (NominalDiffTime)
 import Data.Type.Coercion (coerceWith, sym)
+import Data.Word (Word32)
 import LibTmux.Environment (EnvironmentEntry (..), EnvironmentScope (..), EnvironmentVisibility)
 import LibTmux.Id (SessionId)
 import LibTmux.Internal.Budget qualified as B
@@ -115,6 +122,11 @@ import LibTmux.Internal.Scope
   )
 import LibTmux.Internal.Scope qualified as Scope
 import LibTmux.Internal.SocketPin qualified as Pin
+import LibTmux.Options
+  ( HookInfo (..), OptionError (..), OptionInfo (..), OptionKind (..)
+  , OptionLookup (..), OptionScope (..), OptionShape (..), OptionTarget (..), OptionValue (..)
+  )
+import LibTmux.Options qualified as Options
 import LibTmux.Pane (PaneCaptureOptions (..), PasteNewlines, defaultPaneCapture)
 import LibTmux.Version qualified as Version
 import LibTmux.Value (Resize)
@@ -445,6 +457,176 @@ changeEnvironment options server scope name change =
 environmentTarget :: Server -> EnvironmentScope -> (Generation, Maybe SessionId)
 environmentTarget server GlobalEnvironment = (serverGeneration server, Nothing)
 environmentTarget _ (SessionEnvironment (G.SessionRef generation session)) = (generation, Just session)
+
+-- | Read a scalar option from an explicit store. A missing value is
+-- 'Nothing'. A present empty string is a 'StringValue' with zero bytes.
+-- Use 'EffectiveOption' to include an inherited value. Replies are
+-- bounded to 64 KiB and contain only the primary command's data.
+readOption :: Server -> OptionTarget -> OptionLookup -> Text.Text -> IO (Maybe OptionValue)
+readOption server target lookupMode name = do
+  let (generation, destination, scope) = optionTarget server target
+  (kind, choices) <- validateOption server scope name
+  value <- readSetting server generation destination name (Command.ReadScalar (lookupMode == EffectiveOption))
+  traverse (\bytes -> case Bytes.stripSuffix "\n" bytes >>= decodeOption kind choices of
+    Just decoded -> pure decoded
+    Nothing -> throwIO (InvalidObservation "option reply disagrees with its catalogue type")) value
+
+-- | Replace one scalar option. Built-in names and types must match the
+-- catalogue and selected scope. A user option starts with an at sign, followed
+-- by ASCII letters, digits, hyphens, underscores or dots. Use 'readOption'
+-- to observe tmux's stored value.
+setOption :: Server -> OptionTarget -> Text.Text -> OptionValue -> IO ()
+setOption = setOptionWith defaultMutationOptions
+
+-- | 'setOption' with an explicit deadline. Native checks apply to option
+-- values such as a key name, colour, numeric range or command.
+setOptionWith :: MutationOptions -> Server -> OptionTarget -> Text.Text -> OptionValue -> IO ()
+setOptionWith options server target name value = do
+  let (generation, destination, scope) = optionTarget server target
+      (actual, operand) = encodeOption value
+  (expected, choices) <- validateOption server scope name
+  unless (actual == expected) (throwIO (InvalidSetting (WrongOptionKind name expected)))
+  case value of
+    ChoiceValue choice | choice `notElem` choices -> throwIO (InvalidSetting (UnknownOptionChoice name))
+    _ -> pure ()
+  mutate options server generation (Command.ChangeSetting destination (Utf8.encodeUtf8 name) (Command.SetOptionValue operand))
+
+-- | Remove a local scalar override. For built-ins in a global or server
+-- store, tmux restores its default.
+unsetOption :: Server -> OptionTarget -> Text.Text -> IO ()
+unsetOption = unsetOptionWith defaultMutationOptions
+
+-- | 'unsetOption' with an explicit deadline.
+unsetOptionWith :: MutationOptions -> Server -> OptionTarget -> Text.Text -> IO ()
+unsetOptionWith options server target name = do
+  let (generation, destination, scope) = optionTarget server target
+  _ <- validateOption server scope name
+  mutate options server generation (Command.ChangeSetting destination (Utf8.encodeUtf8 name) Command.UnsetOptionValue)
+
+-- | Read one built-in event's local hook as tmux serializes it, preserving
+-- keys, order and line endings. 'Nothing' means no local hook. The native
+-- empty-hook record, when present, contains the event name. The reply is
+-- bounded to 64 KiB.
+readHook :: Server -> OptionTarget -> Text.Text -> IO (Maybe ByteString)
+readHook server target name = do
+  let (generation, destination, scope) = optionTarget server target
+  validateHook server scope name
+  readSetting server generation destination name Command.ReadHookListing
+
+-- | Set one numeric entry of a built-in event. The operand is tmux command
+-- source, parsed when the daemon registers it. Other indices stay in place.
+setHook :: Server -> OptionTarget -> Text.Text -> Word32 -> ByteString -> IO ()
+setHook = setHookWith defaultMutationOptions
+
+-- | 'setHook' with an explicit deadline. Indices range from 0 to
+-- 2147483647 across the supported catalogue releases.
+setHookWith :: MutationOptions -> Server -> OptionTarget -> Text.Text -> Word32 -> ByteString -> IO ()
+setHookWith options server target name index source = do
+  let (generation, destination, scope) = optionTarget server target
+  validateHook server scope name
+  when (index > 2147483647) (throwIO (InvalidSetting HookIndexOutOfRange))
+  mutate options server generation (Command.ChangeSetting destination (Utf8.encodeUtf8 name) (Command.SetHookEntry index source))
+
+-- | Remove the local override for an event, including every entry.
+-- A local hook can inherit its parent's entries again.
+unsetHook :: Server -> OptionTarget -> Text.Text -> IO ()
+unsetHook = unsetHookWith defaultMutationOptions
+
+-- | 'unsetHook' with an explicit deadline.
+unsetHookWith :: MutationOptions -> Server -> OptionTarget -> Text.Text -> IO ()
+unsetHookWith options server target name = do
+  let (generation, destination, scope) = optionTarget server target
+  validateHook server scope name
+  mutate options server generation (Command.ChangeSetting destination (Utf8.encodeUtf8 name) Command.UnsetHookEntry)
+
+optionTarget :: Server -> OptionTarget -> (Generation, Command.OptionDestination, OptionScope)
+optionTarget server = \case
+  ServerOptions -> global Command.ServerDestination ServerScope
+  GlobalSessionOptions -> global Command.GlobalSessionDestination SessionScope
+  SessionOptionsAt (G.SessionRef generation ident) -> (generation, Command.SessionDestination ident, SessionScope)
+  GlobalWindowOptions -> global Command.GlobalWindowDestination WindowScope
+  WindowOptionsAt (G.WindowRef generation ident) -> (generation, Command.WindowDestination ident, WindowScope)
+  PaneOptionsAt (G.PaneRef generation ident) -> (generation, Command.PaneDestination ident, PaneScope)
+  where
+    global destination scope = (serverGeneration server, destination, scope)
+
+validateOption :: Server -> OptionScope -> Text.Text -> IO (OptionKind, [Text.Text])
+validateOption server scope name
+  | Just suffix <- Text.stripPrefix "@" name = do
+      unless (not (Text.null suffix) && Text.all valid suffix)
+        (throwIO (InvalidSetting (InvalidUserOptionName name)))
+      pure (StringKind, [])
+  | otherwise = do
+      capabilities <- settingCatalogue server
+      info <- maybe (throwIO (InvalidSetting (UnknownOption name))) pure (Options.lookupOption capabilities name)
+      validateSettingScope name scope info.optionScopes
+      unless (info.optionShape == Scalar) (throwIO (InvalidSetting (ExpectedScalarOption name)))
+      pure (info.optionKind, info.optionChoices)
+  where
+    valid char = isAscii char && (isAlphaNum char || char `elem` ("-_." :: String))
+
+validateHook :: Server -> OptionScope -> Text.Text -> IO ()
+validateHook server scope name = do
+  capabilities <- settingCatalogue server
+  info <- maybe (throwIO (InvalidSetting (UnknownHook name))) pure (Options.lookupHook capabilities name)
+  validateSettingScope name scope info.hookScopes
+
+validateSettingScope :: Text.Text -> OptionScope -> [OptionScope] -> IO ()
+validateSettingScope name scope allowed =
+  unless (scope `elem` allowed) (throwIO (InvalidSetting (WrongSettingScope name scope)))
+
+settingCatalogue :: Server -> IO Capabilities.Capabilities
+settingCatalogue server = do
+  let capabilities = serverCapabilities server
+      actual = Capabilities.daemonVersion capabilities
+  unless (either (const False) (actual <=) (Version.parseVersion "3.8"))
+    (throwIO (InvalidSetting (UnqualifiedOptionVersion actual)))
+  pure capabilities
+
+readSetting :: Server -> Generation -> Command.OptionDestination -> Text.Text
+  -> Command.SettingRead -> IO (Maybe ByteString)
+readSetting server@(Server runtime handle executable duration _) generation destination name request = operational $ do
+  checkTarget server generation
+  let nativeName = Utf8.encodeUtf8 name
+  reply <- C.captureSettingWith runtime handle executable duration destination nativeName request
+  case reply of
+    Command.ControlData bytes -> pure (if Bytes.null bytes then Nothing else Just bytes)
+    Command.ControlDataExceedsLimit -> throwIO (SettingReadTooLarge Command.settingReadLimit)
+    Command.ControlDataHookFailed diagnostic -> throwIO (SettingReadHookFailed diagnostic)
+    Command.ControlDataRejected diagnostic
+      | "@" `Bytes.isPrefixOf` nativeName && diagnostic == "invalid option: " <> nativeName <> "\n" -> pure Nothing
+      | otherwise -> throwIO (SettingReadRejected diagnostic)
+
+encodeOption :: OptionValue -> (OptionKind, ByteString)
+encodeOption = \case
+  StringValue bytes -> (StringKind, bytes)
+  NumberValue number -> (NumberKind, Ascii.pack (show number))
+  KeyValue bytes -> (KeyKind, bytes)
+  ColourValue bytes -> (ColourKind, bytes)
+  FlagValue flag -> (FlagKind, if flag then "on" else "off")
+  ChoiceValue choice -> (ChoiceKind, Utf8.encodeUtf8 choice)
+  CommandValue bytes -> (CommandKind, bytes)
+  StyleValue bytes -> (StyleKind, bytes)
+  ColourStringValue bytes -> (ColourStringKind, bytes)
+
+decodeOption :: OptionKind -> [Text.Text] -> ByteString -> Maybe OptionValue
+decodeOption kind choices bytes = case kind of
+  StringKind -> Just (StringValue bytes)
+  NumberKind -> case Ascii.readInteger (Bytes.take 20 bytes) of
+    Just (number, "") | Bytes.length bytes <= 20
+      , number >= toInteger (minBound :: Int64), number <= toInteger (maxBound :: Int64) ->
+          Just (NumberValue (fromInteger number))
+    _ -> Nothing
+  KeyKind -> Just (KeyValue bytes)
+  ColourKind -> Just (ColourValue bytes)
+  FlagKind -> case bytes of
+    "on" -> Just (FlagValue True)
+    "off" -> Just (FlagValue False)
+    _ -> Nothing
+  ChoiceKind -> ChoiceValue <$> lookup bytes [(Utf8.encodeUtf8 choice, choice) | choice <- choices]
+  CommandKind -> Just (CommandValue bytes)
+  StyleKind -> Just (StyleValue bytes)
+  ColourStringKind -> Just (ColourStringValue bytes)
 
 -- | Link the current occupant of the first slot at the second slot. Both
 -- slots belong to this Server generation. The destination must be vacant.

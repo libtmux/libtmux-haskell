@@ -8,7 +8,7 @@
 module LibTmux.Internal.Capture
   ( CapturedGraph, CapturedSnapshot, CaptureError (..), captureGraph, captureGraphWith, captureSnapshot, captureSnapshotWith
   , captureVersionWith, capturePaneWith, waitForPaneText, TextObservation (..)
-  , captureEnvironmentWith
+  , captureEnvironmentWith, captureSettingWith
   , CaptureRecovery, captureRecoveries, recoveryReceipt, inspectRecovery, resumeRecovery, detachRecovery
   ) where
 
@@ -31,6 +31,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Environment (EnvironmentVisibility (..))
 import LibTmux.Id (PaneId, SessionId)
 import LibTmux.Internal.Command (ControlDataReply (ControlData, ControlDataRejected))
+import LibTmux.Internal.Command qualified as Command
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Graph qualified as Session (Session (..))
 import LibTmux.Internal.Graph qualified as Window (Window (..))
@@ -162,6 +163,14 @@ captureEnvironmentWith runtime client executable duration scope name =
                 _ -> pure (Hidden, hidden)
             _ -> pure (Visible, visible)
     observe (1 :: Int)
+
+captureSettingWith :: R.Runtime -> R.ServerHandle -> ByteString -> Int
+  -> Command.OptionDestination -> ByteString -> Command.SettingRead -> IO ControlDataReply
+captureSettingWith runtime client executable duration destination name request = do
+  (_, _, value) <- withinDeadline runtime client duration $ \receipt deadline ->
+    nextWaitRead runtime receipt deadline $ \left ->
+      R.readSettingWith P.defaultHooks left runtime client executable destination name request
+  pure value
 
 captureGraph :: R.Runtime -> R.ServerHandle -> ByteString -> Int -> IO CapturedGraph
 captureGraph runtime client executable duration = withinDeadline runtime client duration $ \receipt deadline -> do

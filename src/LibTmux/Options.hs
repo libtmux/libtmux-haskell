@@ -4,9 +4,12 @@ module LibTmux.Options
   ( OptionScope (..), OptionKind (..), OptionShape (..)
   , OptionInfo (..), HookInfo (..)
   , knownOptions, lookupOption, knownHooks, lookupHook
+  , OptionTarget (..), OptionLookup (..), OptionValue (..), OptionError (..)
   ) where
 
 import Data.Bifunctor (first)
+import Data.ByteString (ByteString)
+import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
@@ -14,6 +17,7 @@ import Data.Text (Text)
 import LibTmux.Capabilities (Capabilities, daemonVersion)
 import LibTmux.Internal.OptionTable
   ( Definition (..), OptionScope (..), OptionKind (..), OptionShape (..), definitions )
+import LibTmux.Snapshot (PaneRef, SessionRef, WindowRef)
 import LibTmux.Version (TmuxVersion, parseVersion)
 
 -- | The definition in the selected release. 'optionSince' is the first
@@ -34,6 +38,51 @@ data HookInfo = HookInfo
   , hookScopes :: ![OptionScope]
   , hookSince :: !TmuxVersion
   }
+  deriving stock (Eq, Show)
+
+-- | A store selected explicitly for option and hook operations. A window's
+-- options belong to the physical window and are shared by all of its links.
+-- There is no global pane store. Hooks do not use 'ServerOptions'.
+data OptionTarget
+  = ServerOptions
+  | GlobalSessionOptions
+  | SessionOptionsAt !SessionRef
+  | GlobalWindowOptions
+  | WindowOptionsAt !WindowRef
+  | PaneOptionsAt !PaneRef
+  deriving stock (Eq, Show)
+
+-- | Read the selected store, or follow its native inheritance chain.
+data OptionLookup = LocalOption | EffectiveOption
+  deriving stock (Eq, Show)
+
+-- | A scalar value checked against its native definition. Strings are
+-- literal bytes. Keys, colours, styles and commands use tmux spelling.
+-- Replies contain the spelling tmux reports, which may normalize supplied
+-- values. Read values omit a Show instance to avoid logging stored strings.
+data OptionValue
+  = StringValue !ByteString
+  | NumberValue !Int64
+  | KeyValue !ByteString
+  | ColourValue !ByteString
+  | FlagValue !Bool
+  | ChoiceValue !Text
+  | CommandValue !ByteString
+  | StyleValue !ByteString
+  | ColourStringValue !ByteString
+  deriving stock (Eq)
+
+-- | Refusal before an option or hook command is admitted.
+data OptionError
+  = UnknownOption !Text
+  | ExpectedScalarOption !Text
+  | UnknownHook !Text
+  | WrongSettingScope !Text !OptionScope
+  | WrongOptionKind !Text !OptionKind
+  | UnknownOptionChoice !Text
+  | InvalidUserOptionName !Text
+  | UnqualifiedOptionVersion !TmuxVersion
+  | HookIndexOutOfRange
   deriving stock (Eq, Show)
 
 -- | List built-in options by name. The catalogue uses the latest pinned
