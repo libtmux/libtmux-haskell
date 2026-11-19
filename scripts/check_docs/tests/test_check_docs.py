@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -191,6 +192,38 @@ def test_live_examples_find_the_selected_releases(
         ("tmux 3.3a", f"{floor.parent}:/usr/bin"),
     ]
     assert check_docs.example_endpoints("3.8") == endpoints[:1]
+
+
+def test_checkout_commands_finish_one_release_before_switching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cabal receives one selected tmux directory per pass over the catalogue."""
+    examples = [
+        {"id": "offline", "minimum_tmux": None},
+        {"id": "capture", "minimum_tmux": "3.3a"},
+        {"id": "program", "minimum_tmux": "3.8"},
+    ]
+    current = str(tmp_path / "current" / "tmux")
+    floor = str(tmp_path / "floor" / "tmux")
+    monkeypatch.setenv("LIBTMUX_TEST_TMUX", current)
+    monkeypatch.setenv("LIBTMUX_TEST_FLOOR_TMUX", floor)
+    monkeypatch.setattr(sys, "argv", ["check_docs", "--run"])
+    monkeypatch.setattr(check_docs, "check", lambda: examples)
+    runs: list[tuple[str, str]] = []
+
+    def record(entry: check_docs.Entry, *, endpoint: check_docs.Endpoint) -> None:
+        _, env = endpoint
+        assert env is not None
+        runs.append((entry["id"], env["LIBTMUX_TEST_TMUX"]))
+
+    monkeypatch.setattr(check_docs, "run_entry", record)
+    check_docs.main()
+    assert runs == [
+        ("offline", current),
+        ("capture", current),
+        ("program", current),
+        ("capture", floor),
+    ]
 
 
 @pytest.mark.parametrize("timeout", [0, 901, 1.5, True, "60"])

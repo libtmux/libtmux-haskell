@@ -180,27 +180,27 @@ def check(root: Path = ROOT) -> list[Entry]:
     return list(examples.values())
 
 
-def run_entry(entry: Entry, root: Path = ROOT) -> int:
-    """Check the command on its endpoints and return the number of floor runs.
+def run_entry(
+    entry: Entry, root: Path = ROOT, endpoint: Endpoint = ("configured endpoint", None)
+) -> None:
+    """Check the command on one endpoint.
 
     The command is stopped after the entry's ``timeout`` seconds, or ``DEFAULT_TIMEOUT``.
     """
     timeout = entry.get("timeout", DEFAULT_TIMEOUT)
     expected = (root / entry["stdout"]).read_bytes()
-    endpoints = example_endpoints(entry.get("minimum_tmux"))
-    for label, env in endpoints:
-        try:
-            result = run(entry["command"], cwd=root, capture_output=True, timeout=timeout, env=env)
-        except subprocess.TimeoutExpired as error:
-            raise ValueError(
-                f"Documented command timed out after {timeout} s: {entry['id']} ({label})"
-            ) from error
-        if result.returncode or result.stdout != expected or result.stderr:
-            raise ValueError(
-                f"Documented command failed: {entry['id']} ({label}); exit={result.returncode}; "
-                f"stdout={result.stdout!r}; stderr={result.stderr!r}"
-            )
-    return len(endpoints) - 1
+    label, env = endpoint
+    try:
+        result = run(entry["command"], cwd=root, capture_output=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(
+            f"Documented command timed out after {timeout} s: {entry['id']} ({label})"
+        ) from error
+    if result.returncode or result.stdout != expected or result.stderr:
+        raise ValueError(
+            f"Documented command failed: {entry['id']} ({label}); exit={result.returncode}; "
+            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
 
 
 def main() -> None:
@@ -212,9 +212,14 @@ def main() -> None:
     args = parser.parse_args()
     entries = check()
     if args.run:
-        floor_runs = sum(run_entry(entry) for entry in entries)
-        if floor_runs:
-            print(f"PASS: {floor_runs} documented commands on tmux 3.3a")
+        primary, *floor = example_endpoints("3.3a")
+        for entry in entries:
+            run_entry(entry, endpoint=primary)
+        for endpoint in floor:
+            supported = [entry for entry in entries if entry["minimum_tmux"] == "3.3a"]
+            for entry in supported:
+                run_entry(entry, endpoint=endpoint)
+            print(f"PASS: {len(supported)} documented commands on tmux 3.3a")
     print(f"PASS: {len(entries)} declared example, displayed assets and local guide links")
 
 
