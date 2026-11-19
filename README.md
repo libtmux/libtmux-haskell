@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: c642048f26b4a8a6a5cbbcba812c7e7fd8d3eb7d
+  tag: 1431b0dd37edd9ec08f847376b16d9d38c5a5502
 ```
 
 Update the package index:
@@ -388,6 +388,22 @@ $ cabal run --verbose=0 configure-session -- \
 ```text
 local history-limit = 500
 rename hook recorded the change
+```
+
+### [`withControl`](src/LibTmux/Server.hs) to observe a rename
+
+The [control example](docs/control.md) reads one native notification from
+a bounded stream and retires its client at the end of the scope.
+
+```console
+$ cabal run --verbose=0 watch-window -- \
+    "$LIBTMUX_DEMO_DIR/s" \
+    "$(command -v tmux)"
+```
+
+<!-- example-output: watch-window -->
+```text
+window renamed to control-demo
 ```
 
 ## Resize panes and windows

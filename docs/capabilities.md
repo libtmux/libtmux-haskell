@@ -17,9 +17,12 @@ The [graph example](../examples/capture-graph/Main.hs) handles this refusal.
 The root [manifest](../capabilities.json) uses `libtmux-capabilities/1`.
 It records this port and its admission floor, and projects only shared claim
 IDs defined by the pinned [capability claims contract](https://github.com/libtmux/central/blob/a774f3b3a74db3dfbe19405bde3294efba37fce7/docs/decisions/0003-capability-claims.md).
-The current Haskell registry's Program and raw-paste IDs are absent from that
-vocabulary, so its shared claim arrays are empty. Query the Haskell registry
-for those operations. An absent shared claim makes no assertion about support.
+The Haskell runtime capability IDs are outside that vocabulary, so its shared
+claim arrays are empty. Query the Haskell registry for those operations.
+
+[Control notifications](control.md) use the attach flags introduced in
+[tmux 3.2](https://github.com/tmux/tmux/blob/bc4681c83d612a3d9609dd609e7d89b035b25dd5/cmd-attach-session.c).
+The library's daemon admission floor remains 3.3a.
 
 The unit suite compares the generated manifest byte for byte. The integration
 suite checks daemon-bound discovery and Program refusal before effects.
