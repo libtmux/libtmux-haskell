@@ -16,7 +16,8 @@ $ cabal run --verbose=0 create-session -- \
 
 The program starts `/bin/cat -`, sets a title and uses
 [`sendKeys`](mutations.md#send-input-to-a-pane) to send literal text followed
-by a named Enter. It checks duplicate-name rejection, removes its targets and
+by a named Enter. It [captures the pane](mutations.md#read-pane-text), checks
+duplicate-name rejection, removes its targets and
 checks that the original sessions survive. Captures remain readable after
 the handle closes. Follow the [README's teardown](../README.md#clean-up)
 for the borrowed demonstration server.
@@ -59,6 +60,7 @@ main = getArgs >>= \case
       Tmux.setPaneTitle server created.pane "editor-ready"
       Tmux.sendKeys server created.pane (Tmux.LiteralText "Enter")
       Tmux.sendKeys server created.pane (Tmux.NamedKeys ("Enter" :| []))
+      screen <- Tmux.capturePane server created.pane Tmux.defaultPaneCapture
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -72,10 +74,10 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, before, after, rejected, remaining)
+      pure (created, before, after, rejected, remaining, Tmux.paneText screen)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, before, after, rejected, remaining) -> do
+      Right (created, before, after, rejected, remaining, screen) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
@@ -84,6 +86,7 @@ main = getArgs >>= \case
         putStrLn $ "created session: " <> Text.unpack session.name
         putStrLn $ "initial window: " <> Text.unpack label
         putStrLn $ "pane title: " <> Text.unpack pane.title
+        putStrLn $ "captured pane rows: " <> show (not (Text.null screen))
         putStrLn $ "same created targets: " <> show (session.ref == created.session && window.ref == created.window && pane.ref == created.pane)
         putStrLn $ "captured sessions: " <> show (length (Tmux.sessions before)) <> " -> " <> show (length (Tmux.sessions after))
         putStrLn $ "created window links: " <> show (length links)
@@ -103,6 +106,7 @@ Program output:
 created session: created-workspace
 initial window: api
 pane title: editor-ready
+captured pane rows: True
 same created targets: True
 captured sessions: 1 -> 2
 created window links: 1

@@ -19,6 +19,7 @@ Program scope. These operations check the generation and retain recovery.
 | Detached session creation on an existing daemon | Implemented through `LibTmux.Server` and `LibTmux.Creation`; see [the complete program](creation.md) |
 | Remove a session, window or pane | Implemented through `LibTmux.Server`; see [target removal](creation.md#remove-a-target) |
 | Input to any pane on the selected daemon | Implemented with `sendKeys`; see [pane input](mutations.md#send-input-to-a-pane) |
+| Visible pane text and bounded history | Implemented with `capturePane`; see [pane text](mutations.md#read-pane-text) |
 | Scoped terminal applications, input, rendered output and leader exit | Initial Linux slice through `LibTmux.Program`; [requirements and limits](programs.md) |
 | First-server bootstrap, ordinary window/pane creation and contextual window operations | Not implemented |
 | Query interchange and backend optimization | Not implemented |

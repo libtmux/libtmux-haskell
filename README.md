@@ -38,7 +38,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: c575ed478264fb70bbee3ee9c31fb69f2b2d7e02
+  tag: b02e076ff06a2d6cca6ff427c7ca8825b04085d7
 ```
 
 Update the package index:
@@ -316,7 +316,8 @@ created and checks that the original sessions survive. See the
 [creation and removal guide](docs/creation.md#remove-a-target).
 
 Use [`sendKeys`](docs/mutations.md#send-input-to-a-pane) to type text or send
-named keys to the new pane.
+named keys to the new pane. Use [`capturePane`](docs/mutations.md#read-pane-text)
+to read what the pane shows.
 
 ## Run a terminal application
 

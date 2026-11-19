@@ -34,6 +34,7 @@ main = getArgs >>= \case
       Tmux.setPaneTitle server created.pane "editor-ready"
       Tmux.sendKeys server created.pane (Tmux.LiteralText "Enter")
       Tmux.sendKeys server created.pane (Tmux.NamedKeys ("Enter" :| []))
+      screen <- Tmux.capturePane server created.pane Tmux.defaultPaneCapture
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -47,10 +48,10 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, before, after, rejected, remaining)
+      pure (created, before, after, rejected, remaining, Tmux.paneText screen)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, before, after, rejected, remaining) -> do
+      Right (created, before, after, rejected, remaining, screen) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
@@ -59,6 +60,7 @@ main = getArgs >>= \case
         putStrLn $ "created session: " <> Text.unpack session.name
         putStrLn $ "initial window: " <> Text.unpack label
         putStrLn $ "pane title: " <> Text.unpack pane.title
+        putStrLn $ "captured pane rows: " <> show (not (Text.null screen))
         putStrLn $ "same created targets: " <> show (session.ref == created.session && window.ref == created.window && pane.ref == created.pane)
         putStrLn $ "captured sessions: " <> show (length (Tmux.sessions before)) <> " -> " <> show (length (Tmux.sessions after))
         putStrLn $ "created window links: " <> show (length links)
