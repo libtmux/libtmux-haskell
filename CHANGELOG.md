@@ -74,6 +74,9 @@
 
 ### Changed
 
+- Match configuration, target, operand and observation failures by their
+  constructors. Synchronous backend failures retain their original cause
+  through `OperationFailed`. ([#12])
 - Publish only defined shared claims in `capabilities.json`, using
   `libtmux-capabilities/1`. Use `capabilityRegistry` for Haskell Program and
   raw-paste requirements, which are outside the shared vocabulary. ([#15])
