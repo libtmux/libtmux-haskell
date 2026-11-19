@@ -32,7 +32,7 @@ generation and retain recovery.
 | Scoped scalar settings and built-in hooks | `readOption`, `setOption`, `readHook` and `setHook`; see [scope and values](options.md#select-a-store) |
 | First-server bootstrap | Not implemented |
 | Query interchange and backend optimization | Not implemented |
-| General control-event and byte-stream APIs | Not implemented |
+| Bounded control notifications and optional pane output records | [Control scope](control.md) |
 
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
 interface. Additional commands, interchange and event contracts remain separate
