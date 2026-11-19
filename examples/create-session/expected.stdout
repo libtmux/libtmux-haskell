@@ -8,5 +8,8 @@ new window: worker
 new window panes: 2
 split exact target: True
 captured pane rows match height: True
+captured pane text
+input-ready
+Enter
 duplicate name rejected: True
 original sessions after removal: True

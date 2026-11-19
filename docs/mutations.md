@@ -142,6 +142,27 @@ The byte limit applies before UTF-8 decoding. An oversized capture raises
 also covers the enclosing reply and any hook output.
 An after-hook failure raises `PaneCaptureHookFailed` with its diagnostic.
 
+## Wait for pane text
+
+[`waitForText`](../src/LibTmux/Server.hs) looks for a case-sensitive substring.
+With `defaultPaneWait`, the first visible match is enough and the deadline
+is one second.
+
+For a fresh match, take a `capturePane` baseline before input and set
+`waitMatch = FreshSince baseline`. Use the same pane, row range and rendering.
+The wait needs either observed absence followed by presence or an additional
+occurrence. Moving an old prompt or repainting it in place supplies no new
+evidence. Pick a marker the application prints so ordinary terminal echo
+cannot satisfy the wait. The [complete example](creation.md) disables echo
+and observes its own process.
+
+The result is `PaneTextMatched`, `PaneTextTimedOut` or `PaneTextExited`.
+A timeout or exit carries the last complete capture when available. A timeout
+during a capture can also carry a [recovery owner](#keep-recovery-ownership-reachable).
+The first capture runs immediately. After a nonmatch, the library checks the
+pane and waits up to 100 ms before reading again. One deadline bounds all these
+steps.
+
 ## Targets, names and deadlines
 
 - A reference from another connection generation, or from an

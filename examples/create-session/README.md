@@ -11,8 +11,8 @@
 
 [Main.hs](Main.hs) creates a session with a direct process argv, uses its actual
 window and pane references, adds a window and splits an explicit pane. It sends
-input to that pane, reads the screen, checks duplicate name rejection and
-removes its new targets.
+input to that pane, waits for fresh text from the running process, checks
+duplicate name rejection and removes its new targets.
 It reads the detached graph after closing the Server scope.
 
 Use the [private demonstration server](../../README.md), then run from the
