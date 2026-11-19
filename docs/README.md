@@ -13,6 +13,7 @@ and the [API guide](api.md).
 | Request absolute pane and window geometry | [Resizing](resizing.md) |
 | Run a terminal application, send input and clean up its scope | [Owned programs](programs.md) |
 | Transfer a named buffer and paste it to an explicit pane | [Paste buffers](buffers.md) |
+| Check option types, hook names and release availability | [Options and hooks](options.md) |
 | Rename captured targets and handle interrupted commands | [Mutations and recovery](mutations.md) |
 | Share resources across independent Server scopes | [Shared Runtime](shared-runtime.md) |
 | Test application predicates without tmux | [Validated offline fixtures](fixtures.md) |
