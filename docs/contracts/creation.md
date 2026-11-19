@@ -3,6 +3,8 @@
 Proposed contracts; runtime qualification is incomplete. Source inspection
 covers tmux 3.3 and 3.8. Owned-server probes confirm the reuse receipts and
 name/link cases described below, not the whole lifecycle or mutation protocol.
+The [public creation guide](../creation.md) describes the implemented
+session/window creation and exact contextual split subset.
 
 ## Startup and liveness
 
@@ -77,6 +79,51 @@ explicit inputs; they do not silently inherit the read transport's fixed
 context. The public [creation API and program](../creation.md) use these
 receipts and preserve correlated recovery through pre-request failures.
 First-server bootstrap remains open.
+
+## Window creation and exact splits
+
+The shared creation lane admits `new-window` and `split-window` with the same
+five-field, nonce-qualified receipt as `new-session`. `CreatedEntities` retains
+the actual session, window, pane, link index and daemon PID; only the entities
+created by that command are new. Cancellation and following hook failure keep
+the journal reachable through `CreationRecovery`, without replaying creation.
+
+`splitPane` lowers a `WindowSlot` and `PaneRef` to
+`$session:index.%pane`. Native target resolution requires the pane to belong
+to the window currently linked at that exact slot. This avoids an active-pane
+lookup and distinguishes repeated links to the same physical window. The
+slot's session and the pane independently require the active Server generation.
+
+`createWindow` supports next-free, exact-index and relative placement. A vacant
+relative slot falls back to creation at that index; an occupied relative slot
+can shift existing indices. Selection and explicit occupied-link replacement
+retain native partial-effect semantics. Reuse, floating-pane extensions and
+newer split styling remain outside this public subset.
+
+Insertion after index 2147483647 is refused before dispatch. Native tmux 3.3a
+increments that signed index in `winlink_shuffle_up` and exits unexpectedly;
+3.8 rejects the placement. The owned endpoint counterexample held both original
+pane pidfds before dispatch and observed their exits after the 3.3a daemon
+retired. The public refusal keeps its daemon and original identities alive.
+
+The native endpoint probe checked receipt framing, literal format-looking names,
+120-by-60 geometry, a 30-cell split and wrong-slot refusal on released tmux
+3.3a and 3.8. Each probe collected its foreground daemon and independently
+observed every pane process exit. Native probes do not qualify Haskell
+cancellation or resource ownership; the public integration tests exercise those
+through the library.
+
+Pinned sources for this implementation:
+
+| Source | Relevant behavior |
+| --- | --- |
+| tmux 3.3a, [`0b355ae`](https://github.com/tmux/tmux/tree/0b355ae8114511e1ff6359272b164f1cdf718e80) | [`new-window`](https://github.com/tmux/tmux/blob/0b355ae8114511e1ff6359272b164f1cdf718e80/cmd-new-window.c), [`split-window`](https://github.com/tmux/tmux/blob/0b355ae8114511e1ff6359272b164f1cdf718e80/cmd-split-window.c), [`target resolution`](https://github.com/tmux/tmux/blob/0b355ae8114511e1ff6359272b164f1cdf718e80/cmd-find.c) |
+| tmux 3.8, [`7f2a35a`](https://github.com/tmux/tmux/tree/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53) | [`new-window`](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/cmd-new-window.c), [`split-window`](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/cmd-split-window.c) |
+| Go, [`3c0baf7`](https://github.com/libtmux/libtmux-go/tree/3c0baf7729c21439f9804164aff7aa04b307ef09) | [`exact contextual targets`](https://github.com/libtmux/libtmux-go/blob/3c0baf7729c21439f9804164aff7aa04b307ef09/tmux/exact_target.go) and [`window lifecycle`](https://github.com/libtmux/libtmux-go/blob/3c0baf7729c21439f9804164aff7aa04b307ef09/tmux/window_lifecycle.go) |
+| Rust, [`bafaa1b`](https://github.com/libtmux/libtmux-rs/tree/bafaa1b9064e127d31d64f3c747cb85d700bbc0b) | [`session window creation`](https://github.com/libtmux/libtmux-rs/blob/bafaa1b9064e127d31d64f3c747cb85d700bbc0b/crates/libtmux/src/session.rs) and [`window split`](https://github.com/libtmux/libtmux-rs/blob/bafaa1b9064e127d31d64f3c747cb85d700bbc0b/crates/libtmux/src/window.rs) |
+| Python, [`f023920`](https://github.com/tmux-python/libtmux/tree/f0239201be9bfe3df789459029a2693f77e6390e) | [`session window creation`](https://github.com/tmux-python/libtmux/blob/f0239201be9bfe3df789459029a2693f77e6390e/src/libtmux/session.py) and [`pane split`](https://github.com/tmux-python/libtmux/blob/f0239201be9bfe3df789459029a2693f77e6390e/src/libtmux/pane.py) |
+
+Sibling ports supply behavioral comparisons, not Haskell support evidence.
 
 ## Creation and reuse
 

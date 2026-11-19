@@ -7,12 +7,12 @@
 </div>
 <!-- /libtmux-logo -->
 
-# Create a detached session
+# Create a session, window and pane
 
 [Main.hs](Main.hs) creates a session with a direct process argv, uses its actual
-window and pane references, and refreshes the object graph. It checks duplicate
-name rejection, removes its new targets and reads the detached values after
-closing the Server scope.
+window and pane references, adds a window and splits an explicit pane. It sends
+input to that pane, checks duplicate name rejection and removes its new targets.
+It reads the detached graph after closing the Server scope.
 
 Use the [private demonstration server](../../README.md), then run from the
 repository root:

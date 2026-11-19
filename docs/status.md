@@ -2,8 +2,8 @@
 
 Use the current source for detached observations and typed input values.
 The API is experimental. Public operations cover session/window rename, pane
-titles, detached session creation, target removal, pane input and an initial Linux
-Program scope. These operations check the generation and retain recovery.
+titles, session/window creation, pane splits, target removal, pane input and an
+initial Linux Program scope. These operations check the generation and retain recovery.
 
 | Component | Available to consumers |
 | --- | --- |
@@ -17,10 +17,11 @@ Program scope. These operations check the generation and retain recovery.
 | Typed predicates, relationships, ordering and cardinality | Implemented through `LibTmux.Query`; see [the complete program](query.md) |
 | Session/window rename and pane title | Implemented through `LibTmux.Server`; see [the complete program](mutations.md) |
 | Detached session creation on an existing daemon | Implemented through `LibTmux.Server` and `LibTmux.Creation`; see [the complete program](creation.md) |
+| Window creation and exact contextual pane splits | Implemented through `createWindow`, `splitPane` and `WindowSlot`; see [the complete program](creation.md) |
 | Remove a session, window or pane | Implemented through `LibTmux.Server`; see [target removal](creation.md#remove-a-target) |
 | Input to any pane on the selected daemon | Implemented with `sendKeys`; see [pane input](mutations.md#send-input-to-a-pane) |
 | Scoped terminal applications, input, rendered output and leader exit | Initial Linux slice through `LibTmux.Program`; [requirements and limits](programs.md) |
-| First-server bootstrap, ordinary window/pane creation and contextual window operations | Not implemented |
+| First-server bootstrap and contextual link/selection operations | Not implemented |
 | Query interchange and backend optimization | Not implemented |
 | General control-event and byte-stream APIs | Not implemented |
 

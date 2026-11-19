@@ -1,9 +1,11 @@
-# Create a session and use its targets
+# Create sessions, windows and panes
 
 [`createSession`](../src/LibTmux/Server.hs) creates a detached session through
 an existing [`Server`](../src/LibTmux/Server.hs). It returns the actual session,
 initial window and pane references printed by tmux. Use those references for
 commands, then capture again to observe the resulting graph.
+[`createWindow` and `splitPane`](../src/LibTmux/Server.hs) use the same historical
+receipts and recovery path with explicit placement and pane targets.
 
 Start the [README's private demonstration server](../README.md), then run
 from a [provisioned checkout](../.github/CONTRIBUTING.md#toolchain):
@@ -14,7 +16,7 @@ $ cabal run --verbose=0 create-session -- \
     "$(command -v tmux)"
 ```
 
-The program starts `/bin/cat -`, sets a title and uses
+The program starts `/bin/cat -`, adds a window, splits an explicit pane and uses
 [`sendKeys`](mutations.md#send-input-to-a-pane) to send literal text followed
 by a named Enter. It checks duplicate-name rejection, removes its targets and
 checks that the original sessions survive. Captures remain readable after
@@ -57,8 +59,14 @@ main = getArgs >>= \case
       created <- Tmux.createSession server options
       Tmux.renameWindow server created.window "api"
       Tmux.setPaneTitle server created.pane "editor-ready"
-      Tmux.sendKeys server created.pane (Tmux.LiteralText "Enter")
-      Tmux.sendKeys server created.pane (Tmux.NamedKeys ("Enter" :| []))
+      added <- Tmux.createWindow server (Creation.NextFree created.session)
+        Creation.defaultWindowOptions {Creation.windowLabel = Just "worker", Creation.windowProcess = options.process}
+      split <- Tmux.splitPane server
+        (Creation.WindowSlot added.session added.windowIndex) added.pane
+        Creation.defaultSplitOptions {Creation.direction = Creation.LeftRight,
+          Creation.size = Creation.SplitPercent 25, Creation.splitProcess = options.process}
+      Tmux.sendKeys server split.pane (Tmux.LiteralText "Enter")
+      Tmux.sendKeys server split.pane (Tmux.NamedKeys ("Enter" :| []))
       after <- Tmux.capture server
       duplicate <- Tmux.tryTmux (Tmux.createSession server options)
       rejected <- case duplicate of
@@ -72,21 +80,28 @@ main = getArgs >>= \case
       paneOwner <- Tmux.createSession server disposable
       Tmux.killPane server paneOwner.pane
       remaining <- Tmux.capture server
-      pure (created, before, after, rejected, remaining)
+      pure (created, added, split, before, after, rejected, remaining)
     case result of
       Left problem -> rethrowIO problem
-      Right (created, before, after, rejected, remaining) -> do
+      Right (created, added, split, before, after, rejected, remaining) -> do
         session <- require "Created session" (Tmux.lookupSession after created.session)
         window <- require "Created window" (Tmux.lookupWindow after created.window)
         pane <- require "Created pane" (Tmux.lookupPane after created.pane)
+        worker <- require "New window" (Tmux.lookupWindow after added.window)
+        panes <- require "New window panes" (Tmux.panesForWindow after added.window)
+        splitPane <- require "Split pane" (Tmux.lookupPane after split.pane)
         links <- require "Created session links" (Tmux.linksForSession after created.session)
         label <- require "Window label" (Tmux.labelText window.name)
+        workerLabel <- require "New window label" (Tmux.labelText worker.name)
         putStrLn $ "created session: " <> Text.unpack session.name
         putStrLn $ "initial window: " <> Text.unpack label
         putStrLn $ "pane title: " <> Text.unpack pane.title
         putStrLn $ "same created targets: " <> show (session.ref == created.session && window.ref == created.window && pane.ref == created.pane)
         putStrLn $ "captured sessions: " <> show (length (Tmux.sessions before)) <> " -> " <> show (length (Tmux.sessions after))
-        putStrLn $ "created window links: " <> show (length links)
+        putStrLn $ "created session links: " <> show (length links)
+        putStrLn $ "new window: " <> Text.unpack workerLabel
+        putStrLn $ "new window panes: " <> show (length panes)
+        putStrLn $ "split exact target: " <> show (splitPane.window == added.window && split.session == added.session && split.windowIndex == added.windowIndex)
         putStrLn $ "duplicate name rejected: " <> show rejected
         putStrLn $ "original sessions after removal: " <> show
           (map (.ref) (Tmux.sessions remaining) == map (.ref) (Tmux.sessions before))
@@ -105,7 +120,10 @@ initial window: api
 pane title: editor-ready
 same created targets: True
 captured sessions: 1 -> 2
-created window links: 1
+created session links: 2
+new window: worker
+new window panes: 2
+split exact target: True
 duplicate name rejected: True
 original sessions after removal: True
 ```
@@ -141,8 +159,9 @@ because argv and environment values can contain credentials.
 [`InitialProcess`](../src/LibTmux/Creation.hs) distinguishes native modes:
 
 - `DefaultProcess` uses tmux's configured default command or default shell.
-- `ShellCommand` passes command bytes to tmux's default shell. An empty script
-  still starts a shell, which can exit immediately.
+- `ShellCommand` passes command bytes to tmux's native creation handler. Session
+  creation runs even an empty script through the default shell. An empty split
+  command instead follows tmux's processless-pane behavior.
 - `DirectCommand` executes the program with a nonempty list of arguments.
   tmux treats a single argv entry as shell input, so the type requires at
   least one argument after the executable.
@@ -151,11 +170,54 @@ There is no processless session mode. The ordinary creation operation also
 requires an existing daemon; it does not bootstrap a first server, reuse an
 existing session, attach a terminal or replace a daemon after failure.
 
+## Window placement and pane targets
+
+[`createWindow`](../src/LibTmux/Server.hs) takes a
+[`WindowPlacement`](../src/LibTmux/Creation.hs) and `WindowOptions`. Start from
+`defaultWindowOptions` and choose `NextFree session`, `At slot`, `Before slot`
+or `After slot`. A `WindowSlot session index` means the current occupant of
+that position at execution time. It does not freeze a captured window identity.
+On a vacant relative slot, tmux creates at that index without shifting links.
+`After` refuses index 2147483647 before dispatch because no larger signed
+window index exists.
+
+The default `RefuseOccupied` policy reports a native rejection when an exact
+slot is occupied. `ReplaceOccupied` removes that link before creating a new
+window. Other links can keep the old physical window alive. Insertion can
+shift indices and replacement can remove a link before a later failure; neither
+mode promises rollback. Session groups can propagate these effects.
+
+`windowLabel` and `windowDirectory` stay literal. Window creation inherits the
+target session's geometry; `windowEnvironment` and `splitEnvironment` override
+only the new pane's environment. `windowProcess` and `splitProcess` choose its
+native initial process.
+`selectWindow = True` requests selection in the target session. Replacing its current
+link can force selection even when the option is false. Reuse by name remains
+outside this API because native reuse can return no creation receipt.
+
+[`splitPane`](../src/LibTmux/Server.hs) takes a `WindowSlot`, an explicit
+`PaneRef` and `SplitOptions`. The pane must belong to that slot's physical
+window when tmux executes the command. This also distinguishes two indices
+linked to the same physical window. A missing pane or changed slot occupant
+fails without choosing another active pane.
+
+Start from `defaultSplitOptions`. `LeftRight` splits across columns;
+`TopBottom` splits across rows. `before` puts the new pane left or above the
+anchor; `fullWindow` spans the perpendicular window dimension. `SplitCells`
+and `SplitPercent` request the new pane's extent. Percentages are 1 through 100;
+cells and link indices fit tmux's signed 32-bit domain. Native border and
+layout constraints can clamp or refuse a requested size. Capture again to
+read actual dimensions. `selectPane` requests the new pane as active; `zoom`
+zooms the window or keeps it zoomed. Floating-pane extensions remain separate.
+
 ## Receipts and fresh observations
 
-[`CreatedSession`](../src/LibTmux/Creation.hs) is a historical receipt. It contains
-opaque references from this Server generation, the initial window index and
-the daemon PID reported with them. It is not a snapshot or a liveness check.
+[`CreatedEntities`](../src/LibTmux/Creation.hs) is a historical receipt. It contains
+opaque references from this Server generation, the execution-time window index
+and the daemon PID reported with them. It is not a snapshot or a liveness check.
+`CreatedSession`, `CreatedWindow` and `CreatedPane` name the results of each
+operation. Only the session command creates all three entities; window creation
+retains its existing parent session, and a split retains its existing window.
 An after-hook can rename or destroy a target before creation returns. A receipt
 also does not prove that the initial process successfully executed or that a
 hook's background work finished.
@@ -169,10 +231,11 @@ selects a replacement by name.
 
 ## Failure, deadlines and recovery
 
-[`createSessionWith`](../src/LibTmux/Server.hs) accepts `MutationOptions`.
+[`createSessionWith`, `createWindowWith` and `splitPaneWith`](../src/LibTmux/Server.hs)
+accept `MutationOptions`.
 Its positive timeout, at most ten seconds, covers context acquisition,
 admission and the complete command response; the default is one second.
-It does not bound the lifetime of the created session or its process.
+It does not bound the lifetime of the created entities or their processes.
 
 Invalid options raise `InvalidMutationArgument` before admission. Encoded
 command arguments fit a 16,364-byte message, including terminators and literal
@@ -206,7 +269,7 @@ does not prove that creation had no effect.
 
 If logical uncertainty remains, `detachCreationRecovery` explicitly relinquishes
 that responsibility while preserving physical cleanup owners. It does not kill
-the created session. Handle any scope-level cleanup owners separately through
+the created entities. Handle any scope-level cleanup owners separately through
 [`cleanupRecoveries`](../src/LibTmux/Server.hs). The
 [shared Runtime guide](shared-runtime.md) explains ownership across handles;
 the [mutation guide](mutations.md) describes the common outcome vocabulary.
