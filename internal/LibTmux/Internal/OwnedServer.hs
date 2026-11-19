@@ -16,6 +16,7 @@
 module LibTmux.Internal.OwnedServer where
 
 import Control.Concurrent (forkIO, myThreadId)
+import Control.Concurrent.Async (race)
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Control.Concurrent.STM
 import Control.Exception
@@ -30,6 +31,7 @@ import Data.ByteString.Char8 qualified as Ascii
 import Data.Char (isSpace)
 import Data.IORef
 import Data.IntMap.Strict qualified as IntMap
+import Data.IntSet qualified as IntSet
 import Data.Maybe (isJust, isNothing, listToMaybe)
 import Foreign.C.Error (eAGAIN, eBADF, eCONNREFUSED, eNOENT, eSRCH)
 import Foreign.C.String (CString)
@@ -59,6 +61,7 @@ import System.Timeout (timeout)
 foreign import ccall safe "libtmux_process_peer_pidfd" cPeerPidfd :: CString -> IO CInt
 foreign import ccall safe "libtmux_process_anchor" cAnchor :: CString -> IO CInt
 foreign import ccall unsafe "libtmux_process_daemon_features" cDaemonFeatures :: IO CInt
+foreign import ccall unsafe "libtmux_process_watch_start" cWatchStart :: CString -> IO CInt
 foreign import ccall unsafe "libtmux_process_watch_removals" cWatchRemovals :: CString -> IO CInt
 foreign import ccall unsafe "libtmux_process_watch_drain" cWatchDrain :: CInt -> IO CInt
 foreign import ccall unsafe "libtmux_process_lock_held" cLockHeld :: CString -> IO CInt
@@ -318,8 +321,8 @@ cleanup owner = do
 -- | The phases that end the physical daemon: its start client, then the daemon itself.
 daemonPhases :: Owner -> IO ()
 daemonPhases owner = do
-  forM_ owner.scope $ \(_, serverOwner) -> step owner PhaseClient (endClient owner serverOwner)
   step owner PhaseDaemon (endDaemon owner)
+  forM_ owner.scope $ \(_, serverOwner) -> step owner PhaseClient (endClient owner serverOwner)
 
 step :: Owner -> Phase -> IO () -> IO ()
 step owner point work = owner.probe.phase point >> work
@@ -333,17 +336,8 @@ run owner action = case owner.scope of
     names <- placement owner
     present <- statusIfPresent names.socket
     forM_ present (\_ -> throwIO (AlreadyPresent names.socket))
-    ticket <- mask_ $ do
-      started <- P.submit B.Ordinary probe.hooks (R.serverOwnerPool serverOwner)
-        (startSpec executable names.socket) ""
-      journal owner (\held -> held {client = Just started, launched = True})
-      pure started
-    probe.stage ClientLaunched names
-    completed <- timeout (probe.startMs * 1000) (P.await ticket) >>= maybe (throwIO StartTimedOut) pure
-    forM_ completed.launchFailure (throwIO . StartRefused)
-    unless (completed.exit == Just (N.Exited 0)) (throwIO (StartFailed completed.exit completed.errors))
+    pidfd <- startForeground owner names serverOwner
     probe.stage ClientExited names
-    pidfd <- converge owner names >>= maybe (throwIO NoDaemon) pure
     probe.stage DaemonOwned names
     server <- R.adoptServerOwnerWith probe.pinStage runtime serverOwner names.socket names.directory
     reported <- verifyPinned probe runtime server executable pidfd
@@ -370,7 +364,60 @@ placement owner = case owner.probe.occupied of
 
 startSpec :: ByteString -> ByteString -> N.Spec
 startSpec executable socket = N.spec executable
-  [executable, "-u", "-S", socket, "-f", "/dev/null", "start-server", ";", "set-option", "-g", "exit-empty", "off"]
+  [executable, "-D", "-u", "-S", socket, "-f", "/dev/null"]
+
+-- SPIKE: the existing pool owns the native birth, bounded streams and collection.
+-- The joint owner takes a separate pidfd for retirement and verifies that the
+-- listener is that direct process; native tmux -D does not daemonize.
+startForeground :: Owner -> Names -> R.ServerOwner -> IO CInt
+startForeground owner names serverOwner = bracket arm N.close $ \watch -> do
+  ready <- timeout (owner.probe.startMs * 1000) $ do
+    ticket <- mask_ $ do
+      started <- P.submit B.Ordinary owner.probe.hooks (R.serverOwnerPool serverOwner)
+        (startSpec owner.executable names.socket) ""
+      journal owner (\held -> held {client = Just started})
+      pure started
+    owner.probe.stage ClientLaunched names
+    atomically (readTMVar ticket.launchEvidence) >>= \case
+      P.LaunchRefused failure -> throwIO (StartRefused failure)
+      P.NativeStarted -> pure ()
+    descriptor <- mask_ $ withMVar ticket.signalLock $ \_ -> do
+      child <- readIORef ticket.child
+      descriptors <- readIORef ticket.descriptors
+      case child of
+        Just native | IntSet.member (fromIntegral native.pidfd) descriptors -> do
+          copy <- cDup native.pidfd
+          when (copy < 0) (N.raise (negate copy))
+          journal owner (\held -> held {pidfd = Just copy})
+          pure (Just copy)
+        _ -> pure Nothing
+    case descriptor of
+      Nothing -> P.await ticket >>= \done -> throwIO (StartFailed done.exit done.errors)
+      Just fd -> race (P.await ticket) (listener watch fd) >>= \case
+        Left done -> throwIO (StartFailed done.exit done.errors)
+        Right () -> pure fd
+  maybe (throwIO StartTimedOut) pure ready
+  where
+    arm = Bytes.useAsCString names.directory $ \directory -> cWatchStart directory >>= \fd ->
+      if fd < 0 then N.raise (negate fd) else pure fd
+    listener watch direct = mask_ $ anchoredPeer names.socket >>= \case
+      Right (anchor, peer) -> do
+        (expected, observed) <- finally ((,) <$> pidfdPid direct <*> pidfdPid peer) (N.close peer)
+        if isJust expected && expected == observed
+          then journal owner (\held -> held {socketAnchor = Just anchor})
+          else do
+            N.close anchor
+            journal owner (\held -> held {launched = True})
+            throwIO (DaemonMismatch (maybe 0 id observed) expected)
+      Left problem
+        | problem == N.errno eNOENT || problem == N.errno eCONNREFUSED -> do
+            threadWaitRead (Fd watch)
+            rc <- cWatchDrain watch
+            when (rc < 0) (N.raise (negate rc))
+            listener watch direct
+        | problem == N.errno eAGAIN -> throwIO ListenerBusy
+        | otherwise -> N.raise problem
+
 
 -- | Converge on the listener's pidfd. The start client must already be dead, so
 -- no new daemon can appear: a daemon still before listen() holds the lock, and
@@ -500,6 +547,9 @@ endDaemon owner = do
               | otherwise -> pure Nothing
     forM_ found (retire owner)
   releaseAnchor owner
+  latest <- readIORef owner.held
+  when latest.launched $
+    uncertain owner "the foreground launcher changed identity; startup descendants remain unaccounted for"
 
 -- | The listener's pidfd, or the uncertainty that keeps the owner: no listener found is not
 -- proof that the launched client's daemon is gone.
