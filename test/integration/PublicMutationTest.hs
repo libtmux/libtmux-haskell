@@ -362,7 +362,7 @@ tests = testGroup "public mutation API"
         snapshot <- Tmux.capture server
         session <- one (Tmux.sessions snapshot)
         let name = "-LIBTMUX_EXACT_ENVIRONMENT"
-            value = "caf" <> Bytes.pack [255] <> "\nvalue=\"#{pid};\\\n"
+            value = "caf" <> Bytes.singleton '\255' <> "\nvalue=\"#{pid};\\\n"
             global = Tmux.GlobalEnvironment
             local = Tmux.SessionEnvironment session.ref
             readEntry scope = Tmux.getEnvironment server scope name
