@@ -345,6 +345,8 @@ class Guardian:
         if not chunk:
             self.world.selector.unregister(fd)
             del self.streams[fd]
+            self.world.all_fds.remove(fd)
+            os.close(fd)
 
     def spawn(self, argv: list[str], hold: bool = False) -> int:
         key = self.request_spawn(argv, hold)
@@ -374,10 +376,15 @@ class Guardian:
     def result(self, key: int, expected: int = 0) -> bytes:
         self.world.until(lambda: key in self.statuses and all(value[0] != key for value in self.streams.values()),
                          "one collected command status and both stream EOFs")
-        status = self.statuses[key]
-        require(os.waitstatus_to_exitcode(status) == expected, f"unexpected command status {status}")
-        require(exited(self.children[key]), "command status preceded physical exit")
+        self.status(key, expected)
         return bytes(self.outputs[key][0])
+
+    def status(self, key: int, expected: int = 0) -> None:
+        self.world.until(lambda: key in self.statuses, "one collected command status")
+        status = self.statuses[key]
+        require(os.waitstatus_to_exitcode(status) == expected,
+                f"unexpected command status {status}: {bytes(self.outputs[key][1])!r}")
+        require(exited(self.children[key]), "command status preceded physical exit")
 
     @property
     def complete(self) -> bool:
@@ -390,7 +397,8 @@ class Guardian:
         self.send(STOP)
         if release:
             self.send(RELEASE)
-        self.world.until(lambda: self.complete, "full subtree proof plus guardian and held child exits")
+        self.world.until(lambda: self.complete and not self.streams,
+                         "full subtree proof, guardian/child exits and all client stream EOFs")
         require(self.process.wait(timeout=0) == 0, "guardian failed after its proof")
 
     def qualify(self, names: Names) -> dict[str, Any]:
@@ -401,7 +409,7 @@ class Guardian:
         require(command(["show-options", "-gv", "exit-empty"]).strip() == b"off", "empty daemon can exit")
         require(command(["show-options", "-gqv", "@fixture-loaded"]).strip() == b"", "user config loaded")
         require(not (self.world.root / "user-config-ran").exists(), "user config job executed")
-        require(not command(["list-windows", "-a"]), "empty startup created a window")
+        require(not command(["list-sessions", "-F", "#{session_id}"]), "empty startup created a session")
         return {"daemon_pid": pid, "empty_daemon": True, "exit_empty": "off", "user_config_skipped": True}
 
 
@@ -415,8 +423,10 @@ def normal(world: World, shape: str) -> dict[str, Any]:
     if extra is not None:
         require(not exited(extra), "extra launcher child was not alive at admission")
     if shape == "fork-exec":
-        guardian.result(key)
+        guardian.status(key)
         require(not exited(daemon), "collecting the launcher killed the adopted daemon")
+        require(any(value[0] == key for value in guardian.streams.values()),
+                "launcher control lacks the daemon's inherited open streams")
     guardian.finish()
     require(exited(daemon), "admitted daemon survived full proof")
     if extra is not None:
@@ -523,7 +533,7 @@ def concurrent(world: World) -> dict[str, Any]:
     left_daemon, right_daemon = first.adopt(left_peer), second.adopt(right_peer)
     require(left_daemon is not None and right_daemon is not None, "concurrent own adoption failed")
     require(first.adopt(right_peer) is None and second.adopt(left_peer) is None, "foreign guardian child was adopted")
-    first.result(first_start)
+    first.status(first_start)
     world.until(lambda: second_start in second.events, "concurrent second command publication")
     pending = [(guardian, guardian.request_spawn(guardian.command("native", "unused", ["-S", str(names.socket),
                "display-message", "-p", "#{pid}"]))) for guardian, names in [(first, left), (second, right)] * 3]
