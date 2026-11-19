@@ -68,6 +68,8 @@
 
 ### Changed
 
+- Import `LibTmux.Recovery` to inspect operation owners or resume cleanup.
+  `tryTmux` still catches contextual library failures through `LibTmux`. ([#12])
 - Share opaque creation identities through `CreatedEntities`; `CreatedSession`,
   `CreatedWindow` and `CreatedPane` name each command's result. Window and pane
   receipts include existing parents; cleanup must target the entity created
