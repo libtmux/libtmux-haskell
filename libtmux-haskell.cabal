@@ -130,6 +130,7 @@ extra-source-files:
   scripts/capture_benchmark/capture_benchmark.py
   scripts/capture_benchmark/tests/test_capture_benchmark.py
   bench/results/capture-2026-11-08.json
+  bench/results/capture-2026-11-19.json
   examples/catalogue.json
   examples/typed-values/Main.hs
   examples/typed-values/README.md
