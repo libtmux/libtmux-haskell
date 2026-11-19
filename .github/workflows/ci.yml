@@ -80,6 +80,10 @@ jobs:
             ~/.cabal/packages
           key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
           restore-keys: haskell-ubuntu26-x64-9.14.1-3.18.2.0-
+      - name: Use HTTPS for the Cabal index
+        run: >-
+          cabal user-config update
+          --augment $'repository hackage.haskell.org\n  url: https://hackage.haskell.org/\n  secure: True'
       - name: Update the Cabal package index
         run: cabal update
       - name: Build dependencies
@@ -189,6 +193,10 @@ jobs:
         with:
           ref: ${{ matrix.tmux }}
           configure-args: --disable-utf8proc
+      - name: Use HTTPS for the Cabal index
+        run: >-
+          cabal user-config update
+          --augment $'repository hackage.haskell.org\n  url: https://hackage.haskell.org/\n  secure: True'
       - name: Update the Cabal package index
         run: cabal update
       - name: Build integration dependencies
@@ -260,6 +268,10 @@ jobs:
         with:
           ref: ${{ matrix.client }}
           configure-args: --disable-utf8proc
+      - name: Use HTTPS for the Cabal index
+        run: >-
+          cabal user-config update
+          --augment $'repository hackage.haskell.org\n  url: https://hackage.haskell.org/\n  secure: True'
       - name: Update the Cabal package index
         run: cabal update
       - name: Build refusal dependencies
