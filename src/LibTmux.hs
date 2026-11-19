@@ -3,8 +3,9 @@
 -- field access from "LibTmux.Snapshot" perform no external operations.
 -- 'renameSession', 'renameWindow' and 'setPaneTitle' act on explicit references
 -- in IO; detached observations change only when acquired again with 'capture'.
--- 'createSession' returns the actual initial references; "LibTmux.Creation"
--- describes its options and historical receipt. Capture again for observations.
+-- 'createSession', 'createWindow' and 'splitPane' return historical identities;
+-- "LibTmux.Creation" describes their options and explicit link context.
+-- Capture again for observations.
 --
 -- "LibTmux.Server" documents ownership and failure recovery. Typed IDs,
 -- checked dimensions and release admission have their own pure modules.

@@ -2,7 +2,7 @@
 -- The shared mutation runner owns deadline and operation correlation; this
 -- layer preserves the journal when Timeout consumes an allocation exception.
 module LibTmux.Internal.Creation
-  ( performCreation, CreationRecovery, recoveryReceipt, observedReceipt
+  ( performCreation, performCommandCreation, CreationRecovery, recoveryReceipt, observedReceipt
   , inspectRecovery, resumeRecovery, awaitRecovery, detachRecovery
   ) where
 
@@ -38,7 +38,7 @@ instance ExceptionAnnotation CreationRecovery
 recoveryReceipt :: CreationRecovery -> R.ReadReceipt
 recoveryReceipt (CreationRecovery recovery _) = M.recoveryReceipt recovery
 
-observedReceipt :: CreationRecovery -> STM (Maybe G.CreatedSession)
+observedReceipt :: CreationRecovery -> STM (Maybe G.CreatedEntities)
 observedReceipt recovery@(CreationRecovery _ journal) = do
   observed <- maybe (pure Nothing) R.journalReceipt journal
   let !generation = R.receiptGeneration (recoveryReceipt recovery)
@@ -57,7 +57,11 @@ detachRecovery :: CreationRecovery -> STM Bool
 detachRecovery (CreationRecovery recovery _) = M.detachRecovery recovery
 
 performCreation :: P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> ByteString -> SessionOptions -> IO G.CreatedSession
-performCreation hooks duration runtime server executable options = mask $ \restore -> do
+performCreation hooks duration runtime server executable options =
+  performCommandCreation hooks duration runtime server executable (C.NewSession options)
+
+performCommandCreation :: P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> ByteString -> C.CreationCommand -> IO G.CreatedEntities
+performCommandCreation hooks duration runtime server executable command = mask $ \restore -> do
   journal <- newIORef Nothing
   let retain failure@(ExceptionWithContext context (_ :: SomeException)) = do
         writeIORef journal (listToMaybe (Context.getExceptionAnnotations @R.CreationJournal context))
@@ -70,7 +74,7 @@ performCreation hooks duration runtime server executable options = mask $ \resto
         left <- remainingTime
         let context = (N.spec executable []) {N.cwd = cwd, N.env = [key <> "=" <> value | (key, value) <- environment]}
         created <- catchNoPropagate
-          (R.createSessionWith hooks left runtime server context options) retain
+          (R.createWith hooks left runtime server context command) retain
         let !observed = R.creationJournal created
         writeIORef journal (Just observed)
         pure (R.creationRequest created)
@@ -89,8 +93,8 @@ performCreation hooks duration runtime server executable options = mask $ \resto
       generation = Pin.pinGeneration (R.serverPin server)
   catchNoPropagate (restore (M.performRequest duration runtime server submit decode)) annotate
 
-createdValue :: G.Generation -> C.SessionReceipt -> G.CreatedSession
-createdValue generation receipt = G.CreatedSession receipt.serverPid
+createdValue :: G.Generation -> C.SessionReceipt -> G.CreatedEntities
+createdValue generation receipt = G.CreatedEntities receipt.serverPid
   (G.SessionRef generation receipt.sessionId) (G.WindowRef generation receipt.windowId)
   (G.PaneRef generation receipt.paneId) receipt.windowIndex
 
