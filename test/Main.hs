@@ -3,6 +3,7 @@ module Main (main) where
 import BudgetTest qualified
 import SchedulerTest qualified
 import FrameTest qualified
+import ControlFramesTest qualified
 import FieldTest qualified
 import RecordTest qualified
 import GraphTest qualified
@@ -18,4 +19,4 @@ import OptionCatalogueTest qualified
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "libtmux" [CapabilitiesTest.tests, OptionCatalogueTest.tests, SchedulerTest.tests, BudgetTest.tests, FrameTest.tests, FieldTest.tests, RecordTest.tests, GraphTest.tests, GraphProperties.tests, TopologyTest.tests, QueryTest.tests, QueryProperties.tests, CommandTest.tests, CreationTest.tests, VersionProbeTest.tests])
+main = defaultMain (testGroup "libtmux" [CapabilitiesTest.tests, OptionCatalogueTest.tests, SchedulerTest.tests, BudgetTest.tests, FrameTest.tests, ControlFramesTest.tests, FieldTest.tests, RecordTest.tests, GraphTest.tests, GraphProperties.tests, TopologyTest.tests, QueryTest.tests, QueryProperties.tests, CommandTest.tests, CreationTest.tests, VersionProbeTest.tests])

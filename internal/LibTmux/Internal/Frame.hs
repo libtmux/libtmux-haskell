@@ -14,11 +14,32 @@ module LibTmux.Internal.Frame
   , decodeEscapedRecordField
   , decodeScalar
   , decodeEscapedScalar
+  , isControlStamp
   ) where
 
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
+import Data.ByteString.Char8 qualified as Ascii
 import Data.Word (Word8)
+
+-- | The common timestamp, command number and origin fields of a control guard.
+-- Origin zero marks initial argv commands, and one marks control input.
+isControlStamp :: ByteString -> Bool
+isControlStamp stamp
+  | Bytes.length stamp > 64 = False
+  | otherwise = case Ascii.words stamp of
+      [seconds, number, origin] ->
+        (origin == "0" || origin == "1")
+          && Bytes.intercalate " " [seconds, number, origin] == stamp
+          && decimal 9223372036854775807 seconds && decimal 4294967295 number
+      _ -> False
+  where
+    decimal maximumValue bytes = not (Bytes.null bytes) && Bytes.length bytes <= 20
+      && (bytes == "0" || Bytes.head bytes /= 48)
+      && Bytes.all (\byte -> byte >= 48 && byte <= 57) bytes
+      && case Ascii.readInteger bytes of
+        Just (value, "") -> value <= maximumValue
+        _ -> False
 
 newtype Nonce = Nonce ByteString
   deriving stock (Eq, Show)
