@@ -134,7 +134,7 @@ tests = testGroup "public window and pane creation"
                  Tmux.splitPane otherServer (slot base) pane.ref splitOptions,
                  Tmux.splitPane otherServer (Creation.WindowSlot session.ref base.windowIndex) base.pane splitOptions] $ \request ->
             Tmux.tryTmux request >>= \case
-              Left (ExceptionWithContext context (Tmux.InvalidTarget _)) ->
+              Left (ExceptionWithContext context Tmux.InvalidTarget) ->
                 assertBool "foreign target retained creation" (null (Recovery.creationRecoveries context))
               _ -> assertFailure "foreign generation was admitted"
           after <- Tmux.capture otherServer

@@ -1,6 +1,7 @@
 -- | Exception and recovery policy for an owned Runtime scope.
 module LibTmux.Internal.Scope
   ( TmuxException (..), CleanupStatus (..), CleanupRecovery
+  , ConfigurationProblem (..), TimeoutKind (..), ObservationProblem (..)
   , runScope, runServerScope, cleanupRecoveries, cleanupFailure, cleanupObservation, inspectCleanup, resumeCleanup
   , awaitCleanup, detachUnresolved, operational
   ) where
@@ -12,13 +13,11 @@ import Control.Exception.Context qualified as Context
 import Data.ByteString (ByteString)
 import Data.Maybe (catMaybes, isJust)
 import Data.Text (Text)
-import LibTmux.Internal.Budget qualified as B
-import LibTmux.Internal.Capture qualified as C
+import LibTmux.Internal.Command (ArgumentError)
+import LibTmux.Internal.Graph (GraphError)
 import LibTmux.Internal.Process qualified as P
-import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
-import LibTmux.Internal.SocketPin qualified as Pin
 import LibTmux.Options (OptionError)
 import LibTmux.Version qualified as Version
 
@@ -28,8 +27,8 @@ import LibTmux.Version qualified as Version
 data TmuxException
   = ServerClosed -- ^ Admission through the retained Server handle has closed.
   | RuntimeClosed -- ^ Admission through the retained Runtime has closed.
-  | InvalidConfiguration !Text -- ^ Configuration failed before acquisition.
-  | InvalidObservation !Text -- ^ Acquired metadata failed final validation.
+  | InvalidConfiguration !ConfigurationProblem -- ^ Configuration failed before acquisition.
+  | InvalidObservation !ObservationProblem -- ^ Acquired metadata failed final validation.
   | PaneCaptureRejected !ByteString -- ^ tmux rejected the selected pane or range.
   | PaneCaptureHookFailed !ByteString -- ^ An after-hook failed following a successful capture.
   | PaneTextTooLarge !Int -- ^ Capture exceeded the requested byte limit.
@@ -40,17 +39,41 @@ data TmuxException
   | SettingReadRejected !ByteString -- ^ tmux refused the selected option or hook query.
   | SettingReadHookFailed !ByteString -- ^ An after-hook failed following a successful query.
   | SettingReadTooLarge !Int -- ^ The setting reply exceeded the byte limit.
-  | InvalidTarget !Text -- ^ Target belongs to a different connection or an offline fixture.
+  | InvalidTarget -- ^ Target belongs to a different connection or an offline fixture.
   | UnsupportedTmuxVersion !Version.VersionError -- ^ Daemon release is older than the supported minimum.
   | IncompatibleTmuxClientProtocol -- ^ The daemon rejected the selected client's older-server protocol. No daemon release was observed.
-  | InvalidMutationArgument !Text -- ^ Invalid command operand; no command was admitted.
+  | InvalidMutationArgument !ArgumentError -- ^ Invalid command operand; no command was admitted.
   | MutationRejected !ByteString -- ^ tmux rejected the primary command; bounded diagnostic bytes.
   | MutationAppliedWithErrors !ByteString -- ^ The primary command ran, then a command hook failed.
   | MutationTimedOut -- ^ The deadline elapsed; a correlated recovery may retain an unknown outcome.
-  | OperationFailed !SomeException -- ^ Known backend failure with its original cause.
+  | OperationFailed !SomeException -- ^ Synchronous backend failure with its original cause.
   | CleanupFailed !CleanupStatus !(Maybe SomeException) -- ^ Cleanup remained incomplete or its worker could not start.
   deriving stock (Show)
 instance Exception TmuxException
+
+-- | Which public setting supplied an invalid deadline.
+data TimeoutKind = CaptureTimeout | MutationTimeout | PaneWaitTimeout
+  deriving stock (Eq, Show)
+
+-- | A caller can correct these failures before trying the operation again.
+data ConfigurationProblem
+  = TimeoutOutOfRange !TimeoutKind
+  | InvalidReadArgument !ArgumentError
+  | EmptyPaneWaitText
+  | PaneWaitBaselineMismatch
+  | PosixPathsRequired
+  | ExecutableNotFound
+  | InvalidLaunchConfiguration !Text
+  deriving stock (Eq, Show)
+
+-- | A completed native response failed validation.
+data ObservationProblem
+  = InvalidSnapshot !GraphError
+  | EnvironmentReplyTooLarge !Int
+  | EnvironmentEntryMissing
+  | OptionReplyTypeMismatch !Text
+  | PaneTextInvalidUtf8
+  deriving stock (Eq, Show)
 
 -- | Local observations of the selected physical and logical responsibility.
 -- Each inspection returns new metadata; it performs no tmux operation.
@@ -184,16 +207,6 @@ observed report =
 
 operational :: IO a -> IO a
 operational action = catchNoPropagate action $ \original@(ExceptionWithContext context (problem :: SomeException)) ->
-  let known = or
-        [ isJust (fromException @IOException problem)
-        , isJust (fromException @Pin.PinError problem)
-        , isJust (fromException @R.ReadError problem)
-        , isJust (fromException @C.CaptureError problem)
-        , isJust (fromException @B.LimitError problem)
-        , isJust (fromException @P.OwnerError problem)
-        , isJust (fromException @N.Failure problem)
-        , isJust (fromException @S.AdmissionError problem)
-        ]
-  in if known && not (isJust (fromException @SomeAsyncException problem))
-       then rethrowIO (ExceptionWithContext context (OperationFailed problem))
-       else rethrowIO original
+  if isJust (fromException @SomeAsyncException problem) || isJust (fromException @TmuxException problem)
+    then rethrowIO original
+    else rethrowIO (ExceptionWithContext context (OperationFailed problem))

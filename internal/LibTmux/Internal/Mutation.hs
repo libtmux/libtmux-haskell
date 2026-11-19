@@ -25,7 +25,7 @@ import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Runtime qualified as R
-import LibTmux.Internal.Scope (TmuxException (..))
+import LibTmux.Internal.Scope (TmuxException (..), ConfigurationProblem (..), TimeoutKind (..))
 import System.Timeout (timeout)
 
 -- | Reachable ownership for one failed or cancelled mutation. The receipt
@@ -65,7 +65,7 @@ performMutation hooks duration runtime server executable mutation =
         forM_ names $ \name -> do
           left <- remainingTime
           valid <- await (R.validateKeyWith hooks left runtime server executable name)
-          unless valid (throwIO (InvalidMutationArgument "pane.key: unknown tmux key"))
+          unless valid (throwIO (InvalidMutationArgument (C.InvalidOperand "pane.key" "unknown tmux key")))
       _ -> pure ()
     left <- remainingTime
     await (R.mutateWith hooks left runtime server executable mutation) >>= checkMutationReply
@@ -92,7 +92,7 @@ performRequests
   -> IO result
 performRequests duration runtime server run = mask $ \restore -> do
   when (duration < 1 || duration > 10000000)
-    (throwIO (InvalidConfiguration "mutation timeout must be positive and at most ten seconds"))
+    (throwIO (InvalidConfiguration (TimeoutOutOfRange MutationTimeout)))
   receipt <- newIORef Nothing
   let annotate (ExceptionWithContext context (problem :: SomeException)) = do
         current <- readIORef receipt
@@ -108,9 +108,9 @@ performRequests duration runtime server run = mask $ \restore -> do
             writeIORef receipt (listToMaybe (Context.getExceptionAnnotations @R.ReadReceipt context))
             case (fromException @R.ReadError problem, fromException @N.Failure problem) of
               (Just (R.InvalidCommandOperands invalid), _) -> rethrowIO
-                (ExceptionWithContext context (toException (InvalidMutationArgument (argumentError invalid))))
+                (ExceptionWithContext context (toException (InvalidMutationArgument invalid)))
               (_, Just (N.InvalidInput reason)) -> rethrowIO
-                (ExceptionWithContext context (toException (InvalidConfiguration ("native launch: " <> Text.pack reason))))
+                (ExceptionWithContext context (toException (InvalidConfiguration (InvalidLaunchConfiguration (Text.pack reason)))))
               _ -> rethrowIO failure
         let !current = R.readReceipt request
         writeIORef receipt (Just current)
@@ -131,10 +131,6 @@ performRequests duration runtime server run = mask $ \restore -> do
           Nothing -> throwIO MutationTimedOut
           Just value -> remaining deadline >> pure value
   catchNoPropagate (restore timed) annotate
-  where
-    argumentError (C.NulOperand field) = field <> " contains NUL"
-    argumentError (C.EncodedCommandTooLarge field) = field <> " exceeds the command size limit"
-    argumentError (C.InvalidOperand field reason) = field <> ": " <> reason
 
 remaining :: Word64 -> IO Int
 remaining deadline = do

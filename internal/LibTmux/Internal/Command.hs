@@ -131,7 +131,8 @@ data ProgramIdentity = ProgramIdentity !Id.SessionId !Id.WindowId !Id.PaneId !In
 instance Show ProgramCommand where
   show _ = "ProgramCommand"
 
--- | Refusal before a command tail exists, carrying its catalogue field key.
+-- | Why a command operand was refused before dispatch. Each constructor
+-- carries the field key. 'InvalidOperand' also carries a diagnostic.
 data ArgumentError
   = NulOperand !Text | EncodedCommandTooLarge !Text | InvalidOperand !Text !Text
   deriving stock (Eq, Show)
