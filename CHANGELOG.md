@@ -4,6 +4,11 @@
 
 ### Added
 
+- Start an empty private daemon with `withOwnedServer`. Scope exit waits for
+  its descendants and retires its directory. Use `killServer` for explicit
+  retirement of the admitted daemon, including through a borrowed handle with
+  a verified process descriptor. Both paths require Linux peer pidfds.
+  ([#34], [#28])
 - Create sessions with `createSession`, windows with `createWindow`, and panes
   with `splitPane`. Keep the returned references for later commands. Creation
   recovery preserves identities reported before a deadline, cancellation or
@@ -103,6 +108,7 @@
 [#31]: https://github.com/libtmux/libtmux-haskell/issues/31
 [#32]: https://github.com/libtmux/libtmux-haskell/issues/32
 [#33]: https://github.com/libtmux/libtmux-haskell/issues/33
+[#34]: https://github.com/libtmux/libtmux-haskell/issues/34
 [#41]: https://github.com/libtmux/libtmux-haskell/issues/41
 [#47]: https://github.com/libtmux/libtmux-haskell/issues/47
 [#48]: https://github.com/libtmux/libtmux-haskell/issues/48
