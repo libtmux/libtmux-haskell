@@ -6,8 +6,10 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.Text qualified as Text
 import LibTmux.Id qualified as Id
+import LibTmux.Creation qualified as Creation
 import LibTmux.Internal.Command qualified as C
 import LibTmux.Internal.Frame qualified as F
+import LibTmux.Internal.Graph qualified as G
 import LibTmux.Snapshot qualified as Snapshot
 import LibTmux.Value qualified as Value
 import System.OsString.Posix qualified as Os
@@ -16,7 +18,70 @@ import Test.Tasty.HUnit (testCase, (@?=))
 
 tests :: TestTree
 tests = testGroup "session creation receipts"
-  [ testCase "default creation keeps tmux process defaults and requests detached receipts" $ do
+  [ testCase "window placement keeps exact session and index context" $ do
+      nonce <- require (F.parseNonce token)
+      session <- G.SessionRef (G.FixtureGeneration "creation") <$> require (Id.parseSessionId "$1")
+      index <- require (Value.mkWindowIndex 4)
+      let slot = Creation.WindowSlot session index
+          prefix = ["new-window", "-d", "-P", "-F", C.sessionCreationFormat nonce, "-t"]
+      forM_ [(Creation.NextFree session, ["$1:"]),
+             (Creation.At slot, ["$1:4"]),
+             (Creation.Before slot, ["$1:4", "-b"]),
+             (Creation.After slot, ["$1:4", "-a"])] $ \(placement, target) ->
+        C.compileCreation nonce (C.NewWindow placement Creation.defaultWindowOptions) @?=
+          Right (prefix <> target <> ["--"])
+  , testCase "window names and cwd expand literally while command and environment retain bytes" $ do
+      nonce <- require (F.parseNonce token)
+      session <- G.SessionRef (G.FixtureGeneration "creation") <$> require (Id.parseSessionId "$1")
+      let settings = Creation.defaultWindowOptions
+            { Creation.name = Just "#{pid};"
+            , Creation.workingDirectory = Just (Os.fromBytestring "/tmp/#{pid};")
+            , Creation.environment = [(Os.fromBytestring "KEY", Os.fromBytestring "#{pid};")]
+            , Creation.select = True
+            , Creation.collision = Creation.ReplaceOccupied
+            , Creation.process = Creation.DirectCommand (Os.fromBytestring "/bin/printf")
+                (Os.fromBytestring "%s" :| [Os.fromBytestring "#{pid};"])
+            }
+      C.compileCreation nonce (C.NewWindow (Creation.NextFree session) settings) @?= Right
+        ["new-window", "-P", "-F", C.sessionCreationFormat nonce, "-t", "$1:", "-k"
+        , "-n", "#{a:35}{pid}\\;", "-c", "/tmp/#{a:35}{pid}\\;"
+        , "-e", "KEY=#{pid}\\;", "--", "/bin/printf", "%s", "#{pid}\\;"]
+  , testCase "split lowering targets one pane in one exact link" $ do
+      nonce <- require (F.parseNonce token)
+      session <- G.SessionRef (G.FixtureGeneration "creation") <$> require (Id.parseSessionId "$1")
+      pane <- G.PaneRef (G.FixtureGeneration "creation") <$> require (Id.parsePaneId "%3")
+      index <- require (Value.mkWindowIndex 4)
+      cells <- require (Value.mkDimension 20)
+      let split size = C.SplitPane (Creation.WindowSlot session index) pane
+            Creation.defaultSplitOptions {Creation.direction = Creation.LeftRight,
+              Creation.size = size, Creation.before = True, Creation.fullWindow = True,
+              Creation.keepZoom = True}
+          prefix = ["split-window", "-d", "-P", "-F", C.sessionCreationFormat nonce,
+            "-t", "$1:4.%3", "-h", "-b", "-f", "-Z", "-l"]
+      C.compileCreation nonce (split (Creation.SplitCells cells)) @?= Right (prefix <> ["20", "--"])
+      C.compileCreation nonce (split (Creation.SplitPercent 25)) @?= Right (prefix <> ["25%", "--"])
+      forM_ [0, 101] $ \percentage ->
+        C.compileCreation nonce (split (Creation.SplitPercent percentage)) @?=
+          Left (C.InvalidOperand "split.size" "percentage must be between 1 and 100")
+  , testCase "window and split operands share pre-admission bounds" $ do
+      nonce <- require (F.parseNonce token)
+      session <- G.SessionRef (G.FixtureGeneration "creation") <$> require (Id.parseSessionId "$1")
+      pane <- G.PaneRef (G.FixtureGeneration "creation") <$> require (Id.parsePaneId "%3")
+      index <- require (Value.mkWindowIndex 2147483648)
+      small <- require (Value.mkWindowIndex 0)
+      huge <- require (Value.mkDimension 2147483648)
+      C.compileCreation nonce (C.NewWindow (Creation.At (Creation.WindowSlot session index))
+        Creation.defaultWindowOptions) @?= Left (C.InvalidOperand "window.index" "index exceeds 2147483647")
+      C.compileCreation nonce (C.NewWindow (Creation.NextFree session)
+        Creation.defaultWindowOptions {Creation.name = Just (Snapshot.labelFromBytes (Bytes.replicate 10000 35))}) @?=
+          Left (C.EncodedCommandTooLarge "window.creation")
+      C.compileCreation nonce (C.SplitPane (Creation.WindowSlot session small) pane
+        Creation.defaultSplitOptions {Creation.size = Creation.SplitCells huge}) @?=
+          Left (C.InvalidOperand "split.size" "size exceeds 2147483647 cells")
+      C.compileCreation nonce (C.SplitPane (Creation.WindowSlot session small) pane
+        Creation.defaultSplitOptions {Creation.process = Creation.ShellCommand "bad\NULcommand"}) @?=
+          Left (C.NulOperand "initialProcess")
+  , testCase "default creation keeps tmux process defaults and requests detached receipts" $ do
       nonce <- require (F.parseNonce token)
       C.compileSessionCreation nonce C.defaultSessionOptions @?=
         Right ["new-session", "-d", "-P", "-F", C.sessionCreationFormat nonce, "--"]

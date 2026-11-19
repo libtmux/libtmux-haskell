@@ -1,0 +1,254 @@
+module PublicWindowCreationTest (tests) where
+
+import Control.Concurrent.Async (asyncThreadId, wait, withAsync)
+import Control.Exception
+import Control.Monad (forM_, void)
+import Data.ByteString.Char8 qualified as Bytes
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Text qualified as Text
+import Fixture qualified
+import LibTmux qualified as Tmux
+import LibTmux.Creation qualified as Creation
+import System.Exit (ExitCode (..))
+import System.OsString.Posix qualified as Os
+import System.Timeout (timeout)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit
+
+tests :: TestTree
+tests = testGroup "public window and pane creation"
+  [ testCase "window placement returns fresh identities and actual link indices" $
+      withBase $ \fixture server base -> do
+        before <- Tmux.capture server
+        created <- Tmux.createWindow server (Creation.NextFree base.session)
+          windowOptions {Creation.name = Just "#{pid};"}
+        withPane fixture created.pane $ do
+          after <- Tmux.capture server
+          length (Tmux.windows after) @?= length (Tmux.windows before) + 1
+          window <- require (Tmux.lookupWindow after created.window)
+          Tmux.labelBytes window.name @?= "#{pid};"
+          (Tmux.dimensionValue window.width, Tmux.dimensionValue window.height) @?= (120, 60)
+          assertBool "window reused an existing identity" (created.window /= base.window)
+          assertLink after created
+          index <- require (Tmux.mkWindowIndex 4)
+          placed <- Tmux.createWindow server (Creation.At (Creation.WindowSlot base.session index))
+            windowOptions {Creation.select = True}
+          withPane fixture placed.pane $ do
+            selected <- Tmux.capture server
+            placed.windowIndex @?= index
+            links <- require (Tmux.linksForSession selected base.session)
+            map (.window) (filter (.active) links) @?= [placed.window]
+            inserted <- Tmux.createWindow server (Creation.Before (Creation.WindowSlot base.session index)) windowOptions
+            withPane fixture inserted.pane $ do
+              shifted <- Tmux.capture server
+              inserted.windowIndex @?= index
+              assertLink shifted inserted
+              linksAfter <- require (Tmux.linksForSession shifted base.session)
+              anchor <- one [link | link <- linksAfter, link.window == placed.window]
+              Tmux.windowIndexValue anchor.index @?= 5
+              following <- Tmux.createWindow server (Creation.After (Creation.WindowSlot base.session anchor.index)) windowOptions
+              withPane fixture following.pane $ do
+                Tmux.windowIndexValue following.windowIndex @?= 6
+                Tmux.capture server >>= \fresh -> assertLink fresh following
+
+  , testCase "occupied slots reject unless replacement is explicit" $
+      withBase $ \fixture server base -> do
+        let placement = Creation.At (slot base)
+        rejected (Tmux.createWindow server placement windowOptions)
+        replacement <- Tmux.createWindow server placement windowOptions {Creation.collision = Creation.ReplaceOccupied}
+        withPane fixture replacement.pane $ do
+          fresh <- Tmux.capture server
+          assertLink fresh replacement
+          assertBool "replacement retained the old window" (replacement.window /= base.window)
+          case Tmux.lookupWindow fresh base.window of
+            Left (Tmux.MissingWindow _) -> pure ()
+            _ -> assertFailure "replacement did not remove the old window"
+
+  , testCase "splitting an inactive explicit pane preserves the other selected pane" $
+      withBase $ \fixture server base -> do
+        cells <- require (Tmux.mkDimension 30)
+        right <- Tmux.splitPane server (slot base) base.pane
+          splitOptions {Creation.direction = Creation.LeftRight, Creation.size = Creation.SplitCells cells,
+            Creation.select = True}
+        withPane fixture right.pane $ do
+          below <- Tmux.splitPane server (slot base) base.pane
+            splitOptions {Creation.size = Creation.SplitPercent 25}
+          withPane fixture below.pane $ do
+            fresh <- Tmux.capture server
+            panes <- require (Tmux.panesForWindow fresh base.window)
+            length panes @?= 3
+            old <- require (Tmux.lookupPane fresh base.pane)
+            side <- require (Tmux.lookupPane fresh right.pane)
+            new <- require (Tmux.lookupPane fresh below.pane)
+            Tmux.dimensionValue side.width @?= 30
+            Tmux.dimensionValue old.width @?= 89
+            (Tmux.dimensionValue old.height, Tmux.dimensionValue new.height) @?= (44, 15)
+            new.width @?= old.width
+            map (.ref) (filter (.active) panes) @?= [right.pane]
+            below.window @?= base.window
+            below.session @?= base.session
+            assertLink fresh below
+
+  , testCase "split context retains repeated links and rejects a mismatched slot" $
+      withBase $ \fixture server base -> do
+        index <- require (Tmux.mkWindowIndex 7)
+        let target = Text.unpack (Tmux.renderSessionId (Tmux.sessionId base.session)) <> ":7"
+        configured fixture ["link-window", "-s", windowTarget base.window, "-t", target]
+        created <- Tmux.splitPane server (Creation.WindowSlot base.session index) base.pane splitOptions
+        withPane fixture created.pane $ do
+          created.windowIndex @?= index
+          created.window @?= base.window
+          other <- Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+          withPane fixture other.pane $ do
+            before <- Tmux.capture server
+            rejected (Tmux.splitPane server (slot other) base.pane splitOptions)
+            after <- Tmux.capture server
+            map (.ref) (Tmux.panes after) @?= map (.ref) (Tmux.panes before)
+
+  , testCase "foreign, stale and invalid targets have no creation effects" $
+      withBase $ \fixture server base -> do
+        Tmux.withServer (config fixture) $ \otherServer -> do
+          before <- Tmux.capture otherServer
+          forM_ [Tmux.createWindow otherServer (Creation.NextFree base.session) windowOptions,
+                 Tmux.splitPane otherServer (slot base) base.pane splitOptions] $ \request ->
+            Tmux.tryTmux request >>= \case
+              Left (ExceptionWithContext context (Tmux.InvalidTarget _)) ->
+                assertBool "foreign target retained creation" (null (Tmux.creationRecoveries context))
+              _ -> assertFailure "foreign generation was admitted"
+          after <- Tmux.capture otherServer
+          map (.ref) (Tmux.panes after) @?= map (.ref) (Tmux.panes before)
+        forM_ [Tmux.createWindow server (Creation.NextFree base.session)
+                 windowOptions {Creation.name = Just (Tmux.labelFromBytes "bad\NULname")},
+               Tmux.splitPane server (slot base) base.pane splitOptions {Creation.size = Creation.SplitPercent 0}] $ \request ->
+          Tmux.tryTmux request >>= \case
+            Left (ExceptionWithContext context (Tmux.InvalidMutationArgument _)) ->
+              assertBool "invalid operands retained creation" (null (Tmux.creationRecoveries context))
+            _ -> assertFailure "invalid creation operands were admitted"
+        stale <- Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+        withPane fixture stale.pane $ do
+          configured fixture ["kill-pane", "-t", paneTarget stale.pane]
+          before <- Tmux.capture server
+          rejected (Tmux.splitPane server (slot stale) stale.pane splitOptions)
+          after <- Tmux.capture server
+          map (.ref) (Tmux.panes after) @?= map (.ref) (Tmux.panes before)
+
+  , testCase "window and split cancellation retain exact historical receipts" $
+      forM_ [False, True] $ \split -> withBase $ \fixture server base -> do
+        before <- Tmux.capture server
+        let hook = if split then "after-split-window" else "after-new-window"
+            request = if split then Tmux.splitPane server (slot base) base.pane splitOptions
+              else Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+        withHook fixture hook "wait-for -S creation-entered ; wait-for creation-release" $
+          flip finally (configured fixture ["wait-for", "-S", "creation-release"]) $
+            withAsync (configured fixture ["wait-for", "creation-entered"]) $ \entered ->
+              withAsync (tryWithContext @SomeException request) $ \worker -> do
+                bounded (wait entered)
+                fresh <- Tmux.capture server
+                added <- one [pane | pane <- Tmux.panes fresh, pane.ref `notElem` map (.ref) (Tmux.panes before)]
+                withPane fixture added.ref $ do
+                  throwTo (asyncThreadId worker) ThreadKilled
+                  bounded (wait worker) >>= \case
+                    Left (ExceptionWithContext context problem) -> do
+                      fromException @AsyncException problem @?= Just ThreadKilled
+                      recovery <- one (Tmux.creationRecoveries context)
+                      created <- Tmux.creationReceipt recovery >>= maybe (fail "cancellation lost observed IDs") pure
+                      created.pane @?= added.ref
+                      assertLink fresh created
+                      status <- bounded (Tmux.awaitCreationRecovery recovery)
+                      status.logical.outcome @?= Just Tmux.OutcomeUnknown
+                      Tmux.detachCreationRecovery recovery >>= (@?= True)
+                    Right _ -> assertFailure "cancelled creation returned success"
+
+  , testCase "destructive after-hooks leave reachable historical IDs" $
+      forM_ [False, True] $ \split -> withBase $ \fixture server base -> do
+        before <- Tmux.capture server
+        let hook = if split then "after-split-window" else "after-new-window"
+            destroy = if split then "kill-pane" else "kill-window"
+            request = if split then Tmux.splitPane server (slot base) base.pane splitOptions
+              else Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+        withHook fixture hook ("wait-for -S creation-entered ; wait-for creation-release ; " <> destroy) $
+          flip finally (configured fixture ["wait-for", "-S", "creation-release"]) $
+            withAsync (configured fixture ["wait-for", "creation-entered"]) $ \entered ->
+              withAsync request $ \worker -> do
+                bounded (wait entered)
+                fresh <- Tmux.capture server
+                added <- one [pane | pane <- Tmux.panes fresh, pane.ref `notElem` map (.ref) (Tmux.panes before)]
+                withPane fixture added.ref $ do
+                  configured fixture ["wait-for", "-S", "creation-release"]
+                  created <- bounded (wait worker)
+                  created.pane @?= added.ref
+                  after <- Tmux.capture server
+                  case Tmux.lookupPane after created.pane of
+                    Left (Tmux.MissingPane _) -> pure ()
+                    _ -> assertFailure "after-hook did not remove the created pane"
+  ]
+
+windowOptions :: Creation.WindowOptions
+windowOptions = Creation.defaultWindowOptions {Creation.process = cat}
+
+splitOptions :: Creation.SplitOptions
+splitOptions = Creation.defaultSplitOptions {Creation.process = cat}
+
+cat :: Creation.InitialProcess
+cat = Creation.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])
+
+slot :: Creation.CreatedEntities -> Creation.WindowSlot
+slot created = Creation.WindowSlot created.session created.windowIndex
+
+withBase :: (Fixture.Fixture -> Tmux.Server -> Creation.CreatedSession -> IO a) -> IO a
+withBase action = Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+  columns <- require (Tmux.mkDimension 120)
+  rows <- require (Tmux.mkDimension 60)
+  base <- Tmux.createSession server Creation.defaultSessionOptions
+    {Creation.name = Just "window-core", Creation.width = Just columns, Creation.height = Just rows,
+      Creation.process = cat}
+  withPane fixture base.pane (action fixture server base)
+
+withPane :: Fixture.Fixture -> Tmux.PaneRef -> IO a -> IO a
+withPane fixture pane action = do
+  (code, pid, errors) <- Fixture.command fixture ["display-message", "-p", "-t", paneTarget pane, "-F", "#{pane_pid}"]
+  (code, errors) @?= (ExitSuccess, "")
+  Fixture.withTrackedPane pid (void (Fixture.command fixture ["kill-pane", "-t", paneTarget pane])) action
+
+assertLink :: Tmux.Snapshot -> Creation.CreatedEntities -> Assertion
+assertLink snapshot created = do
+  links <- require (Tmux.linksForSession snapshot created.session)
+  map (.window) (filter (\link -> link.index == created.windowIndex) links) @?= [created.window]
+  pane <- require (Tmux.lookupPane snapshot created.pane)
+  pane.window @?= created.window
+  created.serverPid @?= (Tmux.serverInfo snapshot).pid
+
+paneTarget :: Tmux.PaneRef -> String
+paneTarget = Text.unpack . Tmux.renderPaneId . Tmux.paneId
+
+windowTarget :: Tmux.WindowRef -> String
+windowTarget = Text.unpack . Tmux.renderWindowId . Tmux.windowId
+
+config :: Fixture.Fixture -> Tmux.ServerConfig
+config fixture = (Tmux.serverConfig (Os.fromBytestring (Bytes.pack fixture.socket)))
+  {Tmux.executable = Os.fromBytestring (Bytes.pack fixture.executable)}
+
+withHook :: Fixture.Fixture -> String -> String -> IO a -> IO a
+withHook fixture name hook = bracket_
+  (configured fixture ["set-hook", "-g", name, hook])
+  (configured fixture ["set-hook", "-gu", name])
+
+configured :: Fixture.Fixture -> [String] -> Assertion
+configured fixture arguments = do
+  (code, output, errors) <- Fixture.command fixture arguments
+  (code, output, errors) @?= (ExitSuccess, "", "")
+
+rejected :: IO a -> Assertion
+rejected action = Tmux.tryTmux action >>= \case
+  Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+  _ -> assertFailure "native creation was not rejected"
+
+bounded :: IO a -> IO a
+bounded action = timeout 1000000 action >>= maybe (fail "creation event did not arrive") pure
+
+one :: [a] -> IO a
+one [value] = pure value
+one _ = fail "expected one value"
+
+require :: Show problem => Either problem a -> IO a
+require = either (fail . show) pure
