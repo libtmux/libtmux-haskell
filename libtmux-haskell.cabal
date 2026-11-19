@@ -215,9 +215,7 @@ library
   import: modern
   hs-source-dirs: src internal
   exposed-modules: LibTmux LibTmux.Capabilities LibTmux.Control LibTmux.Creation LibTmux.Environment LibTmux.Options LibTmux.Pane LibTmux.Program LibTmux.Recovery LibTmux.Server LibTmux.Snapshot LibTmux.Snapshot.Fixture LibTmux.Id LibTmux.Value LibTmux.Version
-    LibTmux.Query LibTmux.Query.Pane LibTmux.Query.Session LibTmux.Query.Window
-    LibTmux.Query.Link LibTmux.Query.Occurrence LibTmux.Query.Client
-    LibTmux.Query.ClientAttachment LibTmux.Query.ServerInfo
+    LibTmux.Query LibTmux.Query.Fields
   other-modules: LibTmux.Internal.Control LibTmux.Internal.ControlFrames LibTmux.Internal.Buffer LibTmux.Internal.OptionTable LibTmux.Internal.Program LibTmux.Internal.Creation LibTmux.Internal.Mutation LibTmux.Internal.Command LibTmux.Internal.Query LibTmux.Internal.Scope LibTmux.Internal.Capture LibTmux.Internal.Topology LibTmux.Internal.Entropy LibTmux.Internal.Runtime LibTmux.Internal.VersionProbe LibTmux.Internal.Budget LibTmux.Internal.Scheduler LibTmux.Internal.Frame LibTmux.Internal.TmuxText LibTmux.Internal.Field LibTmux.Internal.Record LibTmux.Internal.Graph LibTmux.Internal.SocketPin LibTmux.Internal.Process LibTmux.Internal.Process.Native
   c-sources: cbits/process.c
   include-dirs: cbits

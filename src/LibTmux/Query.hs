@@ -5,11 +5,9 @@
 -- snapshot. Ordinary lists and application predicates remain available
 -- through "LibTmux.Snapshot"; portable expressions contain no callbacks.
 --
--- Import field modules qualified: "LibTmux.Query.Pane",
--- "LibTmux.Query.Session", "LibTmux.Query.Window", "LibTmux.Query.Link",
--- "LibTmux.Query.Occurrence", "LibTmux.Query.Client",
--- "LibTmux.Query.ClientAttachment" and "LibTmux.Query.ServerInfo".
--- Field tokens describe captured values; reading them never contacts tmux.
+-- Import "LibTmux.Query.Fields" qualified for row-prefixed tokens such as
+-- @F.paneActive@ and @F.sessionWindowLinks@. They describe captured values;
+-- reading them never contacts tmux.
 --
 -- Query construction, operands and results are finite. Execution validates
 -- every declared requirement before filtering, stably ordering and limiting.

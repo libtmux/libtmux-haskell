@@ -10,7 +10,7 @@ import Data.Function ((&))
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
 import LibTmux.Query qualified as Q
-import LibTmux.Query.Pane qualified as Pane
+import LibTmux.Query.Fields qualified as F
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.OsPath.Posix qualified as Path
@@ -21,7 +21,7 @@ main = getArgs >>= \case
     socket <- Path.encodeFS socketArgument
     executable <- Path.encodeFS executableArgument
     let config = (Tmux.serverConfig socket) {Tmux.executable = executable}
-        selected = Q.panes & Q.matching (Q.eq Pane.active True)
+        selected = Q.panes & Q.matching (Q.eq F.paneActive True)
     result <- Tmux.tryTmux $ Tmux.withServer config $ \server -> do
       before <- Tmux.capture server
       session <- require "Session selection"

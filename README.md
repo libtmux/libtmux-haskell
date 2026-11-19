@@ -171,8 +171,8 @@ More: [capture and recovery](https://libtmux.org/en/haskell/latest/guides/captur
 [`withRuntime`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withruntime/) for
 [shared lifetimes](https://libtmux.org/en/haskell/latest/guides/shared-runtime/).
 
-Use [`Window.zoomed`](src/LibTmux/Query/Window.hs) to select zoomed windows,
-or [`Pane.mode`](src/LibTmux/Query/Pane.hs) to find panes in copy mode.
+Use [`windowZoomed`](src/LibTmux/Query/Fields.hs) to select zoomed windows,
+or [`paneMode`](src/LibTmux/Query/Fields.hs) to find panes in copy mode.
 [Captured metadata](docs/capture.md#read-captured-metadata) explains coordinates,
 link flags and optional client sizes; [offline selections](docs/fixtures.md)
 show the typed predicates.
@@ -208,10 +208,7 @@ import Data.Function ((&))
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
 import LibTmux.Query qualified as Q
-import LibTmux.Query.Link qualified as Link
-import LibTmux.Query.Occurrence qualified as Occurrence
-import LibTmux.Query.Pane qualified as Pane
-import LibTmux.Query.Session qualified as Session
+import LibTmux.Query.Fields qualified as F
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.OsPath.Posix qualified as Path
@@ -223,7 +220,7 @@ data ApplicationError
   | UnexpectedResult String
 
 activeWide :: Q.Expr Tmux.Pane
-activeWide = Q.allOf [Q.eq Pane.active True, Q.dimensionAtLeast Pane.width 120]
+activeWide = Q.allOf [Q.eq F.paneActive True, Q.dimensionAtLeast F.paneWidth 120]
 
 selectedPanes :: Q.Query Tmux.Pane
 selectedPanes = Q.panes & Q.matching activeWide
@@ -253,11 +250,11 @@ report snapshot acquired = do
   if selected == native then Right () else Left (UnexpectedResult "query and native selection disagree")
   unique <- first InvalidSelection (Q.exactlyOne selected)
   occurrences <- first InvalidQuery $ Q.runQuery snapshot $
-    Q.paneOccurrences & Q.matching (Q.related Occurrence.pane activeWide)
+    Q.paneOccurrences & Q.matching (Q.related F.occurrencePane activeWide)
   highest <- first InvalidQuery $ Q.runQuery snapshot $
-    Q.windowLinks & Q.orderBy [Q.descending Link.index] & Q.limit 1
+    Q.windowLinks & Q.orderBy [Q.descending F.linkIndex] & Q.limit 1
   link <- first InvalidSelection (Q.exactlyOne highest)
-  let containingEditors = Q.sessions & Q.matching (Q.some Session.windowLinks (Q.some Link.panes activeWide))
+  let containingEditors = Q.sessions & Q.matching (Q.some F.sessionWindowLinks (Q.some F.linkPanes activeWide))
   sessions <- first InvalidQuery (Q.runQuery snapshot containingEditors)
   fresh <- first InvalidQuery acquired
   Right

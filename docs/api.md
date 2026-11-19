@@ -18,17 +18,10 @@ The public modules are:
 | [LibTmux.Value](../src/LibTmux/Value.hs) | Checked dimensions/indices, absolute resize requests and `ValueError` |
 | [LibTmux.Version](../src/LibTmux/Version.hs) | Release identity, ordering, minimum-version admission and `VersionError` |
 | [LibTmux.Query](../src/LibTmux/Query.hs) | Pure typed predicates, ordering, requirements, cardinality and explicit fresh fetch |
-| [LibTmux.Query.Pane](../src/LibTmux/Query/Pane.hs) | Physical pane fields and window relationship |
-| [LibTmux.Query.Session](../src/LibTmux/Query/Session.hs) | Session fields, window links and attached clients |
-| [LibTmux.Query.Window](../src/LibTmux/Query/Window.hs) | Physical window fields, panes and contextual appearances |
-| [LibTmux.Query.Link](../src/LibTmux/Query/Link.hs) | Session/index context and navigation to physical entities |
-| [LibTmux.Query.Occurrence](../src/LibTmux/Query/Occurrence.hs) | Pane and link of a contextual appearance |
-| [LibTmux.Query.Client](../src/LibTmux/Query/Client.hs) | Captured client fields and optional attachment |
-| [LibTmux.Query.ClientAttachment](../src/LibTmux/Query/ClientAttachment.hs) | A client's selected session, window and contextual pane |
-| [LibTmux.Query.ServerInfo](../src/LibTmux/Query/ServerInfo.hs) | Captured daemon metadata fields |
+| [LibTmux.Query.Fields](../src/LibTmux/Query/Fields.hs) | Row-prefixed captured fields and typed relationships |
 
-Import query sources and field modules qualified, as the [query program](query.md)
-does. The common `LibTmux` module keeps snapshot collection access separate
+Import `LibTmux.Query` as `Q` and `LibTmux.Query.Fields` as `F`, as the
+[query program](query.md) does. The common `LibTmux` module keeps snapshot collection access separate
 from query descriptions.
 The [program guide](programs.md) runs a terminal application, cancels and retries
 an observation, and distinguishes owning deadlines from observation timeouts.
@@ -107,3 +100,29 @@ the [consumer check](../scripts/check_sdist/check_sdist.py).
 Private graph, framing and transport modules are implementation details.
 The source layout does not define visibility: Cabal's `exposed-modules`
 controls the installed API. See [status](status.md) for remaining work.
+
+## Query field migration for the shared site
+
+The Haskell site update in [libtmux/docs#309](https://github.com/libtmux/docs/pull/309)
+needs the new exposed-module list and native Haddock archive. Replace the eight
+field-module pages with `LibTmux.Query.Fields`; keep `LibTmux.Query` for sources,
+predicates and execution. Do not retain the retired imports in site examples.
+
+| Retired module | New token prefix |
+| --- | --- |
+| `LibTmux.Query.Session` | `session`, for example `F.sessionWindowLinks` |
+| `LibTmux.Query.Window` | `window`, for example `F.windowZoomed` |
+| `LibTmux.Query.Pane` | `pane`, for example `F.paneActive` |
+| `LibTmux.Query.Link` | `link`, for example `F.linkFlags` |
+| `LibTmux.Query.Occurrence` | `occurrence`, for example `F.occurrencePane` |
+| `LibTmux.Query.Client` | `client`, for example `F.clientHeight` |
+| `LibTmux.Query.ClientAttachment` | `clientAttachment`, for example `F.clientAttachmentPane` |
+| `LibTmux.Query.ServerInfo` | `serverInfo`, for example `F.serverInfoVersion` |
+
+Use `F.windowLinks` for a window's appearances and `Q.windowLinks` as a
+query source. Refresh the API sidebar, symbol search and declaration links
+from that archive.
+The native target for `F.paneActive` is
+`LibTmux-Query-Fields.html#v:paneActive`; each token keeps its scalar or
+relationship type and its query requirement name. Copy the current registered
+programs and installation source pins so rendered snippets use the same API.

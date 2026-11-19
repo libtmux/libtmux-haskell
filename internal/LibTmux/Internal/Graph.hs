@@ -128,8 +128,8 @@ type CreatedSession = CreatedEntities
 -- __Read a session's fields.__ Use record dot on the value, or a field token
 -- in a query. Field tokens describe captured values and never contact tmux.
 --
--- 'LibTmux.Query.Session.id', 'LibTmux.Query.Session.name',
--- 'LibTmux.Query.Session.attached', 'LibTmux.Query.Session.group'
+-- 'LibTmux.Query.Fields.sessionId', 'LibTmux.Query.Fields.sessionName',
+-- 'LibTmux.Query.Fields.sessionAttached', 'LibTmux.Query.Fields.sessionGroup'
 --
 -- __Follow a session to its windows and clients, or back.__ A session reaches
 -- its windows through links, and one window can be linked more than once. A
@@ -137,14 +137,14 @@ type CreatedSession = CreatedEntities
 -- query.
 --
 -- * From a snapshot: 'LibTmux.Snapshot.linksForSession'
--- * From a session in a query: 'LibTmux.Query.Session.windowLinks',
---   'LibTmux.Query.Session.clients'
+-- * From a session in a query: 'LibTmux.Query.Fields.sessionWindowLinks',
+--   'LibTmux.Query.Fields.sessionClients'
 -- * Test its links or clients: 'LibTmux.Query.some', 'LibTmux.Query.every',
 --   'LibTmux.Query.none'
--- * From a window link: 'LibTmux.Query.Link.sessionId',
---   'LibTmux.Query.Link.session'
--- * From a client attachment: 'LibTmux.Query.ClientAttachment.sessionId',
---   'LibTmux.Query.ClientAttachment.session'
+-- * From a window link: 'LibTmux.Query.Fields.linkSessionId',
+--   'LibTmux.Query.Fields.linkSession'
+-- * From a client attachment: 'LibTmux.Query.Fields.clientAttachmentSessionId',
+--   'LibTmux.Query.Fields.clientAttachmentSession'
 -- * Resolve the session: 'LibTmux.Query.related'
 --
 -- __Select sessions with a query.__ Match the name by equality or an exact
@@ -246,9 +246,9 @@ instance NFData Session where
 -- releases can retain names that are not valid UTF-8; decode it as UTF-8 when
 -- you need text.
 --
--- * Field tokens: 'LibTmux.Query.Window.id', 'LibTmux.Query.Window.name',
---   'LibTmux.Query.Window.width', 'LibTmux.Query.Window.height',
---   'LibTmux.Query.Window.layout', 'LibTmux.Query.Window.zoomed'
+-- * Field tokens: 'LibTmux.Query.Fields.windowId', 'LibTmux.Query.Fields.windowName',
+--   'LibTmux.Query.Fields.windowWidth', 'LibTmux.Query.Fields.windowHeight',
+--   'LibTmux.Query.Fields.windowLayout', 'LibTmux.Query.Fields.windowZoomed'
 -- * The name as bytes: t'TmuxText', 'LibTmux.Snapshot.labelText',
 --   'LibTmux.Snapshot.labelBytes', 'LibTmux.Snapshot.labelFromBytes'
 --
@@ -257,20 +257,20 @@ instance NFData Session where
 -- across them.
 --
 -- * From a snapshot: 'LibTmux.Snapshot.panesForWindow'
--- * From a window in a query: 'LibTmux.Query.Window.panes',
---   'LibTmux.Query.Window.windowLinks'
+-- * From a window in a query: 'LibTmux.Query.Fields.windowPanes',
+--   'LibTmux.Query.Fields.windowLinks'
 -- * Test its panes or links: 'LibTmux.Query.some', 'LibTmux.Query.every',
 --   'LibTmux.Query.none'
--- * From a window link: 'LibTmux.Query.Link.panes'
+-- * From a window link: 'LibTmux.Query.Fields.linkPanes'
 --
 -- __Reach a window from a link, a pane or a client.__ Each names one window;
 -- resolve it in a query.
 --
--- * From a window link: 'LibTmux.Query.Link.windowId',
---   'LibTmux.Query.Link.window'
--- * From a pane: 'LibTmux.Query.Pane.windowId', 'LibTmux.Query.Pane.window'
--- * From a client attachment: 'LibTmux.Query.ClientAttachment.windowId',
---   'LibTmux.Query.ClientAttachment.window'
+-- * From a window link: 'LibTmux.Query.Fields.linkWindowId',
+--   'LibTmux.Query.Fields.linkWindow'
+-- * From a pane: 'LibTmux.Query.Fields.paneWindowId', 'LibTmux.Query.Fields.paneWindow'
+-- * From a client attachment: 'LibTmux.Query.Fields.clientAttachmentWindowId',
+--   'LibTmux.Query.Fields.clientAttachmentWindow'
 -- * Resolve the window: 'LibTmux.Query.related'
 --
 -- __Read where a window sits in a session.__ A window's index belongs to a
@@ -278,8 +278,8 @@ instance NFData Session where
 --
 -- * Index type: t'WindowIndex', 'LibTmux.Value.mkWindowIndex',
 --   'LibTmux.Value.windowIndexValue'
--- * Field tokens: 'LibTmux.Query.Link.index',
---   'LibTmux.Query.ClientAttachment.windowIndex'
+-- * Field tokens: 'LibTmux.Query.Fields.linkIndex',
+--   'LibTmux.Query.Fields.clientAttachmentWindowIndex'
 -- * Thresholds: 'LibTmux.Query.windowIndexAtLeast',
 --   'LibTmux.Query.windowIndexAtMost'
 --
@@ -396,22 +396,22 @@ instance NFData Window where
 -- query. The title is UTF-8 text; the command and path keep the POSIX bytes
 -- from the endpoint.
 --
--- 'LibTmux.Query.Pane.id', 'LibTmux.Query.Pane.windowId',
--- 'LibTmux.Query.Pane.index', 'LibTmux.Query.Pane.width',
--- 'LibTmux.Query.Pane.height', 'LibTmux.Query.Pane.active',
--- 'LibTmux.Query.Pane.dead', 'LibTmux.Query.Pane.title',
--- 'LibTmux.Query.Pane.currentCommand', 'LibTmux.Query.Pane.currentPath',
--- 'LibTmux.Query.Pane.cursorX', 'LibTmux.Query.Pane.cursorY',
--- 'LibTmux.Query.Pane.modeCount', 'LibTmux.Query.Pane.mode'
+-- 'LibTmux.Query.Fields.paneId', 'LibTmux.Query.Fields.paneWindowId',
+-- 'LibTmux.Query.Fields.paneIndex', 'LibTmux.Query.Fields.paneWidth',
+-- 'LibTmux.Query.Fields.paneHeight', 'LibTmux.Query.Fields.paneActive',
+-- 'LibTmux.Query.Fields.paneDead', 'LibTmux.Query.Fields.paneTitle',
+-- 'LibTmux.Query.Fields.paneCurrentCommand', 'LibTmux.Query.Fields.paneCurrentPath',
+-- 'LibTmux.Query.Fields.paneCursorX', 'LibTmux.Query.Fields.paneCursorY',
+-- 'LibTmux.Query.Fields.paneModeCount', 'LibTmux.Query.Fields.paneMode'
 --
 -- __Follow a pane to its window and back.__ A window's panes come in
 -- pane-index order. Resolve a pane's window in a query.
 --
--- * From a pane in a query: 'LibTmux.Query.Pane.window'
+-- * From a pane in a query: 'LibTmux.Query.Fields.paneWindow'
 -- * Resolve the window: 'LibTmux.Query.related'
 -- * From a snapshot: 'LibTmux.Snapshot.panesForWindow'
--- * From a window in a query: 'LibTmux.Query.Window.panes'
--- * From a window link: 'LibTmux.Query.Link.panes'
+-- * From a window in a query: 'LibTmux.Query.Fields.windowPanes'
+-- * From a window link: 'LibTmux.Query.Fields.linkPanes'
 -- * Test a window's panes: 'LibTmux.Query.some', 'LibTmux.Query.every',
 --   'LibTmux.Query.none'
 --
@@ -419,10 +419,10 @@ instance NFData Window where
 -- with one window link, and a client attachment selects a pane in its actual
 -- session and index.
 --
--- * From a pane occurrence: 'LibTmux.Query.Occurrence.pane',
---   'LibTmux.Query.Occurrence.link'
--- * From a client attachment: 'LibTmux.Query.ClientAttachment.paneId',
---   'LibTmux.Query.ClientAttachment.pane'
+-- * From a pane occurrence: 'LibTmux.Query.Fields.occurrencePane',
+--   'LibTmux.Query.Fields.occurrenceLink'
+-- * From a client attachment: 'LibTmux.Query.Fields.clientAttachmentPaneId',
+--   'LibTmux.Query.Fields.clientAttachmentPane'
 -- * Occurrence type: t'PaneOccurrence'
 --
 -- __Select panes with a query.__ Compare sizes and indices with thresholds,

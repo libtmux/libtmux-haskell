@@ -32,7 +32,7 @@ class Rejection:
     """A source that must fail with a GHC error of ``code`` mentioning ``expected``."""
 
     source: str
-    code: int
+    code: int | tuple[int, ...]
     expected: str
 
 
@@ -40,10 +40,13 @@ ACCEPTED = (
     "test/compile-pass/ValueApi.hs",
     "test/compile-pass/ObservationApi.hs",
     "test/compile-pass/QueryApi.hs",
+    "test/compile-pass/AllQueryFields.hs",
     "test/compile-pass/MutationApi.hs",
     "test/compile-pass/CreationApi.hs",
 )
 REJECTED = (
+    Rejection("test/compile-fail/QueryFieldConstructor.hs", 76037, "PaneActive"),
+    Rejection("test/compile-fail/QueryRetiredModule.hs", (61948, 87110), "LibTmux.Query.Pane"),
     Rejection("test/compile-fail/DimensionLiteral.hs", 39999, "Num Dimension"),
     Rejection("test/compile-fail/MixedIndices.hs", 83865, "Expected: PaneIndex -> WindowIndex"),
     Rejection("test/compile-fail/MixedIds.hs", 83865, "Expected: PaneId -> WindowId"),
@@ -100,7 +103,7 @@ def library_units(plan: Mapping[str, Any]) -> list[str]:
     return units
 
 
-def reports_error(output: str, code: int, expected: str) -> bool:
+def reports_error(output: str, code: int | tuple[int, ...], expected: str) -> bool:
     """Whether GHC's JSON diagnostics hold an error with ``code`` that contains ``expected``.
 
     Lines that are not JSON diagnostics are ignored.
@@ -113,6 +116,7 @@ def reports_error(output: str, code: int, expected: str) -> bool:
     >>> reports_error(line.replace("Error", "Warning"), 83865, "Expected: A")
     False
     """
+    codes = (code,) if isinstance(code, int) else code
     for line in output.splitlines():
         try:
             diagnostic = json.loads(line)
@@ -124,7 +128,7 @@ def reports_error(output: str, code: int, expected: str) -> bool:
         text = " ".join(map(str, message)) if isinstance(message, list) else ""
         if (
             diagnostic.get("severity") == "Error"
-            and diagnostic.get("code") == code
+            and diagnostic.get("code") in codes
             and expected in text
         ):
             return True

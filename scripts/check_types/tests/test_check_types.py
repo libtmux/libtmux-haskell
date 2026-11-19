@@ -77,7 +77,8 @@ def checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Checkout:
     (root / "dist-newstyle/cache/plan.json").write_text(json.dumps({"install-plan": plan}))
     outcomes = {source: {"status": 0, "output": ""} for source in check_types.ACCEPTED}
     for case in check_types.REJECTED:
-        output = "warning: noise\n" + diagnostic(case.code, case.expected)
+        code = case.code if isinstance(case.code, int) else case.code[0]
+        output = "warning: noise\n" + diagnostic(code, case.expected)
         outcomes[case.source] = {"status": 1, "output": output}
     result = Checkout(root, outcomes)
     result.write()
@@ -117,7 +118,7 @@ def test_each_package_needs_exactly_one_library_unit(plan: dict[str, Any]) -> No
 def test_all_cases_run_against_exactly_the_selected_units(checkout: Checkout) -> None:
     """Every case compiles with the three library units and nothing else."""
     message = check_types.check(checkout.root)
-    assert message == "PASS: public API (5 positive and 16 intended negative compilation cases)"
+    assert message == "PASS: public API (6 positive and 18 intended negative compilation cases)"
     calls = checkout.calls()
     assert [call[-1] for call in calls] == [
         *check_types.ACCEPTED,
@@ -192,3 +193,14 @@ def test_the_library_build_has_a_time_limit(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(SystemExit, match="timed out"):
         check_types.main()
     assert seen == [check_types.BUILD]
+
+
+@pytest.mark.parametrize(("code", "accepted"), [(61948, True), (87110, True), (83865, False)])
+def test_retired_module_diagnostics_depend_on_hidden_packages(code: int, accepted: bool) -> None:
+    """GHC reports absence differently when an older hidden package has the module."""
+    assert (
+        check_types.reports_error(
+            diagnostic(code, "LibTmux.Query.Pane"), (61948, 87110), "LibTmux.Query.Pane"
+        )
+        is accepted
+    )
