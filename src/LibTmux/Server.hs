@@ -32,6 +32,8 @@ module LibTmux.Server
   , renameSession, renameSessionWith, renameWindow, renameWindowWith, setPaneTitle, setPaneTitleWith
     -- * Remove a target
   , killSession, killSessionWith, killWindow, killWindowWith, killPane, killPaneWith
+    -- * Pane input
+  , PaneInput (..), sendKeys, sendKeysWith
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
@@ -62,6 +64,7 @@ import Control.Exception.Context qualified as Context
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime)
@@ -340,6 +343,29 @@ killPane = killPaneWith defaultMutationOptions
 killPaneWith :: MutationOptions -> Server -> PaneRef -> IO ()
 killPaneWith options server (G.PaneRef generation ident) =
   mutate options server generation (Command.KillPane ident)
+
+-- | Input to an exact pane. Literal text bypasses key-name lookup.
+-- 'NamedKeys' accepts tmux key names such as @Enter@ or @C-c@ in order.
+-- The type omits a Show instance so logging does not disclose pane input.
+data PaneInput
+  = LiteralText !Text.Text
+  | NamedKeys !(NonEmpty Text.Text)
+  deriving stock (Eq)
+
+-- | Send literal text or named keys to a pane from this Server generation.
+-- The command never appends Enter. Success confirms tmux processed the
+-- request. Application response can be observed separately.
+sendKeys :: Server -> PaneRef -> PaneInput -> IO ()
+sendKeys = sendKeysWith defaultMutationOptions
+
+-- | 'sendKeys' with one deadline for validation, submission and completion.
+-- tmux validates every key name before input is sent. An invalid name raises
+-- 'InvalidMutationArgument' without typing any part of the sequence.
+sendKeysWith :: MutationOptions -> Server -> PaneRef -> PaneInput -> IO ()
+sendKeysWith options server (G.PaneRef generation ident) input =
+  mutate options server generation $ case input of
+    LiteralText text -> Command.SendPaneText ident text
+    NamedKeys names -> Command.SendPaneKeys ident names
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server@(Server runtime handle executable _ _) generation command = operational $ do

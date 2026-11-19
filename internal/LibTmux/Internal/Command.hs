@@ -7,6 +7,7 @@
 module LibTmux.Internal.Command
   ( Mutation (..), ProgramCommand (..), ProgramIdentity (..), ArgumentError (..), compileMutation
   , compileProgramMutation, decodeProgramReply
+  , compileKeyProbe, decodeKeyProbe
   , MutationReply (..), ReplyError (..), decodeControlReply
   , SessionReceipt (..), SessionCreationReply (..)
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
@@ -19,7 +20,9 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Utf8
+import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NonEmpty
 import LibTmux.Creation (SessionOptions (..), InitialProcess (..), defaultSessionOptions)
 import LibTmux.Id qualified as Id
@@ -41,6 +44,8 @@ data Mutation
   | KillSession !Id.SessionId
   | KillWindow !Id.WindowId
   | KillPane !Id.PaneId
+  | SendPaneText !Id.PaneId !Text
+  | SendPaneKeys !Id.PaneId !(NonEmpty Text)
   deriving stock (Eq, Show)
 
 -- | Closed application operations. Payload-bearing capture is saved separately
@@ -310,6 +315,15 @@ compileMutation = \case
   KillSession ident -> Right (target "kill-session" (Id.renderSessionId ident))
   KillWindow ident -> Right (target "kill-window" (Id.renderWindowId ident))
   KillPane ident -> Right (target "kill-pane" (Id.renderPaneId ident))
+  SendPaneText ident text ->
+    literalArguments "pane.input" (target "send-keys" (Id.renderPaneId ident) <> ["-l", "--"])
+      [Utf8.encodeUtf8 text]
+  SendPaneKeys ident names -> do
+    let keys = NonEmpty.toList names
+    -- Native launch includes six fixed arguments and this four-argument prefix.
+    when (length (take 4087 keys) > 4086) (Left (EncodedCommandTooLarge "pane.key"))
+    encoded <- traverse keyOperand keys
+    literalArguments "pane.key" (target "send-keys" (Id.renderPaneId ident) <> ["--"]) encoded
   where
     target command ident = [command, "-t", Utf8.encodeUtf8 ident]
     withOperand prefix key value = do
@@ -418,6 +432,37 @@ checkProgramCost values = do
   mapM_ (\value -> when (Bytes.elem 0 value) (Left (NulOperand "program"))) values
   when (sum (map ((+ 1) . toInteger . Bytes.length) values) > commandLimitBytes)
     (Left (EncodedCommandTooLarge "program"))
+
+literalArguments :: Text -> [ByteString] -> [ByteString] -> Either ArgumentError [ByteString]
+literalArguments field prefix operands = do
+  let arguments = prefix <> map protectSeparator operands
+      cost = sum [toInteger (Bytes.length value) + 1 | value <- arguments]
+  when (cost > commandLimitBytes) (Left (EncodedCommandTooLarge field))
+  when (any (Bytes.elem 0) operands) (Left (NulOperand field))
+  pure arguments
+
+keyOperand :: Text -> Either ArgumentError ByteString
+keyOperand name
+  | Text.null name || Text.toCaseFold name `elem` ["any", "none"] =
+      Left (InvalidOperand "pane.key" "expected a deliverable key name")
+  | otherwise = Right (Utf8.encodeUtf8 name)
+
+-- list-keys validates a name before looking up its table. A fresh absent
+-- table makes either result a primary error, so after-list-keys never runs.
+compileKeyProbe :: Frame.Nonce -> Text -> Either ArgumentError [ByteString]
+compileKeyProbe nonce name = do
+  operand <- keyOperand name
+  literalArguments "pane.key" ["list-keys", "-T", keyProbeTable nonce, "--"] [operand]
+
+decodeKeyProbe :: Frame.Nonce -> Maybe Int -> ByteString -> ByteString -> Either ReplyError Bool
+decodeKeyProbe nonce status output diagnostic
+  | status /= Just 1 || not (Bytes.null output) = Left UnexpectedReply
+  | diagnostic == "table " <> keyProbeTable nonce <> " doesn't exist\n" = Right True
+  | "invalid key: " `Bytes.isPrefixOf` diagnostic = Right False
+  | otherwise = Left UnexpectedReply
+
+keyProbeTable :: Frame.Nonce -> ByteString
+keyProbeTable nonce = "libtmux-key-" <> Frame.recordMarker nonce
 
 checkCost :: Text -> ByteString -> Integer -> Integer -> Either ArgumentError ()
 checkCost key value minimumCost expansionCost

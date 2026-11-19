@@ -13,7 +13,7 @@ import Control.Exception
   )
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context qualified as Context
-import Control.Monad (when)
+import Control.Monad (forM_, unless, when)
 import Data.ByteString (ByteString)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Maybe (listToMaybe)
@@ -57,8 +57,17 @@ detachRecovery (MutationRecovery runtime server receipt) = R.detachReceipt runti
 
 performMutation :: P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> ByteString -> C.Mutation -> IO ()
 performMutation hooks duration runtime server executable mutation =
-  performRequest duration runtime server
-    (\remainingTime -> remainingTime >>= \left -> R.mutateWith hooks left runtime server executable mutation) $ \case
+  performRequests duration runtime server $ \remainingTime await -> do
+    case mutation of
+      C.SendPaneKeys _ names -> do
+        _ <- either (throwIO . R.InvalidCommandOperands) pure (C.compileMutation mutation)
+        forM_ names $ \name -> do
+          left <- remainingTime
+          valid <- await (R.validateKeyWith hooks left runtime server executable name)
+          unless valid (throwIO (InvalidMutationArgument "pane.key: unknown tmux key"))
+      _ -> pure ()
+    left <- remainingTime
+    await (R.mutateWith hooks left runtime server executable mutation) >>= \case
       C.Applied -> pure ()
       C.Rejected diagnostic -> throwIO (MutationRejected diagnostic)
       C.AppliedWithErrors diagnostic -> throwIO (MutationAppliedWithErrors diagnostic)
@@ -69,7 +78,15 @@ performMutation hooks duration runtime server executable mutation =
 performRequest
   :: Int -> R.Runtime -> R.ServerHandle
   -> (IO Int -> IO (R.Request value)) -> (value -> IO result) -> IO result
-performRequest duration runtime server submit decode = mask $ \restore -> do
+performRequest duration runtime server submit decode =
+  performRequests duration runtime server $ \remainingTime await ->
+    await (submit remainingTime) >>= decode
+
+performRequests
+  :: Int -> R.Runtime -> R.ServerHandle
+  -> (IO Int -> (forall value. IO (R.Request value) -> IO value) -> IO result)
+  -> IO result
+performRequests duration runtime server run = mask $ \restore -> do
   when (duration < 1 || duration > 10000000)
     (throwIO (InvalidConfiguration "mutation timeout must be positive and at most ten seconds"))
   receipt <- newIORef Nothing
@@ -80,8 +97,8 @@ performRequest duration runtime server submit decode = mask $ \restore -> do
           Nothing -> rethrowIO (ExceptionWithContext context problem)
           Just value -> recovering (MutationRecovery runtime server value)
             (rethrowIO (ExceptionWithContext context problem))
-      owned deadline = mask $ \unmask -> do
-        request <- catchNoPropagate (submit (remaining deadline)) $
+      owned deadline = mask $ \unmask -> run (remaining deadline) $ \submit -> do
+        request <- catchNoPropagate submit $
           \failure@(ExceptionWithContext context (problem :: SomeException)) -> do
             -- Timeout consumes its exception; retain correlation before conversion.
             writeIORef receipt (listToMaybe (Context.getExceptionAnnotations @R.ReadReceipt context))
@@ -95,7 +112,7 @@ performRequest duration runtime server submit decode = mask $ \restore -> do
         writeIORef receipt (Just current)
         response <- unmask (R.awaitRead request) `onException` R.cancelRead runtime request
         case response of
-          R.ReadValue value -> decode value
+          R.ReadValue value -> pure value
           R.ReadUnavailable _ (Just problem)
             | Just R.ReadExpired <- fromException problem -> throwIO MutationTimedOut
             | otherwise -> throwIO problem

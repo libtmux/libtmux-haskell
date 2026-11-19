@@ -7,10 +7,14 @@ import Control.Exception
   )
 import Control.Monad (forM_)
 import Data.ByteString.Char8 qualified as Bytes
+import Data.ByteString.Lazy.Char8 qualified as Lazy
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.Text qualified as Text
 import Fixture qualified
 import LibTmux qualified as Tmux
 import LibTmux.Snapshot.Fixture qualified as F
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
 import System.OsString.Posix qualified as Os
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
@@ -86,6 +90,45 @@ tests = testGroup "public mutation API"
           afterSession <- Tmux.capture server
           Tmux.lookupSession afterSession session.ref @?= Left (Tmux.MissingSession session.ref)
           map (.ref) (Tmux.sessions afterSession) @?= [bystander.ref]
+
+  , testCase "sends literal text and a named key to one pane" $
+      Fixture.withFixture $ \fixture -> Tmux.withServer (config fixture) $ \server -> do
+        before <- Tmux.capture server
+        bystander <- one (Tmux.panes before)
+        let application = unlines
+              [ "set -eu"
+              , "stty -icanon -echo icrnl min 1 time 0"
+              , "signal() { \"$1\" -N -S \"$2\" wait-for -S \"$3\"; }"
+              , "signal \"$2\" \"$3\" input-ready"
+              , "dd bs=1 count=5 status=none of=\"$1/literal-input\""
+              , "signal \"$2\" \"$3\" input-literal"
+              , "dd bs=1 count=1 status=none of=\"$1/named-input\""
+              , "signal \"$2\" \"$3\" input-named"
+              , "exec /bin/cat -"
+              ]
+            await signal = bounded (configured fixture ["wait-for", signal])
+        configured fixture ["split-window", "-d", "/bin/sh", "-c", application,
+          "sh", fixture.directory, fixture.executable, fixture.socket]
+        await "input-ready"
+        split <- Tmux.capture server
+        target <- one [pane | pane <- Tmux.panes split, pane.ref /= bystander.ref]
+        Tmux.withServer (config fixture) $ \other ->
+          Tmux.tryTmux (Tmux.sendKeys other target.ref (Tmux.LiteralText "wrong")) >>= expectInvalidTarget
+        Tmux.tryTmux (Tmux.sendKeys server target.ref (Tmux.NamedKeys ("Enter" :| ["invalid-key-name"]))) >>= \case
+          Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument _)) -> pure ()
+          _ -> assertFailure "partly invalid key sequence was admitted"
+
+        Tmux.sendKeys server target.ref (Tmux.LiteralText "Enter")
+        await "input-literal"
+        Bytes.readFile (fixture.directory </> "literal-input") >>= (@?= "Enter")
+        Tmux.sendKeys server target.ref (Tmux.NamedKeys ("Enter" :| []))
+        await "input-named"
+        Bytes.readFile (fixture.directory </> "named-input") >>= (@?= "\n")
+        (code, screen, diagnostic) <- Fixture.command fixture
+          ["capture-pane", "-p", "-t", Text.unpack (Tmux.renderPaneId (Tmux.paneId bystander.ref))]
+        (code, diagnostic) @?= (ExitSuccess, "")
+        assertBool "bystander received input" (all Lazy.null (Lazy.lines screen))
+        Tmux.killPane server target.ref
 
   , testCase "refuses foreign and offline references before changing the daemon" $
       Fixture.withFixture $ \fixture -> do
