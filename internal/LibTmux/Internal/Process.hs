@@ -52,7 +52,7 @@ data Hooks = Hooks
 -- Preparation may register resources but cannot create an executable child.
 -- The ticket journals this obligation before starting any transport/effect.
 data Prepared = Prepared
-  { startPrepared :: !(IO N.Start), retirePrepared :: !(IO ()) }
+  { startPrepared :: !(IO N.Start), publishPrepared :: !(IO ()), retirePrepared :: !(IO ()) }
 data Backend = Backend
   { payloadAllowance :: !Word64, prepareBackend :: !(B.Class -> N.Spec -> IO Prepared) }
 
@@ -242,7 +242,7 @@ runJob :: Ticket -> N.Spec -> Input -> Output -> IO Completion
 runJob ticket spec input outputMode = do
   start <- mask_ $ do
     prepared <- case ticket.selectedBackend of
-      Nothing -> pure (Prepared (ticket.hooks.launchNative spec) (pure ()))
+      Nothing -> pure (Prepared (ticket.hooks.launchNative spec) (pure ()) (pure ()))
       Just backend -> backend.prepareBackend ticket.allocation spec
     writeIORef ticket.prepared (Just prepared)
     native <- prepared.startPrepared
@@ -252,6 +252,7 @@ runJob ticket spec input outputMode = do
         writeIORef ticket.child (Just child)
         writeIORef ticket.descriptors (Set.fromList (filter (>= 0)
           (map fromIntegral [child.pidfd, child.input, child.output, child.errors])))
+    prepared.publishPrepared
     writeIORef ticket.prepared Nothing
     atomically $ putTMVar ticket.launchEvidence $ case native of
       N.Refused problem -> LaunchRefused problem
