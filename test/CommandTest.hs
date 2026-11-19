@@ -64,6 +64,23 @@ tests = testGroup "typed mutation arguments"
       compile (Bytes.replicate 2334 35 <> "x;") @?= Left (C.EncodedCommandTooLarge "window.name")
       compile (Bytes.replicate 16339 120 <> ";") @?= Left (C.EncodedCommandTooLarge "window.name")
 
+  , testCase "pane capture keeps its primary bytes and refuses ambiguous boundaries" $ do
+      let begin = "%begin 1794000000 27 0\n"
+          ended = "%end 1794000000 27 0\n"
+          failed = "%error 1794000000 27 0\n"
+          footer = "%exit\n"
+          payload = "caf\ESC[31m" <> Bytes.pack [195, 169] <> "\n\n%end 12 34 0\n\n"
+          hook = "%begin 1794000000 28 0\nhook output\n%end 1794000000 28 0\n"
+          decode limit body = C.decodePaneCapture limit (Just 0) (begin <> body <> footer) ""
+      decode 64 (payload <> ended <> hook) @?= Right (C.CapturedPaneText payload)
+      decode 4 (payload <> ended) @?= Left C.ReplyTooLarge
+      decode 128 (ended <> payload <> ended) @?= Left C.UnexpectedReply
+      decode 128 (failed <> payload <> ended) @?= Left C.UnexpectedReply
+      C.decodePaneCapture 64 (Just 1) (begin <> "can't find pane: %5\n" <> failed <> footer) ""
+        @?= Right (C.CaptureRejected "can't find pane: %5\n")
+      C.decodePaneCapture 64 (Just 0) (begin <> payload <> ended) ""
+        @?= Left C.UnexpectedReply
+
   , testCase "closed control replies separate primary and following failures" $ do
       let begin = "%begin 1794000000 27 0\n"
           ended = "%end 1794000000 27 0\n"
