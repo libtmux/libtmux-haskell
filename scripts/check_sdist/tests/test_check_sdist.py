@@ -171,6 +171,8 @@ def test_batched_consumers_still_check_each_distinct_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: bool
 ) -> None:
     """One build must execute both components and detect a bad second result."""
+    monkeypatch.delenv("LIBTMUX_TEST_TMUX", raising=False)
+    monkeypatch.delenv("LIBTMUX_TEST_FLOOR_TMUX", raising=False)
     entries = [
         {
             "id": name,
@@ -195,13 +197,19 @@ def test_batched_consumers_still_check_each_distinct_output(
         targets.append(args[2])
         return "/consumer/" + args[2].removeprefix("exe:")
 
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        assert kwargs == {
-            "cwd": workspace,
-            "capture_output": True,
-            "timeout": check_sdist.DEFAULT_TIMEOUT,
-            "env": None,
-        }
+    def run(
+        args: list[str],
+        *,
+        cwd: Path,
+        capture_output: bool,
+        timeout: int,
+        env: dict[str, str] | None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        if env is not None:
+            pytest.fail("The stand-in example unexpectedly selected a tmux executable")
+        assert cwd == workspace
+        assert capture_output
+        assert timeout == check_sdist.DEFAULT_TIMEOUT
         name = Path(args[0]).name
         executed.append(name)
         output = b"wrong" if corrupt and name == "second" else (name + "\n").encode()
