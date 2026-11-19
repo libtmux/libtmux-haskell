@@ -1,6 +1,7 @@
 """Benchmark driver checks that need neither tmux nor a Haskell build."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -109,8 +110,8 @@ for index in range(1, samples + 1):
 """
 
 
-def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_path: Path) -> None:
-    """Two sessions, three windows and four panes are built, linked, measured and reported."""
+def test_measure_validates_workload_output_and_records_the_case(tmp_path: Path) -> None:
+    """Record the sample summary and keep the raw streams from the workload."""
     binary = tmp_path / "tmux"
     binary.write_text(FAKE_TMUX.format(python=sys.executable))
     binary.chmod(0o700)
@@ -146,6 +147,23 @@ def test_measure_builds_the_graph_runs_the_workload_and_records_the_case(tmp_pat
         f"{key}.stdout",
     ]
     assert json.loads((output / f"{key}.json").read_text())["artifactKey"] == key
+
+
+def test_timed_out_workload_keeps_partial_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failure = subprocess.TimeoutExpired(
+        ["program"], bench.CASE_BUDGET, output=b"partial csv\n", stderr=b"partial error\n"
+    )
+
+    def expire(*args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(bench.bounded, "run", expire)
+    with pytest.raises(subprocess.TimeoutExpired):
+        bench.run_workload("program", "tmux", MEDIUM, 1, "case", tmp_path)
+    assert (tmp_path / "case.stdout").read_bytes() == b"partial csv\n"
+    assert (tmp_path / "case.stderr").read_bytes() == b"partial error\n"
 
 
 def test_the_driver_prepares_the_benchmark_before_looking_for_its_executable(

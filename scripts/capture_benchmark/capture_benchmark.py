@@ -13,6 +13,7 @@ import os
 import platform
 import shutil
 import statistics
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -116,24 +117,30 @@ def run_workload(
 ) -> list[Sample]:
     """Run one Haskell-owned graph and keep its raw output."""
     _, sessions, windows, panes = size
-    result = bounded.run(
-        [
-            program,
-            binary,
-            str(sessions),
-            str(windows),
-            str(panes),
-            str(samples),
-            "+RTS",
-            "-N1",
-            "-RTS",
-        ],
-        capture_output=True,
-        timeout=CASE_BUDGET,
-    )
-    (output / f"{key}.stdout").write_bytes(result.stdout)
-    (output / f"{key}.stderr").write_bytes(result.stderr)
-    result.check_returncode()
+    stdout, stderr = output / f"{key}.stdout", output / f"{key}.stderr"
+    try:
+        result = bounded.run(
+            [
+                program,
+                binary,
+                str(sessions),
+                str(windows),
+                str(panes),
+                str(samples),
+                "+RTS",
+                "-N1",
+                "-RTS",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=CASE_BUDGET,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as failure:
+        stdout.write_bytes(failure.output or b"")
+        stderr.write_bytes(failure.stderr or b"")
+        raise
+    stdout.write_bytes(result.stdout)
+    stderr.write_bytes(result.stderr)
     if result.stderr:
         raise RuntimeError("capture benchmark wrote stderr")
     return parse_samples(result.stdout, samples)
