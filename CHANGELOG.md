@@ -51,6 +51,8 @@
   removed and absent values. ([#12])
 - Load and read named binary buffers with a 64 KiB limit. Paste into an
   exact pane with an explicit line-feed policy. ([#12])
+- Look up built-in option types and hook scopes using the connected
+  daemon's release with `LibTmux.Options`. ([#31], [#32])
 
 ### Changed
 
@@ -185,3 +187,5 @@
 [#47]: https://github.com/libtmux/libtmux-haskell/issues/47
 [#12]: https://github.com/libtmux/libtmux-haskell/issues/12
 [#27]: https://github.com/libtmux/libtmux-haskell/issues/27
+[#31]: https://github.com/libtmux/libtmux-haskell/issues/31
+[#32]: https://github.com/libtmux/libtmux-haskell/issues/32
