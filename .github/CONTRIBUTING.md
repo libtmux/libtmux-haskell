@@ -1,10 +1,9 @@
 # Contributing
 
-The native Haskell implementation is in progress. The public Server and shared
-Runtime scopes, detached observations, typed values and typed queries have
-tests and source-archive consumers. Session creation, session/window rename
-and pane titles have public generation checks and recovery. Additional
-commands, events and complete adoption qualification remain open.
+The native core provides owned and borrowed server scopes, typed graph
+queries, pane operations, and bounded control notifications. The
+[status guide](../docs/status.md) lists available operations and tested
+configurations.
 
 Read [AGENTS.md](../AGENTS.md) for change discipline and
 [WRITING.md](WRITING.md) for prose and commit conventions.
