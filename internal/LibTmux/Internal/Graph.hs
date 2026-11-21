@@ -199,7 +199,7 @@ type CreatedSession = CreatedEntities
 --   or 'LibTmux.Server.setOption'.
 -- * Use v'LibTmux.Environment.SessionEnvironment' with
 --   'LibTmux.Server.getEnvironment' or 'LibTmux.Server.setEnvironment'.
--- * <https://github.com/libtmux/libtmux-haskell/blob/master/docs/options.md#select-a-store Session settings example>
+-- * <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/options.md#select-a-store Session settings example>
 --
 -- __Add a window to a session.__ A placement names the session and where the
 -- window goes: the next free index or a slot. The result holds the references
@@ -371,7 +371,7 @@ instance NFData Session where
 -- Capture again for the size tmux applied.
 --
 -- 'LibTmux.Server.resizeWindow', 'LibTmux.Server.resizeWindowWith',
--- <https://github.com/libtmux/libtmux-haskell/blob/master/docs/resizing.md Resize example>
+-- <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/resizing.md Resize example>
 --
 -- __Remove a window.__ One removal closes the physical window across all its
 -- links, and tmux closes a session left without windows.
@@ -520,7 +520,7 @@ instance NFData Window where
 --
 -- 'LibTmux.Server.resizePane', 'LibTmux.Server.resizePaneWith',
 -- 'LibTmux.Value.mkDimension',
--- <https://github.com/libtmux/libtmux-haskell/blob/master/docs/resizing.md Resize example>
+-- <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/resizing.md Resize example>
 --
 -- __Move a running pane.__ Resolve its exact session link with
 -- 'LibTmux.Snapshot.lookupPaneOccurrence'. Capture the new slot after
@@ -539,7 +539,7 @@ instance NFData Window where
 -- and a t'LibTmux.Pane.PasteNewlines' policy.
 --
 -- 'LibTmux.Server.pasteBuffer', 'LibTmux.Server.loadBuffer',
--- <https://github.com/libtmux/libtmux-haskell/blob/master/docs/buffers.md Paste example>
+-- <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/buffers.md Paste example>
 --
 -- __Read a pane's text.__ Capture the visible rows or a range, as plain text or
 -- with ANSI styling, within a byte limit. The result is a detached observation,
