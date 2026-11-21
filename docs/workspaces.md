@@ -81,7 +81,8 @@ history. If any acknowledgement is missing, apply retains the new session
 for recovery before it sends the workspace's commands.
 
 See the [catalogue results](../workspace/test/fixtures/tmuxp/compatibility.json)
-for matching previews, differences and refused inputs. The first package
+for preview comparisons and support by syntax form. The tests isolate forms
+that have no matching catalogue example and record any refusal. The package
 accepts named tmux layouts and rejects script hooks, plugins, timing and
 option fields. See [fixture provenance](../workspace/test/fixtures/tmuxp/README.md).
 

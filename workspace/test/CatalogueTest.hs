@@ -11,6 +11,7 @@ import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Utf8
 import LibTmux qualified as Tmux
 import LibTmux.Workspace qualified as Workspace
 import System.Directory (listDirectory)
@@ -145,12 +146,65 @@ formCoverage verdicts = withObject "canonical form" $ \entry -> do
   files <- entry .: "files" :: Parser [FilePath]
   results <- traverse (\file -> maybe (fail "unknown fixture") pure (Map.lookup file verdicts)) files
   statuses <- traverse (withObject "example verdict" (.: "status")) results :: Parser [Text]
-  let evidence
-        | "matches" `elem` statuses = "matching preview"
-        | "differs" `elem` statuses = "preview difference"
-        | null statuses = "no catalog case"
-        | otherwise = "only refused examples"
-  pure (object ["id" .= name, "evidence" .= (evidence :: Text), "files" .= files])
+  let qualify
+        | "matches" `elem` statuses = pure ("supported", "matching preview", [])
+        | "differs" `elem` statuses = pure ("differs", "preview difference", [])
+        | otherwise = case formProbes name of
+            [] -> fail ("no isolated probe for " <> Text.unpack name)
+            probes -> do
+              reasons <- concat <$> traverse checkProbe probes
+              pure (if null reasons then "supported" else "refused", "isolated probe", reasons)
+  (status, evidence, reasons) <- qualify
+  pure (object ["id" .= name, "status" .= (status :: Text), "evidence" .= (evidence :: Text), "files" .= files,
+    "refusals" .= reasons])
+
+data FormProbe
+  = Accept !Bytes.ByteString !(Workspace.WorkspacePreview -> Bool)
+  | Refuse !Bytes.ByteString !Text
+
+checkProbe :: FormProbe -> Parser [String]
+checkProbe (Accept source expected) = case Workspace.planTmuxp inputs source of
+  Right plan | expected (Workspace.previewWorkspace plan) -> pure []
+  Left problem -> fail (show problem)
+  _ -> fail "isolated form produced a different preview"
+checkProbe (Refuse source field) = case Workspace.planTmuxp inputs source of
+  Left problem@(Workspace.UnsupportedField actual) | actual == field -> pure [show problem]
+  Left problem -> fail (show problem)
+  Right _ -> fail ("expected refusal for " <> Text.unpack field)
+
+formProbes :: Text -> [FormProbe]
+formProbes = \case
+  "session.shell_command_before" -> [Accept (session "shell_command_before: echo ready") (commands ["echo ready"])]
+  "pane.shell_command_before" -> [Accept (pane "{shell_command_before: echo ready}") (commands ["echo ready"])]
+  "pane.list" -> [Accept (pane "[echo first, echo second]") (commands ["echo first", "echo second"])]
+  "window.layout.even-vertical" -> [Accept (window "{layout: even-vertical}") (layout Tmux.EvenVertical)]
+  "window.layout.main-horizontal" -> [Accept (window "{layout: main-horizontal}") (layout Tmux.MainHorizontal)]
+  "session.before_script" -> [Refuse (session "before_script: echo ready") "before_script"]
+  "session.plugins" -> [Refuse (session "plugins: [example]") "plugins"]
+  "session.options" -> [Refuse (session "options: {status: on}") "options"]
+  "session.global_options" -> [Refuse (session "global_options: {status: on}") "global_options"]
+  "window.window_shell" -> [Refuse (window "{window_shell: /bin/sh}") "windows[0].window_shell"]
+  "window.options" -> [Refuse (window "{options: {main-pane-height: 20}}") "windows[0].options"]
+  "window.options_after" -> [Refuse (window "{options_after: {synchronize-panes: on}}") "windows[0].options_after"]
+  "pane.shell" -> [Refuse (pane "{shell: /bin/sh}") "windows[0].panes[0].shell"]
+  "sleep_before" -> delays "sleep_before"
+  "sleep_after" -> delays "sleep_after"
+  _ -> []
+  where
+    prefix = "session_name: probe\n"
+    session fields = prefix <> fields <> "\nwindows: [{}]\n"
+    window fields = prefix <> "windows: [" <> fields <> "]\n"
+    pane fields = window ("{panes: [" <> fields <> "]}")
+    delays field =
+      [ Refuse (pane ("{shell_command: echo ready, " <> encoded <> ": 1}")) ("windows[0].panes[0]." <> field)
+      , Refuse (pane ("{shell_command: [{cmd: echo ready, " <> encoded <> ": 1}]}"))
+          ("windows[0].panes[0].shell_command[0]." <> field)
+      ]
+      where encoded = Utf8.encodeUtf8 field
+    commands expected preview =
+      let first = NonEmpty.head (NonEmpty.head preview.windows).panes
+      in first.commands == map (\command -> Workspace.WorkspaceCommand command True) expected
+    layout expected preview = (NonEmpty.head preview.windows).layout == Just expected
 
 readJSON :: FilePath -> IO Value
 readJSON path = either fail pure =<< eitherDecodeFileStrict' path
