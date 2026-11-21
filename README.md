@@ -241,6 +241,11 @@ $ cabal run --verbose=0 mutate-graph
 A new capture shows the changes; the old snapshot keeps its values. Each
 rename is its own command, and a later failure undoes nothing.
 
+### [`movePane` and `breakPane`](docs/mutations.md#move-a-running-pane) to relocate a running pane
+
+The same program moves a worker out of its editor window and back. It uses
+the same `PaneRef` and resolves each destination from a fresh capture.
+
 ## Create sessions, windows and panes
 
 ### [`createSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-createsession/): create and use its targets

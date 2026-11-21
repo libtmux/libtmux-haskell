@@ -22,6 +22,7 @@ configuration below.
 | Presence and baseline-qualified waits on pane text | Implemented with `waitForText`; see [text waits](mutations.md#wait-for-pane-text) |
 | Scoped terminal applications, input, rendered output and leader exit | Initial Linux slice through `LibTmux.Program`; [requirements and limits](programs.md) |
 | Contextual links, selection and named layouts | Implemented through `WindowSlot`; see [window links and focus](creation.md#link-select-and-arrange-windows) |
+| Move or join a running pane, or break it into a vacant slot | [Contextual pane relocation](mutations.md#move-a-running-pane) |
 | Named global and session environment entries | Implemented through `getEnvironment`, `setEnvironment`, `markEnvironmentRemoved` and `unsetEnvironment` |
 | Named binary buffers and explicit pane paste | Implemented through `loadBuffer`, `readBuffer` and `pasteBuffer`; see [paste buffers](buffers.md) |
 | Absolute pane/window width, height or both | Implemented through `resizePane` and `resizeWindow`; see [resizing](resizing.md). Other resize modes remain open. |

@@ -7,14 +7,14 @@
 </div>
 <!-- /libtmux-logo -->
 
-# Rename captured targets
+# Rename captured targets and move a pane
 
-[Main.hs](Main.hs) selects one pane, then calls
+[Main.hs](Main.hs) calls
 [`renameSession`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamesession/),
 [`renameWindow`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-renamewindow/) and
 [`setPaneTitle`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-setpanetitle/).
-
-- A fresh capture shows the changes; the original snapshot keeps its old values.
+It splits a worker pane, moves it into a vacant window and brings it back.
+Each step resolves the same pane in a fresh snapshot.
 
 The program creates its own daemon. Run from the repository root.
 
@@ -24,4 +24,4 @@ $ cabal run --verbose=0 mutate-graph
 
 Compare the result with [expected.stdout](expected.stdout).
 
-More: [mutations](../../docs/mutations.md).
+[Pane relocation and recovery](../../docs/mutations.md#move-a-running-pane).
