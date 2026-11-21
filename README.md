@@ -423,6 +423,7 @@ waits for the daemon generation admitted by this handle to exit.
 | Inspect a Haskell application’s tmux daemon from an agent | [MCP setup and discovery](docs/agents.md) |
 | Reproduce capture measurements | [Performance](https://libtmux.org/en/haskell/latest/guides/performance/) |
 | Browse connection and mutation operations | [`LibTmux.Server`](https://libtmux.org/en/haskell/latest/reference/libtmux-server/) |
+| Preview tmuxp YAML and apply it to a new session | [Workspace loader](docs/workspaces.md) |
 | Browse declarations and module documentation | [API reference](https://libtmux.org/en/haskell/latest/reference/) |
 | See what works today and what is planned | [Status](https://libtmux.org/en/haskell/latest/guides/status/) |
 

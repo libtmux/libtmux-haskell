@@ -150,9 +150,45 @@ def test_an_example_consumer_bounds_its_build_and_run(
         **declared,
     }
     check_sdist.check_example_consumers(
-        [entry], tmp_path / "consumers", "../lib.tar.gz", lambda path: b"ok\n"
+        [entry],
+        tmp_path / "consumers",
+        ("../lib.tar.gz", "../workspace.tar.gz"),
+        lambda path: b"ok\n",
+    )
+    assert (tmp_path / "consumers/cabal.project").read_text().splitlines()[0] == (
+        "packages: ../lib.tar.gz ../workspace.tar.gz demo"
     )
     assert commands == [("cabal", 600), ("cabal", 120), ("program", limit)]
+
+
+def test_pinned_archives_select_both_package_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision = "ab" * 20
+    paths: list[str] = []
+    trees: list[str] = []
+
+    def show(command: list[str], **_: object) -> str:
+        paths.append(command[-1])
+        return "version: 0.0.7.0\n"
+
+    def archive(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        trees.append(command[-1])
+        return subprocess.CompletedProcess(command, 0, command[-1].encode(), b"")
+
+    monkeypatch.setattr(check_sdist, "output", show)
+    monkeypatch.setattr(check_sdist, "bounded_run", archive)
+    archives = check_sdist.pinned_archives(tmp_path, revision)
+    assert [path.name for path in archives] == [
+        "libtmux-haskell-0.0.7.0.tar.gz",
+        "libtmux-haskell-workspace-0.0.7.0.tar.gz",
+    ]
+    assert paths == [
+        revision + ":libtmux-haskell.cabal",
+        revision + ":workspace/libtmux-haskell-workspace.cabal",
+    ]
+    assert trees == [revision, revision + ":workspace"]
+    assert [path.read_bytes() for path in archives] == [tree.encode() for tree in trees]
 
 
 def test_haddock_examples_run_with_a_time_limit(
@@ -222,9 +258,9 @@ def test_batched_consumers_still_check_each_distinct_output(
     monkeypatch.setattr(check_sdist, "bounded_run", run)
     if corrupt:
         with pytest.raises(ValueError, match="second produced unexpected output"):
-            check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
+            check_sdist.check_example_consumers(entries, workspace, ("../core.tar.gz",), source)
     else:
-        check_sdist.check_example_consumers(entries, workspace, "../core.tar.gz", source)
+        check_sdist.check_example_consumers(entries, workspace, ("../core.tar.gz",), source)
     assert builds == [(["cabal", "build", "all", "--offline"], workspace, check_sdist.BUILD)]
     assert targets == ["exe:first", "exe:second"]
     assert executed == ["first", "second"]
@@ -266,7 +302,7 @@ def test_installed_consumers_run_on_their_qualified_endpoints(
         for name, minimum in [("offline", None), ("floor", "3.3a"), ("program", "3.8")]
     ]
     check_sdist.check_example_consumers(
-        entries, tmp_path / "consumers", "../core.tar.gz", lambda _: b"ok\n"
+        entries, tmp_path / "consumers", ("../core.tar.gz",), lambda _: b"ok\n"
     )
     assert len(builds) == 1
     assert executed == {

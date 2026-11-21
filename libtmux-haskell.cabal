@@ -36,6 +36,7 @@ extra-doc-files:
   docs/programs.md
   docs/buffers.md
   docs/options.md
+  docs/workspaces.md
   docs/capabilities.md
   docs/control.md
   docs/mutations.md
@@ -180,6 +181,12 @@ extra-source-files:
   examples/mutate-graph/libtmux-mutate-graph.cabal
   examples/mutate-graph/cabal.project
   examples/mutate-graph/cabal.project.vcs
+  examples/load-workspace/Main.hs
+  examples/load-workspace/README.md
+  examples/load-workspace/expected.stdout
+  examples/load-workspace/libtmux-load-workspace.cabal
+  examples/load-workspace/cabal.project
+  examples/load-workspace/cabal.project.vcs
   .github/workflows/ci.yml
   .github/workflows/release.yml
   .github/workflows/docs.yml

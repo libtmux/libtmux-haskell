@@ -1,4 +1,4 @@
-packages: . workspace examples/typed-values examples/capture-graph examples/offline-graph examples/shared-runtime examples/query-graph examples/mutate-graph examples/create-session examples/managed-program examples/paste-buffer examples/resize-geometry examples/configure-session examples/watch-window
+packages: . workspace examples/typed-values examples/capture-graph examples/offline-graph examples/shared-runtime examples/query-graph examples/mutate-graph examples/create-session examples/managed-program examples/paste-buffer examples/resize-geometry examples/configure-session examples/watch-window examples/load-workspace
 
 index-state: 2026-11-06T00:00:00Z
 tests: True

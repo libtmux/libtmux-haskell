@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Build and execute public consumers from the core source archive."""
+"""Build and execute public consumers from the source archives."""
 
 import json
 import re
@@ -17,6 +17,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "libtmux-haskell.cabal"
+PACKAGES = ("libtmux-haskell", "libtmux-haskell-workspace")
+PACKAGE_DIRECTORIES = (ROOT, ROOT / "workspace")
 CONSUMER_PROJECT_SETTINGS = """\
 index-state: 2026-11-06T00:00:00Z
 tests: False
@@ -92,20 +94,34 @@ def haddock_examples(source: str) -> list[Example]:
 
 
 def main() -> None:
-    """Build the archive, then build and run every consumer from it."""
+    """Build both archives, then build and run every consumer from them."""
     examples = check_docs()
-    match = re.search(r"^version:\s*(\S+)", MANIFEST.read_text(), re.MULTILINE)
-    if match is None:
-        raise ValueError("The Cabal manifest has no version")
-    version = match.group(1)
+    versions = tuple(
+        package_version((root / (package + ".cabal")).read_text())
+        for package, root in zip(PACKAGES, PACKAGE_DIRECTORIES, strict=True)
+    )
     with tempfile.TemporaryDirectory(prefix="libtmux-haskell-consumer-") as temporary:
         directory = Path(temporary)
         archives = directory / "archives"
-        run(["cabal", "sdist", "pkg:libtmux-haskell", "--output-directory=" + str(archives)], ROOT)
-        archive = archives / f"libtmux-haskell-{version}.tar.gz"
+        filenames = tuple(
+            f"{package}-{version}.tar.gz"
+            for package, version in zip(PACKAGES, versions, strict=True)
+        )
+        run(
+            [
+                "cabal",
+                "sdist",
+                *(f"pkg:{package}" for package in PACKAGES),
+                "--output-directory=" + str(archives),
+            ],
+            ROOT,
+        )
+        archive = archives / filenames[0]
+        with tarfile.open(archives / filenames[1]) as workspace:
+            verify_members(workspace, PACKAGE_DIRECTORIES[1])
         with tarfile.open(archive) as source:
             verify_members(source, ROOT)
-            prefix = f"libtmux-haskell-{version}/"
+            prefix = filenames[0].removesuffix(".tar.gz") + "/"
             doctests: list[Example] = []
             doctest_modules: list[str] = []
             for module in sorted(cabal_modules(MANIFEST)[0]):
@@ -118,13 +134,21 @@ def main() -> None:
             check_example_consumers(
                 examples,
                 consumers,
-                f"../archives/libtmux-haskell-{version}.tar.gz",
+                tuple(f"../archives/{name}" for name in filenames),
                 lambda path: archived(source, prefix + path),
             )
             check_haddock_examples(consumers, doctest_modules, doctests)
             check_installation_pin(directory, examples)
-            check_public_commands(source, prefix, directory, version)
-        print("PASS: archive members, documented public example and Haddock examples")
+            check_public_commands(source, prefix, directory, versions[0])
+        print("PASS: archive members, documented public examples and Haddock examples")
+
+
+def package_version(manifest: str) -> str:
+    """Read the version recorded by Cabal in a selected source tree."""
+    match = re.search(r"^version:\s*(\S+)", manifest, re.MULTILINE)
+    if match is None:
+        raise ValueError("The Cabal manifest has no version")
+    return match.group(1)
 
 
 def installation_pin(project: str) -> str:
@@ -144,33 +168,46 @@ def check_installation_pin(directory: Path, examples: list[Entry]) -> None:
     capture = next(entry for entry in examples if entry["id"] == "capture-graph")
     pin = installation_pin((ROOT / capture["vcs_project"]).read_text())
     run(["git", "merge-base", "--is-ancestor", pin, "HEAD"], ROOT)
-    manifest = output(["git", "show", pin + ":libtmux-haskell.cabal"], cwd=ROOT, timeout=QUICK)
-    match = re.search(r"^version:\s*(\S+)", manifest, re.MULTILINE)
-    if match is None:
-        raise ValueError("The pinned Cabal manifest has no version")
-    name = f"libtmux-haskell-{match.group(1)}"
-    archive = directory / (name + ".tar.gz")
-    tarball = bounded_run(
-        ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", pin],
-        cwd=ROOT,
-        check=True,
-        stdout=subprocess.PIPE,
-        timeout=QUICK,
-    )
-    archive.write_bytes(tarball.stdout)
+    archives = pinned_archives(directory, pin)
     check_example_consumers(
         examples,
         directory / "installation-examples",
-        "../" + archive.name,
+        tuple("../" + archive.name for archive in archives),
         lambda path: (ROOT / path).read_bytes(),
     )
     print("PASS: documented installation pin supports the current public examples")
 
 
+def pinned_archives(directory: Path, revision: str) -> tuple[Path, ...]:
+    """Archive each package at one revision, rooted at its Cabal manifest."""
+    archives = []
+    for package, root in zip(PACKAGES, PACKAGE_DIRECTORIES, strict=True):
+        manifest = (root / (package + ".cabal")).relative_to(ROOT).as_posix()
+        version = package_version(
+            output(["git", "show", f"{revision}:{manifest}"], cwd=ROOT, timeout=QUICK)
+        )
+        name = f"{package}-{version}"
+        archive = directory / (name + ".tar.gz")
+        tree = revision if root == ROOT else f"{revision}:{root.relative_to(ROOT).as_posix()}"
+        tarball = bounded_run(
+            ["git", "archive", "--format=tar.gz", "--prefix=" + name + "/", tree],
+            cwd=ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            timeout=QUICK,
+        )
+        archive.write_bytes(tarball.stdout)
+        archives.append(archive)
+    return tuple(archives)
+
+
 def check_example_consumers(
-    examples: list[Entry], workspace: Path, library: str, read_source: Callable[[str], bytes]
+    examples: list[Entry],
+    workspace: Path,
+    libraries: tuple[str, ...],
+    read_source: Callable[[str], bytes],
 ) -> None:
-    """Build one archive's separate packages together, then check every output."""
+    """Build the separate packages together, then check every output."""
     workspace.mkdir()
     for entry in examples:
         consumer = workspace / entry["id"]
@@ -179,7 +216,7 @@ def check_example_consumers(
             (consumer / Path(entry[field]).name).write_bytes(read_source(entry[field]))
     packages = " ".join(entry["id"] for entry in examples)
     (workspace / "cabal.project").write_text(
-        f"packages: {library} {packages}\n" + CONSUMER_PROJECT_SETTINGS
+        f"packages: {' '.join(libraries)} {packages}\n" + CONSUMER_PROJECT_SETTINGS
     )
     run(["cabal", "build", "all", "--offline"], workspace, BUILD)
     floor_runs = 0
