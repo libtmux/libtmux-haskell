@@ -74,7 +74,7 @@ import Control.Exception
   )
 import Control.Monad (forM_, unless, when)
 import Data.IORef
-import Data.Maybe (isJust, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -1036,7 +1036,7 @@ data PaneStateWaitResult
   = PaneStateMatched !Snapshot
   | PaneStateTimedOut !(Maybe Snapshot) !(Maybe CaptureRecovery)
   | PaneStateDaemonLost !(Maybe Snapshot) !(Maybe CaptureRecovery)
-  | PaneStateObserverEnded !Control.ControlEnd !(Maybe Snapshot)
+  | PaneStateObserverEnded !Control.ControlEnd !(Maybe Snapshot) !(Maybe CaptureRecovery)
   deriving stock (Show)
 
 -- | Observe an exact pane without sending it input. For 'PaneActive' the
@@ -1045,8 +1045,8 @@ data PaneStateWaitResult
 -- covers the whole daemon. Both references must belong to this Server.
 --
 -- Check the state immediately and again after attaching. Control notifications
--- wake the waiter, which confirms state in a fresh capture. A bounded recheck
--- also covers dead and absent panes because tmux can change those quietly.
+-- wake the waiter, which confirms state in a fresh capture. Bounded rechecks
+-- cover silent changes such as a retained pane dying or window links swapping.
 -- This is a level observation and cannot recover a state that has already
 -- changed back. Attach hooks can run just as with 'withControl'.
 --
@@ -1069,59 +1069,68 @@ waitForPaneState server@(Server _ handle _ _ _ _) slot@(Creation.WindowSlot sess
       remaining = do
         elapsed <- subtract start <$> getMonotonicTimeNSec
         pure (fromIntegral ((budget - min budget elapsed + 999) `div` 1000))
-      timedOut previous = PaneStateTimedOut previous Nothing
+      observedEnd = maybe (pure Nothing) (atomically . Control.controlEnd)
+      knownEnd previous recovery = \case
+        Just Control.ControlOverflow -> Just (PaneStateObserverEnded Control.ControlOverflow previous recovery)
+        Just reason | daemonExit reason -> Just (PaneStateDaemonLost previous recovery)
+        _ -> Nothing
+      timedOut observer previous recovery = do
+        ended <- observedEnd observer
+        pure (fromMaybe (PaneStateTimedOut previous recovery) (knownEnd previous recovery ended))
       captureNext observer previous = do
         left <- remaining
-        if left == 0 then pure (Left (timedOut previous)) else
-          catchNoPropagate (Right <$> captureFor server left) $ \original@(ExceptionWithContext context failure) ->
-            let recovery = listToMaybe (Context.getExceptionAnnotations @CaptureRecovery context)
-            in case fromException failure of
-              Just C.CaptureDeadline -> pure (Left (PaneStateTimedOut previous recovery))
-              _ | Just (_ :: R.ReadError) <- fromException failure -> do
-                ended <- maybe (pure Nothing) (atomically . Control.controlEnd) observer
-                stopped <- if maybe False daemonExit ended then pure True else do
-                  leftAfterRead <- remaining
-                  listenerStopped (min 50 (div leftAfterRead 1000))
-                if stopped then pure (Left (PaneStateDaemonLost previous recovery))
-                else rethrowIO original
-              _ -> rethrowIO original
+        if left == 0 then Left <$> timedOut observer previous Nothing else
+          catchNoPropagate (Right <$> captureFor server left) $
+            \original@(ExceptionWithContext context failure) ->
+              if isJust (fromException @SomeAsyncException failure) then rethrowIO original else do
+                let recovery = listToMaybe (Context.getExceptionAnnotations @CaptureRecovery context)
+                ended <- observedEnd observer
+                case knownEnd previous recovery ended of
+                  Just terminal -> pure (Left terminal)
+                  Nothing -> case fromException failure of
+                    Just C.CaptureDeadline -> pure (Left (PaneStateTimedOut previous recovery))
+                    _ | Just (_ :: R.ReadError) <- fromException failure -> do
+                      leftAfterRead <- remaining
+                      stopped <- listenerStopped (min 50 (div leftAfterRead 1000))
+                      if stopped then pure (Left (PaneStateDaemonLost previous recovery))
+                      else rethrowIO original
+                    _ -> rethrowIO original
       confirm observer previous accept = captureNext observer previous >>= \case
         Left failure -> pure failure
         Right snapshot -> do
           left <- remaining
-          if left == 0 then pure (timedOut previous) else accept snapshot
+          if left == 0 then timedOut observer previous Nothing else accept snapshot
       matches = paneStateMatches slot pane state
       finish previous reason
-        | reason == Control.ControlOverflow = pure (PaneStateObserverEnded reason previous)
-        | daemonExit reason = pure (PaneStateDaemonLost previous Nothing)
+        | Just terminal <- knownEnd previous Nothing (Just reason) = pure terminal
         | otherwise = do
             stopped <- listenerStopped 0
             if stopped then pure (PaneStateDaemonLost previous Nothing) else
               confirm Nothing previous $ \fresh ->
-                pure (if matches fresh then PaneStateMatched fresh else PaneStateObserverEnded reason (Just fresh))
+                pure (if matches fresh then PaneStateMatched fresh else PaneStateObserverEnded reason (Just fresh) Nothing)
       observe stream previous = confirm (Just stream) previous $ \fresh -> do
         ended <- atomically (Control.controlEnd stream)
         case ended of
-          Just Control.ControlOverflow -> pure (PaneStateObserverEnded Control.ControlOverflow (Just fresh))
+          _ | Just terminal <- knownEnd (Just fresh) Nothing ended -> pure terminal
           _ | matches fresh -> pure (PaneStateMatched fresh)
           Just reason -> finish (Just fresh) reason
           Nothing -> do
             left <- remaining
-            let interval = if state == PaneActive then left else min left 100000
-            if interval == 0 then pure (timedOut (Just fresh)) else
+            let interval = min left 100000
+            if interval == 0 then timedOut (Just stream) (Just fresh) Nothing else
               timeout interval (atomically (Control.awaitControlWake stream)) >>= \case
                 Just (Left reason) -> finish (Just fresh) reason
                 Just (Right ()) -> observe stream (Just fresh)
-                Nothing | interval == left -> pure (timedOut (Just fresh))
+                Nothing | interval == left -> timedOut (Just stream) (Just fresh) Nothing
                 Nothing -> observe stream (Just fresh)
       attach previous = do
         left <- remaining
-        if left == 0 then pure (timedOut previous) else
+        if left == 0 then timedOut Nothing previous Nothing else
           catchNoPropagate (withControlFor server left session observerOptions (\stream -> observe stream previous)) $
             \original@(ExceptionWithContext context failure) ->
               if not (null (Control.controlRecoveries context)) then rethrowIO original else
                 case failure of
-                  Control.ControlAttachTimedOut -> pure (timedOut previous)
+                  Control.ControlAttachTimedOut -> timedOut Nothing previous Nothing
                   Control.ControlAttachEnded reason -> finish previous reason
                   Control.ControlAttachRejected -> confirm Nothing previous $ \fresh ->
                     if matches fresh then pure (PaneStateMatched fresh) else rethrowIO original

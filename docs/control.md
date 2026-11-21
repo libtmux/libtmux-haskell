@@ -25,11 +25,11 @@ pane of its window. `PaneDead` observes a retained dead pane. `PaneAbsent` obser
 that the physical pane is gone from the daemon.
 
 The waiter confirms the result in a fresh snapshot. Control notifications
-wake it promptly. It also rechecks physical death and removal on a bounded
-interval because tmux can change either state silently. The deadline covers
-attachment and capture. Control cleanup has a separate budget.
+wake it promptly. Bounded rechecks cover silent changes such as pane death
+and window-link swaps. The deadline covers attachment and capture. Control
+cleanup has a separate budget.
 
-`PaneStateMatched` carries the confirming snapshot. On timeout or daemon loss, keep
+`PaneStateMatched` carries the confirming snapshot. On timeout, daemon loss or observer failure, keep
 any returned capture owner and use [recovery](capture.md#errors-and-recovery)
 to inspect it. A full observer queue returns `PaneStateObserverEnded ControlOverflow`. The waiter observes
 current state, so a change that reverses before the next capture can go unseen.

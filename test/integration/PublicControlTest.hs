@@ -212,7 +212,7 @@ tests = testGroup "public control notifications"
           _ <- remember (clientWitness fixture)
           void (native fixture burst)
           bounded (wait worker) >>= \case
-            Tmux.PaneStateObserverEnded Tmux.ControlOverflow (Just _) -> pure ()
+            Tmux.PaneStateObserverEnded Tmux.ControlOverflow (Just _) recovery -> settleRead server recovery
             _ -> assertFailure "expected explicit control overflow"
         native fixture ["list-clients", "-F", "#{client_pid}"] >>= (@?= "")
 
@@ -258,6 +258,60 @@ tests = testGroup "public control notifications"
                   [owner] -> settleRead server (Just owner)
                   _ -> assertFailure "cancelled graph read lost its recovery"
               Right _ -> assertFailure "state wait swallowed cancellation"
+
+  , testCase "state wait retains overflow and the pending graph read at its deadline" $
+      withServer $ \fixture server session _ -> withWitness $ \remember -> do
+        (_, pane) <- stateTarget server session
+        empty <- either (fail . show) pure (Tmux.mkWindowIndex 9)
+        let gate = "set-hook -g after-display-message { wait-for -S pane-state-reading ; wait-for pane-state-release }"
+            options = Tmux.defaultPaneStateWait {Tmux.stateTimeout = 0.5, Tmux.stateEventCapacity = 1}
+            run = Tmux.waitForPaneState server (Tmux.WindowSlot session empty) pane Tmux.PaneActive options
+            burst = intercalate [";"] [["rename-window", "burst-" <> show serial] | serial <- [1 .. 48 :: Int]]
+            releaseRead = do
+              void (native fixture ["set-hook", "-gu", "after-display-message"])
+              void (native fixture ["wait-for", "-S", "pane-state-release"])
+        void (native fixture ["set-hook", "-t", sessionTarget session, "client-attached", gate])
+        flip finally releaseRead $
+          withAsync run $ \worker -> do
+            void (bounded (native fixture ["wait-for", "pane-state-reading"]))
+            fd <- remember (clientWitness fixture)
+            void (native fixture burst)
+            bounded (threadWaitRead (Fd fd))
+            bounded (wait worker) >>= \case
+              Tmux.PaneStateObserverEnded Tmux.ControlOverflow (Just _) recovery@(Just _) ->
+                settleRead server recovery
+              Tmux.PaneStateTimedOut _ recovery -> do
+                settleRead server recovery
+                assertFailure "the graph deadline masked earlier control overflow"
+              _ -> assertFailure "expected overflow with the last complete snapshot"
+
+  , testCase "state wait observes focus after a quiet swap of window links" $
+      withServer $ \fixture server session original -> do
+        (slot@(Tmux.WindowSlot _ oldIndex), _) <- stateTarget server session
+        otherIndex <- either (fail . show) pure (Tmux.mkWindowIndex 1)
+        moved <- Tmux.createWindow server (Creation.At (Tmux.WindowSlot session otherIndex))
+          Creation.defaultWindowOptions {Creation.windowProcess = Creation.ShellCommand "exec /bin/cat -"}
+        forM_ [original, moved.window] $ \window ->
+          void (native fixture ["set-option", "-w", "-t",
+            Ascii.unpack (Utf8.encodeUtf8 (Tmux.renderWindowId (Tmux.windowId window))), "automatic-rename", "off"])
+        let gate = "set-hook -g after-list-clients { set-hook -gu after-list-clients ; wait-for -S pane-focus-read ; wait-for pane-focus-release }"
+            position index = sessionTarget session <> ":" <> show (Tmux.windowIndexValue index)
+            releaseSnapshot = void (native fixture ["wait-for", "-S", "pane-focus-release"])
+            options = Tmux.defaultPaneStateWait {Tmux.stateTimeout = 0.6}
+        void (native fixture ["set-hook", "-t", sessionTarget session, "client-attached", gate])
+        flip finally releaseSnapshot $
+          withAsync (Tmux.waitForPaneState server slot moved.pane Tmux.PaneActive options) $ \worker -> do
+            void (bounded (native fixture ["wait-for", "pane-focus-read"]))
+            void (native fixture ["swap-window", "-d", "-s", position otherIndex, "-t", position oldIndex])
+            releaseSnapshot
+            bounded (wait worker) >>= \case
+              Tmux.PaneStateMatched fresh -> do
+                links <- either (fail . show) pure (Tmux.linksForSession fresh session)
+                [(link.index, link.window) | link <- links, link.active] @?= [(oldIndex, moved.window)]
+              Tmux.PaneStateTimedOut _ recovery -> do
+                settleRead server recovery
+                assertFailure "quiet link swap left the focus waiter asleep"
+              _ -> assertFailure "expected an observed selected pane after the swap"
 
   , testCase "state wait rejects references from another adoption before attaching" $
       withServer $ \fixture server session _ -> do
