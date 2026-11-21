@@ -234,6 +234,36 @@ tests = testGroup "public creation and pane relocation"
             _ <- occurrence fresh (slot destination) destination.pane
             pure ()
 
+  , testCase "pane relocation joins a full-height pane before its target and selects it" $
+      withBase $ \fixture server base -> do
+        destination <- Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+        withPane fixture destination.pane $ do
+          bystander <- Tmux.splitPane server (slot destination) destination.pane splitOptions
+          withPane fixture bystander.pane $ do
+            snapshot <- Tmux.capture server
+            source <- occurrence snapshot (slot base) base.pane
+            target <- occurrence snapshot (slot destination) destination.pane
+            width <- require (Tmux.mkDimension 32)
+            let options = Tmux.defaultPaneMoveOptions
+                  { Tmux.moveDirection = Tmux.LeftRight
+                  , Tmux.moveSize = Tmux.SplitCells width
+                  , Tmux.moveBefore = True
+                  , Tmux.moveFullWindow = True
+                  , Tmux.selectMovedPane = True
+                  }
+            Tmux.joinPane server source target options >>=
+              (@?= Tmux.MoveAccepted base.pane (slot destination) destination.window)
+            fresh <- Tmux.capture server
+            moved <- occurrence fresh (slot destination) base.pane
+            window <- require (Tmux.lookupWindow fresh destination.window)
+            moved.pane.width @?= width
+            moved.pane.height @?= window.height
+            assertBool "moved pane and destination link should be selected" (moved.pane.active && moved.link.active)
+            Fixture.command fixture ["display-message", "-p", "-t", paneTarget base.pane, "#{pane_left}"] >>=
+              (@?= (ExitSuccess, "0\n", ""))
+            _ <- occurrence fresh (slot destination) bystander.pane
+            pure ()
+
   , testCase "pane relocation rejects a stale slot even when tmux could find its numeric name" $
       withBase $ \fixture server base -> do
         index <- require (Tmux.mkWindowIndex 4)
