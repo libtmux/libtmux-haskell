@@ -55,6 +55,9 @@ module LibTmux.Server
     -- * Pane text
   , PaneText, capturePane, paneText
   , PaneWaitOptions (..), defaultPaneWait, PaneMatch (..), PaneWaitResult (..), waitForText
+    -- * Pane state
+  , PaneState (..), PaneStateWaitOptions (..), defaultPaneStateWait
+  , PaneStateWaitResult (..), waitForPaneState
     -- * Shared ownership
   , Runtime, withRuntime, withServerIn
     -- * Operational failures
@@ -67,11 +70,11 @@ import Control.DeepSeq (force)
 import Control.Exception.Context qualified as Context
 import Control.Exception
   ( ExceptionWithContext (..)
-  , catchNoPropagate, evaluate, fromException, mask, onException, rethrowIO, SomeAsyncException, throwIO, toException, tryWithContext
+  , catchNoPropagate, evaluate, finally, fromException, mask, onException, rethrowIO, SomeAsyncException, throwIO, toException, tryWithContext
   )
 import Control.Monad (forM_, unless, when)
 import Data.IORef
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, listToMaybe)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -83,6 +86,8 @@ import Data.Text.Encoding qualified as Utf8
 import Data.Time.Clock (NominalDiffTime)
 import Data.Type.Coercion (coerceWith, sym)
 import Data.Word (Word32)
+import Foreign.C.Error (eCONNREFUSED)
+import GHC.Clock (getMonotonicTimeNSec)
 import LibTmux.Environment (EnvironmentEntry (..), EnvironmentScope (..), EnvironmentVisibility)
 import LibTmux.Id (SessionId)
 import LibTmux.Id qualified as Id
@@ -119,6 +124,8 @@ import LibTmux.Version qualified as Version
 import LibTmux.Internal.VersionProbe qualified as VersionProbe
 import LibTmux.Value (Resize)
 import LibTmux.Snapshot (Generation, Snapshot, SessionRef, WindowRef, PaneRef, TmuxText)
+import LibTmux.Snapshot qualified as Snapshot
+import System.Timeout (timeout)
 import System.Directory.OsPath qualified as Directory
 import System.OsPath.Posix (PosixPath)
 import System.OsPath.Posix qualified as Path
@@ -304,7 +311,10 @@ killServer (Server _ handle _ _ _ retire) = operational $ do
 -- Returned values own their data and remain usable after 'withServer' exits.
 -- Capacity and acquisition failure are errors; they never become empty lists.
 capture :: Server -> IO Snapshot
-capture (Server runtime handle executable duration _ _) = operational $ do
+capture server@(Server _ _ _ duration _ _) = operational (captureFor server duration)
+
+captureFor :: Server -> Int -> IO Snapshot
+captureFor (Server runtime handle executable _ _ _) duration = do
   closed <- atomically (readTVar (R.serverPool handle).closing)
   when closed (throwIO ServerClosed)
   (started, finished, decoded) <- C.captureSnapshot runtime handle executable duration
@@ -328,7 +338,10 @@ serverCapabilities (Server _ _ _ _ available _) = available
 -- bounded notifications through "LibTmux.Control" and make changes through
 -- the Server operations. Closing the callback retires its own client.
 withControl :: Server -> SessionRef -> ControlOptions -> (Control -> IO a) -> IO a
-withControl server@(Server _ handle executable duration available _) (G.SessionRef generation ident) options action = do
+withControl server@(Server _ _ _ duration _ _) = withControlFor server duration
+
+withControlFor :: Server -> Int -> SessionRef -> ControlOptions -> (Control -> IO a) -> IO a
+withControlFor server@(Server _ handle executable _ available _) duration (G.SessionRef generation ident) options action = do
   checkTarget server generation
   either throwIO pure (Capabilities.requireCapability available Capabilities.ControlNotifications)
   let session = Utf8.encodeUtf8 (Id.renderSessionId ident)
@@ -997,6 +1010,144 @@ waitForText server@(Server runtime handle executable _ _ _) pane@(G.PaneRef gene
       C.TextMatched matched -> PaneTextMatched (captured matched)
       C.TextPaneEnded latest -> PaneTextExited (captured <$> latest)
       C.TextWaitExpired latest recovery -> PaneTextTimedOut (captured <$> latest) recovery
+
+-- | Observe a physical pane or its focus in a specific session's window slot.
+data PaneState
+  = PaneDead   -- ^ tmux retained the pane after its process exited.
+  | PaneAbsent -- ^ The pane no longer exists in this daemon generation.
+  | PaneActive -- ^ The slot is selected in its session and the pane is active in that window.
+  deriving stock (Eq, Show)
+
+-- | A whole-wait deadline and the capacity of its owned control stream.
+data PaneStateWaitOptions = PaneStateWaitOptions
+  { stateTimeout :: !NominalDiffTime -- ^ Positive seconds, at most ten.
+  , stateEventCapacity :: !Int -- ^ Control events in flight, from 1 through 128.
+  }
+  deriving stock (Eq, Show)
+
+-- | Allow one second and 32 pending notifications.
+defaultPaneStateWait :: PaneStateWaitOptions
+defaultPaneStateWait = PaneStateWaitOptions 1 32
+
+-- | A match includes the snapshot that established it. Other outcomes carry
+-- the most recent complete snapshot, if available. A failed read can retain
+-- a recovery owner independently of the control client.
+data PaneStateWaitResult
+  = PaneStateMatched !Snapshot
+  | PaneStateTimedOut !(Maybe Snapshot) !(Maybe CaptureRecovery)
+  | PaneStateDaemonLost !(Maybe Snapshot) !(Maybe CaptureRecovery)
+  | PaneStateObserverEnded !Control.ControlEnd !(Maybe Snapshot)
+  deriving stock (Show)
+
+-- | Observe an exact pane without sending it input. For 'PaneActive' the
+-- link must be current in the session named by the slot. For 'PaneDead' and
+-- 'PaneAbsent' the slot's session anchors the observer, and the observation
+-- covers the whole daemon. Both references must belong to this Server.
+--
+-- Check the state immediately and again after attaching. Control notifications
+-- wake the waiter, which confirms state in a fresh capture. A bounded recheck
+-- also covers dead and absent panes because tmux can change those quietly.
+-- This is a level observation and cannot recover a state that has already
+-- changed back. Attach hooks can run just as with 'withControl'.
+--
+-- One monotonic deadline covers attachment, observation, and waiting. Scope
+-- retirement has its own cleanup budget. Cancellation preserves the incoming
+-- exception and any retained owners in its context.
+waitForPaneState :: Server -> Creation.WindowSlot -> PaneRef -> PaneState
+  -> PaneStateWaitOptions -> IO PaneStateWaitResult
+waitForPaneState server@(Server _ handle _ _ _ _) slot@(Creation.WindowSlot session _) pane state options = operational $ do
+  let G.SessionRef sessionGeneration _ = session
+      G.PaneRef paneGeneration _ = pane
+      observerOptions = Control.defaultControlOptions {eventCapacity = options.stateEventCapacity}
+  checkTarget server sessionGeneration
+  checkTarget server paneGeneration
+  either throwIO pure (Capabilities.requireCapability (serverCapabilities server) Capabilities.ControlNotifications)
+  Control.validateControlOptions observerOptions
+  duration <- limitedDuration PaneStateWaitTimeout options.stateTimeout
+  start <- getMonotonicTimeNSec
+  let budget = fromIntegral duration * 1000
+      remaining = do
+        elapsed <- subtract start <$> getMonotonicTimeNSec
+        pure (fromIntegral ((budget - min budget elapsed + 999) `div` 1000))
+      timedOut previous = PaneStateTimedOut previous Nothing
+      captureNext observer previous = do
+        left <- remaining
+        if left == 0 then pure (Left (timedOut previous)) else
+          catchNoPropagate (Right <$> captureFor server left) $ \original@(ExceptionWithContext context failure) ->
+            let recovery = listToMaybe (Context.getExceptionAnnotations @CaptureRecovery context)
+            in case fromException failure of
+              Just C.CaptureDeadline -> pure (Left (PaneStateTimedOut previous recovery))
+              _ | Just (_ :: R.ReadError) <- fromException failure -> do
+                ended <- maybe (pure Nothing) (atomically . Control.controlEnd) observer
+                stopped <- if maybe False daemonExit ended then pure True else do
+                  leftAfterRead <- remaining
+                  listenerStopped (min 50 (div leftAfterRead 1000))
+                if stopped then pure (Left (PaneStateDaemonLost previous recovery))
+                else rethrowIO original
+              _ -> rethrowIO original
+      confirm observer previous accept = captureNext observer previous >>= \case
+        Left failure -> pure failure
+        Right snapshot -> do
+          left <- remaining
+          if left == 0 then pure (timedOut previous) else accept snapshot
+      matches = paneStateMatches slot pane state
+      finish previous reason
+        | reason == Control.ControlOverflow = pure (PaneStateObserverEnded reason previous)
+        | daemonExit reason = pure (PaneStateDaemonLost previous Nothing)
+        | otherwise = do
+            stopped <- listenerStopped 0
+            if stopped then pure (PaneStateDaemonLost previous Nothing) else
+              confirm Nothing previous $ \fresh ->
+                pure (if matches fresh then PaneStateMatched fresh else PaneStateObserverEnded reason (Just fresh))
+      observe stream previous = confirm (Just stream) previous $ \fresh -> do
+        ended <- atomically (Control.controlEnd stream)
+        case ended of
+          Just Control.ControlOverflow -> pure (PaneStateObserverEnded Control.ControlOverflow (Just fresh))
+          _ | matches fresh -> pure (PaneStateMatched fresh)
+          Just reason -> finish (Just fresh) reason
+          Nothing -> do
+            left <- remaining
+            let interval = if state == PaneActive then left else min left 100000
+            if interval == 0 then pure (timedOut (Just fresh)) else
+              timeout interval (atomically (Control.awaitControlWake stream)) >>= \case
+                Just (Left reason) -> finish (Just fresh) reason
+                Just (Right ()) -> observe stream (Just fresh)
+                Nothing | interval == left -> pure (timedOut (Just fresh))
+                Nothing -> observe stream (Just fresh)
+      attach previous = do
+        left <- remaining
+        if left == 0 then pure (timedOut previous) else
+          catchNoPropagate (withControlFor server left session observerOptions (\stream -> observe stream previous)) $
+            \original@(ExceptionWithContext context failure) ->
+              if not (null (Control.controlRecoveries context)) then rethrowIO original else
+                case failure of
+                  Control.ControlAttachTimedOut -> pure (timedOut previous)
+                  Control.ControlAttachEnded reason -> finish previous reason
+                  Control.ControlAttachRejected -> confirm Nothing previous $ \fresh ->
+                    if matches fresh then pure (PaneStateMatched fresh) else rethrowIO original
+                  _ -> rethrowIO original
+  confirm Nothing Nothing $ \initial ->
+    if matches initial then pure (PaneStateMatched initial) else attach (Just initial)
+  where
+    listenerStopped graceMillis = mask $ \restore -> do
+      closed <- atomically (readTVar (R.serverPool handle).closing)
+      if closed then pure False else Owned.peerPidfd (Pin.pinPath (R.serverPin handle)) >>= \case
+        Left code -> pure (code == N.errno eCONNREFUSED)
+        Right fd -> restore (Owned.awaitExit fd graceMillis) `finally` N.close fd
+    daemonExit (Control.ControlExited message) =
+      message == "server exited" || message == "server exited unexpectedly"
+    daemonExit _ = False
+
+paneStateMatches :: Creation.WindowSlot -> PaneRef -> PaneState -> Snapshot -> Bool
+paneStateMatches (Creation.WindowSlot session index) pane state snapshot =
+  case (state, Snapshot.lookupPane snapshot pane) of
+    (PaneDead, Right observed) -> observed.dead
+    (PaneAbsent, Left (Snapshot.MissingPane _)) -> True
+    (PaneActive, Right observed) -> observed.active
+      && either (const False) (any (selects observed.window)) (Snapshot.linksForSession snapshot session)
+    _ -> False
+  where
+    selects window link = link.index == index && link.active && link.window == window
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server generation = mutateTargets options server [generation]

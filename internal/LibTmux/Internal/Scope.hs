@@ -53,7 +53,7 @@ data TmuxException
 instance Exception TmuxException
 
 -- | Which public setting supplied an invalid deadline.
-data TimeoutKind = CaptureTimeout | MutationTimeout | PaneWaitTimeout | OwnedOperationTimeout
+data TimeoutKind = CaptureTimeout | MutationTimeout | PaneWaitTimeout | PaneStateWaitTimeout | OwnedOperationTimeout
   deriving stock (Eq, Show)
 
 -- | A caller can correct these failures before trying the operation again.

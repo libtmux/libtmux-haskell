@@ -9,12 +9,15 @@ import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.List (intercalate)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text.Encoding qualified as Utf8
 import Fixture qualified
 import Foreign.C.Types (CInt)
 import GHC.Conc (BlockReason (..), ThreadStatus (..), threadStatus, threadWaitRead, threadWaitReadSTM)
 import LibTmux qualified as Tmux
+import LibTmux.Creation qualified as Creation
+import LibTmux.Recovery qualified as Recovery
 import LibTmux.Internal.Control qualified as Control
 import LibTmux.Internal.Process qualified as Process
 import LibTmux.Internal.Process.Native qualified as N
@@ -105,6 +108,176 @@ tests = testGroup "public control notifications"
         native fixture ["list-clients", "-F", "#{client_pid}"] >>= (@?= "")
         native fixture ["list-sessions", "-F", "#{session_name}"] >>= (@?= "fixture\n")
 
+  , testCase "state wait recognizes the initially active pane through its exact slot" $
+      withServer $ \_ server session _ -> do
+        (slot, pane) <- stateTarget server session
+        seen <- Tmux.waitForPaneState server slot pane Tmux.PaneActive Tmux.defaultPaneStateWait
+        fresh <- matchedState seen
+        observed <- either (fail . show) pure (Tmux.lookupPane fresh pane)
+        assertBool "matched snapshot must show the active pane" observed.active
+
+  , testCase "state wait sees native pane death without terminal output" $
+      withServer $ \fixture server session _ -> withWitness $ \remember -> do
+        (slot, pane) <- stateTarget server session
+        let options = Tmux.defaultPaneStateWait {Tmux.stateTimeout = 0.8}
+        void (native fixture ["set-option", "-p", "-t", paneTarget pane, "remain-on-exit", "on"])
+        signalAttachment fixture session
+        withAsync (Tmux.waitForPaneState server slot pane Tmux.PaneDead options) $ \worker -> do
+          awaitAttachment fixture
+          _ <- remember (clientWitness fixture)
+          Tmux.sendKeys server pane (Tmux.NamedKeys ("C-d" :| []))
+          fresh <- bounded (wait worker) >>= matchedState
+          observed <- either (fail . show) pure (Tmux.lookupPane fresh pane)
+          assertBool "matched snapshot must show a dead pane" observed.dead
+        native fixture ["list-clients", "-F", "#{client_pid}"] >>= (@?= "")
+
+  , testCase "state wait observes a pane removed during observer registration" $
+      withServer $ \fixture server session _ -> do
+        (slot, bystander) <- stateTarget server session
+        void (native fixture ["split-window", "-d", "exec /bin/cat -"])
+        graph <- Tmux.capture server
+        case filter ((/= bystander) . (.ref)) (Tmux.panes graph) of
+          [target] -> do
+            void (native fixture ["set-hook", "client-attached", "kill-pane -t " <> paneTarget target.ref])
+            seen <- Tmux.waitForPaneState server slot target.ref Tmux.PaneAbsent Tmux.defaultPaneStateWait
+            fresh <- matchedState seen
+            map (.ref) (Tmux.panes fresh) @?= [bystander]
+          _ -> assertFailure "expected one extra pane in the fixture"
+
+  , testCase "state wait retains its latest snapshot at the deadline" $
+      withServer $ \_ server session _ -> do
+        (slot, pane) <- stateTarget server session
+        let short = Tmux.defaultPaneStateWait {Tmux.stateTimeout = 0.12}
+        Tmux.waitForPaneState server slot pane Tmux.PaneDead short >>= \case
+          Tmux.PaneStateTimedOut (Just _) recovery -> settleRead server recovery
+          _ -> assertFailure "state wait did not retain its snapshot on timeout"
+
+  , testCase "state wait distinguishes a daemon lost while acquiring the graph" $
+      withServer $ \fixture server session _ -> do
+        (slot, pane) <- stateTarget server session
+        signalAttachment fixture session
+        withAsync (Tmux.waitForPaneState server slot pane Tmux.PaneDead Tmux.defaultPaneStateWait) $ \worker -> do
+          awaitAttachment fixture
+          void (native fixture ["kill-server"])
+          bounded (wait worker) >>= \case
+            Tmux.PaneStateDaemonLost _ recovery -> settleRead server recovery
+            _ -> assertFailure "state wait did not report loss of the pinned daemon"
+
+  , testCase "state wait uses the selected link in the requested session" $
+      withServer $ \fixture server session window -> do
+        (sourceSlot, pane) <- stateTarget server session
+        other <- stateSession server
+        idx <- either (fail . show) pure (Tmux.mkWindowIndex 4)
+        let slot = Tmux.WindowSlot other.session idx
+            short = Tmux.defaultPaneStateWait {Tmux.stateTimeout = 0.12}
+        Tmux.linkWindow server sourceSlot slot
+        Tmux.waitForPaneState server slot pane Tmux.PaneActive short >>= \case
+          Tmux.PaneStateTimedOut (Just _) recovery -> settleRead server recovery
+          _ -> assertFailure "a pane active through another session matched this unselected link"
+        signalAttachment fixture other.session
+        withAsync (Tmux.waitForPaneState server slot pane Tmux.PaneActive Tmux.defaultPaneStateWait) $ \worker -> do
+          awaitAttachment fixture
+          Tmux.selectWindowLink server slot
+          fresh <- bounded (wait worker) >>= matchedState
+          links <- either (fail . show) pure (Tmux.linksForSession fresh other.session)
+          [(link.index, link.window) | link <- links, link.active] @?= [(idx, window)]
+
+  , testCase "state wait notices a quiet removal outside its observer session" $
+      withServer $ \fixture server session _ -> do
+        (observer, bystander) <- stateTarget server session
+        other <- stateSession server
+        let remote = Tmux.WindowSlot other.session other.windowIndex
+            short = Tmux.defaultPaneStateWait {Tmux.stateTimeout = 0.8}
+        split <- Tmux.splitPane server remote other.pane
+          Creation.defaultSplitOptions {Creation.splitProcess = Creation.ShellCommand "exec /bin/cat -"}
+        signalAttachment fixture session
+        withAsync (Tmux.waitForPaneState server observer split.pane Tmux.PaneAbsent short) $ \worker -> do
+          awaitAttachment fixture
+          Tmux.killPane server split.pane
+          fresh <- bounded (wait worker) >>= matchedState
+          Tmux.lookupPane fresh split.pane @?= Left (Tmux.MissingPane split.pane)
+          _ <- either (fail . show) pure (Tmux.lookupPane fresh bystander)
+          pure ()
+
+  , testCase "state wait reports overflow and retires its observer" $
+      withServer $ \fixture server session _ -> withWitness $ \remember -> do
+        (_, pane) <- stateTarget server session
+        empty <- either (fail . show) pure (Tmux.mkWindowIndex 9)
+        let slot = Tmux.WindowSlot session empty
+            options = Tmux.defaultPaneStateWait {Tmux.stateEventCapacity = 1}
+            burst = intercalate [";"] [["rename-window", "burst-" <> show serial] | serial <- [1 .. 48 :: Int]]
+        signalAttachment fixture session
+        withAsync (Tmux.waitForPaneState server slot pane Tmux.PaneActive options) $ \worker -> do
+          awaitAttachment fixture
+          _ <- remember (clientWitness fixture)
+          void (native fixture burst)
+          bounded (wait worker) >>= \case
+            Tmux.PaneStateObserverEnded Tmux.ControlOverflow (Just _) -> pure ()
+            _ -> assertFailure "expected explicit control overflow"
+        native fixture ["list-clients", "-F", "#{client_pid}"] >>= (@?= "")
+
+  , testCase "state wait cancellation preserves ThreadKilled and reaps the observer" $
+      withServer $ \fixture server session _ -> withWitness $ \remember -> do
+        (_, pane) <- stateTarget server session
+        empty <- either (fail . show) pure (Tmux.mkWindowIndex 9)
+        let run = Tmux.waitForPaneState server (Tmux.WindowSlot session empty) pane
+              Tmux.PaneActive Tmux.defaultPaneStateWait
+        signalAttachment fixture session
+        withAsync (tryWithContext @SomeException run) $ \worker -> do
+          awaitAttachment fixture
+          _ <- remember (clientWitness fixture)
+          bounded (awaitBlocked (asyncThreadId worker))
+          throwTo (asyncThreadId worker) ThreadKilled
+          bounded (wait worker) >>= \case
+            Left (ExceptionWithContext context problem) -> do
+              fromException problem @?= Just ThreadKilled
+              mapM_ (settleRead server . Just) (Recovery.captureRecoveries context)
+            Right _ -> assertFailure "state wait swallowed cancellation"
+        native fixture ["list-clients", "-F", "#{client_pid}"] >>= (@?= "")
+
+  , testCase "state wait cancellation preserves an in-flight read" $
+      withServer $ \fixture server session _ -> withWitness $ \remember -> do
+        (_, pane) <- stateTarget server session
+        empty <- either (fail . show) pure (Tmux.mkWindowIndex 9)
+        let gate = "set-hook -g after-display-message { wait-for -S pane-state-reading ; wait-for pane-state-release }"
+            run = Tmux.waitForPaneState server (Tmux.WindowSlot session empty) pane
+              Tmux.PaneActive Tmux.defaultPaneStateWait
+            releaseRead = do
+              void (native fixture ["set-hook", "-gu", "after-display-message"])
+              void (native fixture ["wait-for", "-S", "pane-state-release"])
+        void (native fixture ["set-hook", "-t", sessionTarget session, "client-attached", gate])
+        flip finally releaseRead $
+          withAsync (tryWithContext @SomeException run) $ \worker -> do
+            void (bounded (native fixture ["wait-for", "pane-state-reading"]))
+            _ <- remember (clientWitness fixture)
+            throwTo (asyncThreadId worker) ThreadKilled
+            bounded (wait worker) >>= \case
+              Left (ExceptionWithContext context problem) -> do
+                fromException problem @?= Just ThreadKilled
+                case Recovery.captureRecoveries context of
+                  [owner] -> settleRead server (Just owner)
+                  _ -> assertFailure "cancelled graph read lost its recovery"
+              Right _ -> assertFailure "state wait swallowed cancellation"
+
+  , testCase "state wait rejects references from another adoption before attaching" $
+      withServer $ \fixture server session _ -> do
+        (slot, pane) <- stateTarget server session
+        let config = (Tmux.serverConfig (Os.fromBytestring (Ascii.pack fixture.socket)))
+              {Tmux.executable = Os.fromBytestring (Ascii.pack fixture.executable)}
+        void (native fixture ["set-hook", "client-attached", "set-option -g @state-wait-attached yes"])
+        Tmux.withServer config $ \other -> do
+          graph <- Tmux.capture other
+          case (Tmux.sessions graph, Tmux.panes graph) of
+            ([foreignSession], [foreignPane]) -> do
+              idx <- either (fail . show) pure (Tmux.mkWindowIndex 0)
+              let foreignSlot = Tmux.WindowSlot foreignSession.ref idx
+              forM_ [(slot, foreignPane.ref), (foreignSlot, pane)] $ \(target, ref) ->
+                Tmux.tryTmux (Tmux.waitForPaneState server target ref Tmux.PaneActive Tmux.defaultPaneStateWait) >>= \case
+                  Left (ExceptionWithContext _ Tmux.InvalidTarget) -> pure ()
+                  _ -> assertFailure "foreign generation reached the observer"
+            _ -> assertFailure "expected one session and one pane"
+        native fixture ["show-options", "-gqv", "@state-wait-attached"] >>= (@?= "")
+
   , testCase "retains the owner when cancellation cannot join a held launch" $
       Fixture.withFixture $ \fixture -> withWitness $ \remember -> do
         runtime <- Runtime.newRuntime Process.normalFork
@@ -164,6 +337,42 @@ withServer action = Fixture.withFixture $ \fixture -> do
     case (Tmux.sessions snapshot, Tmux.windows snapshot) of
       ([session], [window]) -> action fixture server session.ref window.ref
       _ -> assertFailure "expected one fixture session and window"
+
+paneTarget :: Tmux.PaneRef -> String
+paneTarget = Ascii.unpack . Utf8.encodeUtf8 . Tmux.renderPaneId . Tmux.paneId
+
+stateSession :: Tmux.Server -> IO Tmux.CreatedSession
+stateSession server = Tmux.createSession server
+  Creation.defaultSessionOptions {Creation.name = Just "state-bystander",
+    Creation.process = Creation.ShellCommand "exec /bin/cat -"}
+
+signalAttachment :: Fixture.Fixture -> Tmux.SessionRef -> IO ()
+signalAttachment fixture session =
+  void (native fixture ["set-hook", "-t", sessionTarget session, "client-attached", "wait-for -S pane-state-attached"])
+
+sessionTarget :: Tmux.SessionRef -> String
+sessionTarget = Ascii.unpack . Utf8.encodeUtf8 . Tmux.renderSessionId . Tmux.sessionId
+
+awaitAttachment :: Fixture.Fixture -> IO ()
+awaitAttachment fixture = void (bounded (native fixture ["wait-for", "pane-state-attached"]))
+
+stateTarget :: Tmux.Server -> Tmux.SessionRef -> IO (Tmux.WindowSlot, Tmux.PaneRef)
+stateTarget server session = do
+  graph <- Tmux.capture server
+  case (Tmux.panes graph, Tmux.linksForSession graph session) of
+    ([pane], Right [link]) -> pure (Tmux.WindowSlot session link.index, pane.ref)
+    _ -> fail "expected one fixture pane and link"
+
+settleRead :: Tmux.Server -> Maybe Recovery.CaptureRecovery -> IO ()
+settleRead server = mapM_ $ \owner -> do
+  Recovery.recoveryGeneration owner @?= Tmux.serverGeneration server
+  bounded (Recovery.resumeCaptureRecovery owner)
+  void (Recovery.detachCaptureRecovery owner)
+
+matchedState :: Tmux.PaneStateWaitResult -> IO Tmux.Snapshot
+matchedState = \case
+  Tmux.PaneStateMatched snapshot -> pure snapshot
+  _ -> fail "state wait did not confirm the requested state"
 
 withWitness :: ((IO CInt -> IO CInt) -> Assertion) -> Assertion
 withWitness action = do

@@ -3,11 +3,12 @@
 module LibTmux.Internal.Control
   ( Control, ControlOptions (..), defaultControlOptions, ControlEvent (..)
   , ControlEnd (..), ControlError (..), readControlEvent, pollControlEvent
-  , withControlClient, withControlClientUsing
+  , withControlClient, withControlClientUsing, validateControlOptions
+  , awaitControlWake, controlEnd
   , ControlRecovery, controlRecoveries, controlRetired, resumeControlCleanup
   ) where
 
-import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.Async (async, uninterruptibleCancel)
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Exception.Annotation (ExceptionAnnotation)
@@ -80,6 +81,24 @@ readControlEvent (Control queue ended) = tryReadTBQueue queue >>= \case
 pollControlEvent :: Control -> STM (Maybe (Either ControlEnd ControlEvent))
 pollControlEvent control = (Just <$> readControlEvent control) `orElse` pure Nothing
 
+-- Waiters use notifications only as wakeups. Coalesce queued events and
+-- surface loss even when the queue still contains earlier notifications.
+awaitControlWake :: Control -> STM (Either ControlEnd ())
+awaitControlWake (Control queue ended) = readTVar ended >>= \case
+  Just reason -> pure (Left reason)
+  Nothing -> do
+    _ <- readTBQueue queue
+    void (flushTBQueue queue)
+    pure (Right ())
+
+controlEnd :: Control -> STM (Maybe ControlEnd)
+controlEnd (Control _ ended) = readTVar ended
+
+validateControlOptions :: ControlOptions -> IO ()
+validateControlOptions options =
+  when (options.eventCapacity < 1 || options.eventCapacity > 128)
+    (throwIO (InvalidControlCapacity options.eventCapacity))
+
 data Attachment = AwaitingReply | AwaitingSession | Attached
 
 data ControlRecovery = ControlRecovery !P.Pool !P.Ticket !Int
@@ -112,8 +131,8 @@ withControlClient = withControlClientUsing P.defaultHooks 1000000
 withControlClientUsing :: P.Hooks -> Int -> P.Pool -> N.Spec -> Int -> ByteString
   -> ControlOptions -> (Control -> IO a) -> IO a
 withControlClientUsing hooks cleanupDuration pool spec duration session options action = mask $ \restore -> do
+  validateControlOptions options
   let capacity = options.eventCapacity
-  when (capacity < 1 || capacity > 128) (throwIO (InvalidControlCapacity capacity))
   queue <- newTBQueueIO (fromIntegral capacity)
   ended <- newTVarIO Nothing
   attachment <- newTVarIO AwaitingReply
@@ -171,7 +190,9 @@ withControlClientUsing hooks cleanupDuration pool spec duration session options 
         attached <- timeout duration (atomically (readTMVar ready))
         maybe (throwIO ControlAttachTimedOut) (either throwIO pure) attached
         action control
-  result <- tryWithContext @SomeException (withAsync watch (\_ -> restore body))
+  -- Preserve the callback's exception context, including any read owner.
+  result <- tryWithContext @SomeException $
+    bracket (async watch) uninterruptibleCancel (const (restore body))
   atomically $ do
     terminal ControlClosed
     void (flushTBQueue queue)
