@@ -1,7 +1,9 @@
 # Preview and apply a tmuxp workspace
 
-Add the `libtmux-haskell-workspace` package and import `LibTmux.Workspace`.
-Pass the YAML bytes and their absolute parent directory to `planTmuxp`.
+Use the [example's Git project](../examples/load-workspace/cabal.project.vcs)
+to fetch both packages. Add `libtmux-haskell-workspace` to your executable's
+dependencies and import `LibTmux.Workspace`. Pass the YAML bytes and their
+absolute parent directory to `planTmuxp`.
 `previewWorkspace` gives you the resolved windows, pane commands and
 working directories. Planning reads no files or process environment.
 

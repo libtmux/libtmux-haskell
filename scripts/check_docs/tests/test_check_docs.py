@@ -36,7 +36,17 @@ class Catalogue:
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     """Copy the documents, and the files they link to, into a disposable checkout."""
-    for directory in ["docs", ".github", "examples", "bench", "src", "internal", "scripts", "test"]:
+    for directory in [
+        "docs",
+        ".github",
+        "examples",
+        "bench",
+        "src",
+        "internal",
+        "scripts",
+        "test",
+        "workspace/test/fixtures/tmuxp",
+    ]:
         shutil.copytree(
             check_docs.ROOT / directory,
             tmp_path / directory,
@@ -75,6 +85,7 @@ def test_registered_programs_are_valid(root: Path) -> None:
         "resize-geometry",
         "configure-session",
         "watch-window",
+        "load-workspace",
     }
 
 

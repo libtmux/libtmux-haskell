@@ -37,6 +37,8 @@ extra-doc-files:
   docs/buffers.md
   docs/options.md
   docs/workspaces.md
+  workspace/test/fixtures/tmuxp/README.md
+  workspace/test/fixtures/tmuxp/compatibility.json
   docs/capabilities.md
   docs/control.md
   docs/mutations.md
