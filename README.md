@@ -324,10 +324,11 @@ local history-limit = 500
 rename hook recorded the change
 ```
 
-### [`withControl`](src/LibTmux/Server.hs) to observe a rename
+### [`withControl`](src/LibTmux/Server.hs) to watch a window
 
-The [control example](docs/control.md) reads one native notification from
-a bounded stream and retires its client at the end of the scope.
+The [control example](docs/control.md) observes a rename through a bounded
+stream. [`waitForPaneState`](src/LibTmux/Server.hs) then confirms
+that a split pane is gone.
 
 ```console
 $ cabal run --verbose=0 watch-window
@@ -336,6 +337,7 @@ $ cabal run --verbose=0 watch-window
 <!-- example-output: watch-window -->
 ```text
 window renamed to control-demo
+split pane removed
 ```
 
 ## Resize panes and windows

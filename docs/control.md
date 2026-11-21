@@ -14,7 +14,25 @@ $ cabal run --verbose=0 watch-window
 <!-- example-output: watch-window -->
 ```text
 window renamed to control-demo
+split pane removed
 ```
+
+## Wait for pane state
+
+Call [`waitForPaneState`](../src/LibTmux/Server.hs) with the pane reference and a
+`WindowSlot`. `PaneActive` checks the selected link in that session and the active
+pane of its window. `PaneDead` observes a retained dead pane. `PaneAbsent` observes
+that the physical pane is gone from the daemon.
+
+The waiter confirms the result in a fresh snapshot. Control notifications
+wake it promptly. It also rechecks physical death and removal on a bounded
+interval because tmux can change either state silently. The deadline covers
+attachment and capture. Control cleanup has a separate budget.
+
+`PaneStateMatched` carries the confirming snapshot. On timeout or daemon loss, keep
+any returned capture owner and use [recovery](capture.md#errors-and-recovery)
+to inspect it. A full observer queue returns `PaneStateObserverEnded ControlOverflow`. The waiter observes
+current state, so a change that reverses before the next capture can go unseen.
 
 ## Queue and terminal state
 
@@ -51,21 +69,32 @@ import Control.Concurrent.STM (atomically)
 import Control.Exception (bracket)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as Ascii
+import Data.List.NonEmpty (NonEmpty (..))
 import LibTmux qualified as Tmux
 import LibTmux.Creation qualified as Creation
 import System.Exit (die)
+import System.OsString.Posix qualified as Os
 import System.Timeout (timeout)
 
 main :: IO ()
 main = do
-  let options = Creation.defaultSessionOptions {Creation.process = Creation.ShellCommand "exec /bin/cat"}
+  let cat = Creation.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])
+      options = Creation.defaultSessionOptions {Creation.process = cat}
   Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server ->
-    bracket (Tmux.createSession server options) (Tmux.killSession server . (.session)) $ \created ->
+    bracket (Tmux.createSession server options) (Tmux.killSession server . (.session)) $ \created -> do
       Tmux.withControl server created.session Tmux.defaultControlOptions $ \stream -> do
         Tmux.renameWindow server created.window "control-demo"
         observed <- timeout 1000000 (waitForRename stream (Tmux.windowId created.window))
         label <- maybe (die "No window rename arrived") pure observed
         Ascii.putStrLn ("window renamed to " <> label)
+
+      let slot = Creation.WindowSlot created.session created.windowIndex
+      split <- Tmux.splitPane server slot created.pane
+        Creation.defaultSplitOptions {Creation.splitProcess = cat}
+      Tmux.sendKeys server split.pane (Tmux.NamedKeys ("C-d" :| []))
+      Tmux.waitForPaneState server slot split.pane Tmux.PaneAbsent Tmux.defaultPaneStateWait >>= \case
+        Tmux.PaneStateMatched _ -> putStrLn "split pane removed"
+        _ -> die "The split pane was not observed leaving"
 
 waitForRename :: Tmux.Control -> Tmux.WindowId -> IO ByteString
 waitForRename stream expected = atomically (Tmux.readControlEvent stream) >>= \case

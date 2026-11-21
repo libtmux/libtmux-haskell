@@ -15,7 +15,7 @@ and the [API guide](api.md).
 | Transfer a named buffer and paste it to an explicit pane | [Paste buffers](buffers.md) |
 | Read and change a scoped option or hook | [Options and hooks](options.md) |
 | Check connected-daemon requirements and version refusals | [Capabilities](capabilities.md) |
-| Observe native changes through a bounded stream | [Control notifications](control.md) |
+| Watch a window or wait for pane state | [Control notifications](control.md) |
 | Rename captured targets and handle interrupted commands | [Mutations and recovery](mutations.md) |
 | Share resources across independent Server scopes | [Shared Runtime](shared-runtime.md) |
 | Test application predicates without tmux | [Validated offline fixtures](fixtures.md) |

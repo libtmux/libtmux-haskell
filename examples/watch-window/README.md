@@ -1,7 +1,7 @@
 # Observe a window rename
 
-[Main.hs](Main.hs) creates a session, opens a bounded control stream,
-renames its window and prints the matching event.
+[Main.hs](Main.hs) observes a rename in a bounded control stream. It then
+asks a split pane to exit and waits until the graph confirms its removal.
 
 Run from the repository root.
 
