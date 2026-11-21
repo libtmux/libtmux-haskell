@@ -565,7 +565,7 @@ instance NFData Window where
 -- through a session link. A match carries the snapshot that confirmed it.
 --
 -- 'LibTmux.Server.waitForPaneState', t'LibTmux.Server.PaneState',
--- t'LibTmux.Server.PaneStateResult'
+-- t'LibTmux.Server.PaneStateWaitResult'
 --
 -- __Remove a pane.__ Removing the last pane also closes its window. Success
 -- confirms that tmux removed the pane, so observe its processes' exit

@@ -133,7 +133,7 @@ data PaneMoveOptions = PaneMoveOptions
   , selectMovedPane :: !Bool -- ^ Request native selection after relocation.
   } deriving stock (Eq, Show)
 
--- | Place below the destination pane while retaining the existing selection.
+-- | Place below the destination pane without requesting destination selection.
 defaultPaneMoveOptions :: PaneMoveOptions
 defaultPaneMoveOptions = PaneMoveOptions TopBottom DefaultSplitSize False False False
 

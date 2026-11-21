@@ -37,7 +37,6 @@ import LibTmux.Internal.Creation (CreationRecovery)
 import LibTmux.Internal.Creation qualified as Create
 import LibTmux.Internal.Mutation (MutationRecovery)
 import LibTmux.Internal.Mutation qualified as M
-import LibTmux.Internal.Relocation (RelocationRecovery)
 import LibTmux.Internal.Relocation qualified as Relocation
 import LibTmux.Internal.Runtime (ReadRecovery (..))
 import LibTmux.Internal.Runtime qualified as R
@@ -128,27 +127,35 @@ resumeCaptureRecovery = operational . C.resumeRecovery
 detachCaptureRecovery :: CaptureRecovery -> IO Bool
 detachCaptureRecovery = operational . atomically . C.detachRecovery
 
+-- | Ownership retained for the original relocation and its native receipt.
+newtype RelocationRecovery = RelocationRecovery Relocation.RelocationRecovery
+  deriving newtype (Show)
+
 -- | Find relocation ownership and any original native receipt in the
 -- exception context. Resume cleanup without repeating the relocation.
 relocationRecoveries :: ExceptionContext -> [RelocationRecovery]
-relocationRecoveries = getExceptionAnnotations
+relocationRecoveries context = RelocationRecovery <$> getExceptionAnnotations context
 
 -- | Read the captured primary evidence, including an optional printed link.
 -- Capture the current graph before deciding whether to retry.
 relocationReceipt :: RelocationRecovery -> IO (Maybe Creation.PaneRelocationReceipt)
-relocationReceipt = atomically . Relocation.observedReceipt
+relocationReceipt (RelocationRecovery owner) = atomically (Relocation.observedReceipt owner)
 
+-- | Read the original operation's outcome and outstanding cleanup ownership.
 inspectRelocationRecovery :: RelocationRecovery -> IO ReadRecovery
-inspectRelocationRecovery = atomically . Relocation.inspectRecovery
+inspectRelocationRecovery (RelocationRecovery owner) = atomically (Relocation.inspectRecovery owner)
 
+-- | Resume cleanup of the original request without dispatching another move.
 resumeRelocationRecovery :: RelocationRecovery -> IO ()
-resumeRelocationRecovery = operational . Relocation.resumeRecovery
+resumeRelocationRecovery (RelocationRecovery owner) = operational (Relocation.resumeRecovery owner)
 
+-- | Wait until the native client and its worker have both retired.
 awaitRelocationRecovery :: RelocationRecovery -> IO ReadRecovery
-awaitRelocationRecovery = operational . Relocation.awaitRecovery
+awaitRelocationRecovery (RelocationRecovery owner) = operational (Relocation.awaitRecovery owner)
 
+-- | Release the retained logical result. The Runtime keeps any native owner.
 detachRelocationRecovery :: RelocationRecovery -> IO Bool
-detachRelocationRecovery = operational . atomically . Relocation.detachRecovery
+detachRelocationRecovery (RelocationRecovery owner) = operational (atomically (Relocation.detachRecovery owner))
 
 -- | Recover the exact operation after failure, timeout or cancellation. The
 -- context comes from 'LibTmux.Server.tryTmux' or 'tryWithContext'; cancellation keeps its
