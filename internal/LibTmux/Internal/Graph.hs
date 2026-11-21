@@ -9,10 +9,11 @@
 module LibTmux.Internal.Graph
   ( EndpointIdentity (..), Generation (..)
   , SessionRef (..), WindowRef (..), PaneRef (..), CreatedEntities (..), CreatedSession
+  , WindowSlot (..), PaneRelocationReceipt (..)
   , Session (..), Window (..), Pane (..), WindowLink (..), PaneOccurrence (..)
   , EntityGraph, GraphError (..), LookupError (..), assembleEntityGraph
   , graphSessions, graphWindows, graphPanes, graphLinks, graphOccurrences
-  , lookupSession, lookupWindow, lookupPane, linksForSession, panesForWindow
+  , lookupSession, lookupWindow, lookupPane, lookupPaneOccurrence, linksForSession, panesForWindow
   , ServerInfo (..), Client (..), ClientAttachment (..), ClientInput (..)
   , Snapshot, serverInfo, entities, clients, assembleSnapshot
   , CaptureInterval (..), captureInterval, stampSnapshot
@@ -58,6 +59,23 @@ data SessionRef = SessionRef !Generation !SessionId
   deriving stock (Eq, Ord, Show)
 instance NFData SessionRef where
   rnf (SessionRef generation ident) = rnf generation `seq` rnf ident
+
+-- | An exact session/index position. The occupant can change after capture.
+-- Indices used by native commands must fit tmux's signed 32-bit domain.
+data WindowSlot = WindowSlot !SessionRef !WindowIndex
+  deriving stock (Eq, Show)
+
+-- | Historical evidence from the primary relocation command. Capture again
+-- to verify the requested slot and classify a break as window creation or
+-- transfer. A reported break link may be another link to the same window.
+data PaneRelocationReceipt
+  = MoveAccepted !PaneRef !WindowSlot !WindowRef
+    -- ^ Moved pane, requested destination, and the guarded destination window.
+  | BreakAccepted !PaneRef !WindowSlot !(Maybe (WindowSlot, WindowRef))
+    -- ^ Moved pane, requested destination, and tmux's optional printed link.
+  | BreakReported !PaneRef !WindowSlot !(WindowSlot, WindowRef)
+    -- ^ Recovery found a complete printed link before primary completion.
+  deriving stock (Eq, Show)
 
 -- | Physical window targeting identity within a t'Generation'. A window can
 -- have several t'WindowLink' appearances.
@@ -680,6 +698,8 @@ data LookupError
   | MissingSession !SessionRef -- ^ No session with this identity was captured.
   | MissingWindow !WindowRef -- ^ No physical window with this identity was captured.
   | MissingPane !PaneRef -- ^ No physical pane with this identity was captured.
+  | MissingWindowSlot !WindowSlot -- ^ The captured session has no link at this index.
+  | PaneOutsideWindowSlot !PaneRef !WindowSlot -- ^ The pane belongs to a different window.
   deriving stock (Eq, Show)
 
 -- | Invalid entity or server data observed while assembling a snapshot.
@@ -802,6 +822,14 @@ lookupPane :: EntityGraph -> PaneRef -> Either LookupError Pane
 lookupPane graph ref@(PaneRef generation _)
   | generation /= graph.generation = Left ForeignGeneration
   | otherwise = maybe (Left (MissingPane ref)) Right (Map.lookup ref graph.panes)
+
+lookupPaneOccurrence :: EntityGraph -> WindowSlot -> PaneRef -> Either LookupError PaneOccurrence
+lookupPaneOccurrence graph slot@(WindowSlot session index) ref = do
+  _ <- lookupSession graph session
+  pane <- lookupPane graph ref
+  link <- maybe (Left (MissingWindowSlot slot)) Right (Map.lookup (session, index) graph.links)
+  unless (pane.window == link.window) (Left (PaneOutsideWindowSlot ref slot))
+  pure (PaneOccurrence pane link)
 
 linksForSession :: EntityGraph -> SessionRef -> Either LookupError [WindowLink]
 linksForSession graph ref = do

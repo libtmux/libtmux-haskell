@@ -21,9 +21,10 @@ module LibTmux.Creation
 import Data.ByteString (ByteString)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
-import LibTmux.Internal.Graph (CreatedEntities (..), CreatedSession, SessionRef)
-import LibTmux.Snapshot (PaneRef, TmuxText, WindowRef)
-import LibTmux.Value (Dimension, WindowIndex)
+import LibTmux.Internal.Graph
+  (CreatedEntities (..), CreatedSession, PaneRelocationReceipt (..), SessionRef, WindowSlot (..))
+import LibTmux.Snapshot (TmuxText)
+import LibTmux.Value (Dimension)
 import System.OsPath.Posix (PosixPath)
 import System.OsString.Posix (PosixString)
 
@@ -55,13 +56,6 @@ data SessionOptions = SessionOptions
 -- 'DefaultProcess'. Creation captures the calling client's OS context in IO.
 defaultSessionOptions :: SessionOptions
 defaultSessionOptions = SessionOptions Nothing Nothing Nothing [] Nothing Nothing True DefaultProcess
-
--- | An exact session/index position at execution time. The occupant can change
--- after a snapshot; this is context, not an expected-window identity check.
--- 'LibTmux.Server.splitPane' also checks its explicit pane belongs to the
--- window occupying this slot. Indices must fit tmux's signed 32-bit domain.
-data WindowSlot = WindowSlot !SessionRef !WindowIndex
-  deriving stock (Eq, Show)
 
 -- | A session's next free index, an exact slot, or insertion beside a slot.
 -- Relative insertion can shift existing indices before later creation fails;
@@ -142,18 +136,6 @@ data PaneMoveOptions = PaneMoveOptions
 -- | Place below the destination pane while retaining the existing selection.
 defaultPaneMoveOptions :: PaneMoveOptions
 defaultPaneMoveOptions = PaneMoveOptions TopBottom DefaultSplitSize False False False
-
--- | Historical evidence from the primary relocation command. Capture again
--- to verify the requested slot and classify a break as window creation or
--- transfer. A reported break link may be another link to the same window.
-data PaneRelocationReceipt
-  = MoveAccepted !PaneRef !WindowSlot !WindowRef
-    -- ^ Moved pane, requested destination, and the guarded destination window.
-  | BreakAccepted !PaneRef !WindowSlot !(Maybe (WindowSlot, WindowRef))
-    -- ^ Moved pane, requested destination, and tmux's optional printed link.
-  | BreakReported !PaneRef !WindowSlot !(WindowSlot, WindowRef)
-    -- ^ Recovery found a complete printed link before primary completion.
-  deriving stock (Eq, Show)
 
 -- | A 'CreatedEntities' receipt from new-window: the window and pane are new;
 -- the session and link index identify where tmux created them.

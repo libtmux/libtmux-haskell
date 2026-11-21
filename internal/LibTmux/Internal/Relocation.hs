@@ -9,8 +9,8 @@ import Control.Exception
 import Control.Exception.Annotation (ExceptionAnnotation)
 import Control.Exception.Context qualified as Context
 import Data.ByteString (ByteString)
-import LibTmux.Creation (PaneRelocationReceipt (..), WindowSlot (..))
 import LibTmux.Internal.Command qualified as C
+import LibTmux.Internal.Graph (PaneRelocationReceipt (..), WindowSlot (..))
 import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
@@ -49,13 +49,13 @@ awaitRecovery selected@(RelocationRecovery recovery _ _) =
 detachRecovery :: RelocationRecovery -> STM Bool
 detachRecovery (RelocationRecovery recovery _ _) = M.detachRecovery recovery
 
-performRelocation :: Int -> R.Runtime -> R.ServerHandle -> ByteString -> C.PaneRelocation
+performRelocation :: P.Hooks -> Int -> R.Runtime -> R.ServerHandle -> ByteString -> C.PaneRelocation
   -> Placement -> IO PaneRelocationReceipt
-performRelocation duration runtime server executable command placement = do
+performRelocation hooks duration runtime server executable command placement = do
   journal <- R.newRelocationJournal (C.relocationWire command)
   let submit remaining = do
         left <- remaining
-        R.relocateWith P.defaultHooks left runtime server executable command journal
+        R.relocateWith hooks left runtime server executable command journal
       decode = \case
         C.RelocationCompleted evidence ->
           maybe (throwIO (R.InvalidCommandReply C.UnexpectedReply)) pure (placedReceipt placement evidence)

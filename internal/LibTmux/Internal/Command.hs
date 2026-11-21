@@ -16,7 +16,7 @@ module LibTmux.Internal.Command
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
   , compileSessionCreation, sessionCreationFormat, decodeSessionCreation
   , CreationCommand (..), WindowPlacement (..), compileCreation
-  , PaneRelocation (..), PaneTarget (..), PaneTransfer (..), RelocationWire
+  , PaneRelocation (..), PaneTarget (..), PaneTransfer (..), RelocationWire (..)
   , RelocationEvidence (..), RelocationReply (..), compileRelocation, relocationWire
   , decodeRelocationReply, relocationEvidence
   ) where

@@ -4,11 +4,12 @@ import Control.Monad (forM_)
 import Data.ByteString qualified as Bytes
 import LibTmux.Id qualified as Id
 import LibTmux.Internal.Command qualified as C
+import LibTmux.Internal.Frame qualified as Frame
 import LibTmux.Internal.TmuxText qualified as Label
 import LibTmux.Pane qualified as Pane
 import LibTmux.Value qualified as Value
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
 tests :: TestTree
 tests = testGroup "typed mutation arguments"
@@ -178,6 +179,28 @@ tests = testGroup "typed mutation arguments"
       let oversized = Bytes.replicate (1048576 + 1) 120
       C.decodeControlReply (Just 0) oversized "" @?= Left C.ReplyTooLarge
       C.decodeControlReply (Just 1) "" oversized @?= Left C.ReplyTooLarge
+  , testCase "pane relocation never treats following output as primary evidence" $ do
+      nonce <- require (Frame.parseNonce (Bytes.replicate 64 97))
+      let guards = "%begin 1 1 0\n%end 1 1 0\n%begin 1 2 0\n%end 1 2 0\n"
+          begin = "%begin 1 3 0\n"
+          rejected = "%error 1 3 0\n"
+          ended = "%end 1 3 0\n"
+          printed = Frame.scalarFormat nonce "123 $1 @9 %5 7" <> "\n"
+          following = "%begin 1 4 0\n" <> printed <> "%end 1 4 0\n"
+          wire = C.BreakWire False
+          prefix = guards <> begin
+          decode status bytes = C.decodeRelocationReply wire nonce (Just status) (bytes <> "%exit\n") ""
+          evidence = C.relocationEvidence wire nonce
+      decode 0 guards @?= Right C.RelocationRefused
+      decode 1 (prefix <> "index in use\n" <> rejected <> following) @?=
+        Right (C.RelocationRejected "index in use\n")
+      evidence (prefix <> "index in use\n" <> rejected <> following) @?= Nothing
+      evidence (prefix <> ended <> following) @?= Just (C.RelocationAccepted Nothing)
+      case evidence (prefix <> printed) of
+        Just (C.RelocationPrinted receipt) ->
+          decode 0 (prefix <> printed <> ended) @?=
+            Right (C.RelocationCompleted (C.RelocationAccepted (Just receipt)))
+        other -> assertFailure ("expected the unclosed printed receipt, got " <> show other)
   ]
 
 require :: Show e => Either e a -> IO a

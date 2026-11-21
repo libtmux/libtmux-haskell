@@ -817,7 +817,8 @@ transferPane operation options server@(Server runtime handle executable _ _ _) s
   to <- exactRelocationTarget server target
   duration <- mutationDuration options
   let destination = Creation.WindowSlot target.link.session target.link.index
-  Relocation.performRelocation duration runtime handle executable (Command.TransferPane operation from to placement)
+  Relocation.performRelocation P.defaultHooks duration runtime handle executable
+    (Command.TransferPane operation from to placement)
     (Relocation.MoveTo source.pane.ref destination target.link.window)
 
 -- | Break out a running pane into a vacant slot without requesting selection.
@@ -838,7 +839,7 @@ breakPaneWith options server@(Server runtime handle executable _ available _) so
   checkTarget server generation
   duration <- mutationDuration options
   let brokenDefaultName = Version.renderVersion (Capabilities.daemonVersion available) == "3.7"
-  Relocation.performRelocation duration runtime handle executable
+  Relocation.performRelocation P.defaultHooks duration runtime handle executable
     (Command.BreakPane from session index brokenDefaultName)
     (Relocation.BreakTo source.pane.ref destination)
 
@@ -1216,15 +1217,14 @@ waitForPaneState server@(Server _ handle _ _ _ _) slot@(Creation.WindowSlot sess
     daemonExit _ = False
 
 paneStateMatches :: Creation.WindowSlot -> PaneRef -> PaneState -> Snapshot -> Bool
-paneStateMatches (Creation.WindowSlot session index) pane state snapshot =
-  case (state, Snapshot.lookupPane snapshot pane) of
-    (PaneDead, Right observed) -> observed.dead
-    (PaneAbsent, Left (Snapshot.MissingPane _)) -> True
-    (PaneActive, Right observed) -> observed.active
-      && either (const False) (any (selects observed.window)) (Snapshot.linksForSession snapshot session)
+paneStateMatches slot pane state snapshot = case state of
+  PaneDead -> either (const False) (.dead) (Snapshot.lookupPane snapshot pane)
+  PaneAbsent -> case Snapshot.lookupPane snapshot pane of
+    Left (Snapshot.MissingPane _) -> True
     _ -> False
-  where
-    selects window link = link.index == index && link.active && link.window == window
+  PaneActive -> case Snapshot.lookupPaneOccurrence snapshot slot pane of
+    Right occurrence -> occurrence.pane.active && occurrence.link.active
+    Left _ -> False
 
 mutate :: MutationOptions -> Server -> Generation -> Command.Mutation -> IO ()
 mutate options server generation = mutateTargets options server [generation]

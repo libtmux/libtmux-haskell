@@ -32,7 +32,7 @@ module LibTmux.Snapshot
     -- * Ordered sources
   , sessions, windows, panes, windowLinks, paneOccurrences, clients
     -- * Indexed navigation
-  , LookupError (..), lookupSession, lookupWindow, lookupPane
+  , LookupError (..), lookupSession, lookupWindow, lookupPane, lookupPaneOccurrence
   , linksForSession, panesForWindow
   , lookupSessionId, lookupWindowId, lookupPaneId
     -- * Lossless labels
@@ -110,6 +110,12 @@ lookupWindow snapshot = G.lookupWindow (G.entities snapshot)
 -- | Resolve the supplied generation's physical pane in this snapshot.
 lookupPane :: Snapshot -> PaneRef -> Either LookupError Pane
 lookupPane snapshot = G.lookupPane (G.entities snapshot)
+
+-- | Find a captured pane through an exact session link. Choose the slot even
+-- when several links lead to the same physical window. Use the occurrence
+-- as the source or destination of a pane relocation.
+lookupPaneOccurrence :: Snapshot -> G.WindowSlot -> PaneRef -> Either LookupError PaneOccurrence
+lookupPaneOccurrence snapshot = G.lookupPaneOccurrence (G.entities snapshot)
 
 -- | A session's window links in window-index order, preserving repeated windows.
 linksForSession :: Snapshot -> SessionRef -> Either LookupError [WindowLink]
