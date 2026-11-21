@@ -174,7 +174,7 @@
       "vcs_project": "examples/mutate-graph/cabal.project.vcs",
       "stdout": "examples/mutate-graph/expected.stdout",
       "executable": "mutate-graph",
-      "capability": "tmux 3.3a or newer",
+      "capability": "Rename targets and relocate a running pane with tmux 3.3a or newer",
       "minimum_tmux": "3.3a",
       "command": [
         "cabal",

@@ -16,6 +16,9 @@ module LibTmux.Internal.Command
   , SessionOptions (..), InitialProcess (..), defaultSessionOptions
   , compileSessionCreation, sessionCreationFormat, decodeSessionCreation
   , CreationCommand (..), WindowPlacement (..), compileCreation
+  , PaneRelocation (..), PaneTarget (..), PaneTransfer (..), RelocationWire (..)
+  , RelocationEvidence (..), RelocationReply (..), compileRelocation, relocationWire
+  , decodeRelocationReply, relocationEvidence
   ) where
 
 import Control.DeepSeq (NFData (rnf))
@@ -173,16 +176,7 @@ compileCreation nonce (NewWindow placement options) = do
     options.windowEnvironment options.windowProcess
 compileCreation nonce (SplitPane session index pane options) = do
   target <- paneSlotBytes session index pane
-  size <- case options.size of
-    Creation.DefaultSplitSize -> Right []
-    Creation.SplitCells cells
-      | Value.dimensionValue cells > 2147483647 ->
-          Left (InvalidOperand "split.size" "size exceeds 2147483647 cells")
-      | otherwise -> Right ["-l", Ascii.pack (show (Value.dimensionValue cells))]
-    Creation.SplitPercent percentage
-      | percentage < 1 || percentage > 100 ->
-          Left (InvalidOperand "split.size" "percentage must be between 1 and 100")
-      | otherwise -> Right ["-l", Ascii.pack (show percentage) <> "%"]
+  size <- splitSizeArguments "split.size" options.size
   compileSpawn "pane.creation"
     (map (literal "pane.creation")
        (["split-window"] <> ["-d" | not options.selectPane]
@@ -193,6 +187,18 @@ compileCreation nonce (SplitPane session index pane options) = do
         <> ["-Z" | options.zoom] <> size)
      <> optional "workingDirectory" "-c" osBytes options.splitDirectory)
     options.splitEnvironment options.splitProcess
+
+splitSizeArguments :: Text -> Creation.SplitSize -> Either ArgumentError [ByteString]
+splitSizeArguments key = \case
+  Creation.DefaultSplitSize -> Right []
+  Creation.SplitCells cells
+    | Value.dimensionValue cells > 2147483647 ->
+        Left (InvalidOperand key "size exceeds 2147483647 cells")
+    | otherwise -> Right ["-l", Ascii.pack (show (Value.dimensionValue cells))]
+  Creation.SplitPercent percentage
+    | percentage < 1 || percentage > 100 ->
+        Left (InvalidOperand key "percentage must be between 1 and 100")
+    | otherwise -> Right ["-l", Ascii.pack (show percentage) <> "%"]
 
 creationSessionTarget :: Id.SessionId -> ByteString
 creationSessionTarget = Utf8.encodeUtf8 . Id.renderSessionId
@@ -395,6 +401,168 @@ stripControlExit bytes = case Bytes.stripSuffix "%exit\n" bytes of
     terminated <- Bytes.stripSuffix "\n" bytes
     let (previous, lastLine) = Bytes.breakEnd (== 10) terminated
     if Frame.isClientDetachedNotice lastLine then stripControlExit previous else Nothing
+
+-- | A physical pane and the specific session link through which it is addressed.
+data PaneTarget = PaneTarget !Id.SessionId !Value.WindowIndex !Id.WindowId !Id.PaneId
+
+data PaneTransfer = Move | Join
+
+data PaneRelocation
+  = TransferPane !PaneTransfer !PaneTarget !PaneTarget !Creation.PaneMoveOptions
+  | BreakPane !PaneTarget !Id.SessionId !Value.WindowIndex !Bool
+
+-- Two serial format guards precede the native command. Exact 3.7 also
+-- branches on the source pane count to avoid its inverted name check.
+data RelocationWire = TransferWire | BreakWire !Bool
+
+relocationWire :: PaneRelocation -> RelocationWire
+relocationWire (TransferPane {}) = TransferWire
+relocationWire (BreakPane _ _ _ brokenDefaultName) = BreakWire brokenDefaultName
+
+compileRelocation :: Frame.Nonce -> PaneRelocation -> Either ArgumentError [ByteString]
+compileRelocation nonce command = do
+  (source, destinationGuard) <- case command of
+    TransferPane operation from@(PaneTarget _ _ _ fromPane) to@(PaneTarget _ _ _ toPane) options -> do
+      when (fromPane == toPane)
+        (Left (InvalidOperand "pane.relocation" "source and destination are the same pane"))
+      sourceTarget <- location from
+      destination <- location to
+      size <- splitSizeArguments "pane.relocation.size" options.moveSize
+      let verb = case operation of Move -> "move-pane"; Join -> "join-pane"
+          arguments = [verb, "-s", sourceTarget, "-t", destination]
+            <> ["-d" | not options.selectMovedPane]
+            <> ["-h" | options.moveDirection == Creation.LeftRight]
+            <> ["-b" | options.moveBefore] <> ["-f" | options.moveFullWindow] <> size
+      pure (from, guarded destination (exact to) arguments)
+    BreakPane from@(PaneTarget sourceSession sourceIndex _ _) session index brokenDefaultName -> do
+      when (sourceSession == session && sourceIndex == index)
+        (Left (InvalidOperand "pane.relocation" "source and destination are the same slot"))
+      sourceTarget <- location from
+      destination <- slotBytes session index
+      let arguments = ["break-pane", "-d", "-s", sourceTarget, "-t", destination,
+            "-P", "-F", sessionCreationFormat nonce]
+          vacant = "#{==:#{W:#{?" <> equals "window_index" (windowIndexBytes index) <> ",used,}},}"
+          exactSession = equals "session_id" (creationSessionTarget session)
+          action = if brokenDefaultName
+            then ["if-shell", "-F", "-t", sourceTarget, equals "window_panes" "1",
+                   renderArguments arguments, renderArguments (arguments <> ["-n", "pane"])]
+            else arguments
+      pure (from, guarded (creationSessionTarget session <> ":") (both exactSession vacant) action)
+  target <- location source
+  let arguments = guarded target (exact source) destinationGuard
+  when (sum (map ((+ 1) . toInteger . Bytes.length) arguments) > commandLimitBytes)
+    (Left (EncodedCommandTooLarge "pane.relocation"))
+  pure arguments
+  where
+    guarded target predicate action = ["if-shell", "-F", "-t", target, predicate, renderArguments action]
+    location (PaneTarget session index _ pane) = paneSlotBytes session index pane
+    exact (PaneTarget session index window pane) =
+      foldr1 both
+        [ equals "session_id" (creationSessionTarget session)
+        , equals "window_index" (windowIndexBytes index)
+        , equals "window_id" (Utf8.encodeUtf8 (Id.renderWindowId window))
+        , equals "pane_id" (Utf8.encodeUtf8 (Id.renderPaneId pane))
+        ]
+    windowIndexBytes = Ascii.pack . show . Value.windowIndexValue
+    equals field expected = "#{==:#{" <> field <> "}," <> expected <> "}"
+    both left right = "#{&&:" <> left <> "," <> right <> "}"
+
+-- | A complete primary frame establishes acceptance. A partial break frame
+-- can still hold a nonce-qualified native print.
+data RelocationEvidence = RelocationAccepted !(Maybe SessionReceipt) | RelocationPrinted !SessionReceipt
+  deriving stock (Eq, Show)
+
+instance NFData RelocationEvidence where
+  rnf (RelocationAccepted receipt) = rnf receipt
+  rnf (RelocationPrinted receipt) = rnf receipt
+
+data RelocationReply
+  = RelocationRefused
+  | RelocationRejected !ByteString
+  | RelocationCompleted !RelocationEvidence
+  | RelocationCompletedWithErrors !RelocationEvidence !ByteString
+  deriving stock (Eq, Show)
+
+instance NFData RelocationReply where
+  rnf RelocationRefused = ()
+  rnf (RelocationRejected diagnostic) = rnf diagnostic
+  rnf (RelocationCompleted evidence) = rnf evidence
+  rnf (RelocationCompletedWithErrors evidence diagnostic) = seq (rnf evidence) (rnf diagnostic)
+
+-- | Interpret the guard/primary profile. Later hook output cannot supply
+-- primary acceptance or identity.
+decodeRelocationReply :: RelocationWire -> Frame.Nonce -> Maybe Int -> ByteString -> ByteString
+  -> Either ReplyError RelocationReply
+decodeRelocationReply wire nonce status output errors
+  | Bytes.length output > 1048576 || Bytes.length errors > 1048576 = Left ReplyTooLarge
+  | not (Bytes.null errors) = Left UnexpectedReply
+  | otherwise = do
+      packet <- maybe (Left UnexpectedReply) Right (stripControlExit output)
+      primary <- primaryRelocation wire packet
+      if Bytes.null primary && status == Just 0 then Right RelocationRefused else do
+        (accepted, body, following) <- relocationFrame primary
+        case (accepted, status) of
+          (False, Just 1) -> Right (RelocationRejected (Bytes.copy body))
+          (True, Just 0) -> RelocationCompleted . RelocationAccepted <$> relocationPayload wire nonce body
+          (True, Just 1) | not (Bytes.null following) -> do
+            receipt <- relocationPayload wire nonce body
+            pure (RelocationCompletedWithErrors (RelocationAccepted receipt) (Bytes.copy following))
+          _ -> Left UnexpectedReply
+
+relocationEvidence :: RelocationWire -> Frame.Nonce -> ByteString -> Maybe RelocationEvidence
+relocationEvidence wire nonce bytes = do
+  primary <- either (const Nothing) Just (primaryRelocation wire bytes)
+  case relocationFrame primary of
+    Right (True, body, _) ->
+      RelocationAccepted <$> either (const Nothing) Just (relocationPayload wire nonce body)
+    Right (False, _, _) -> Nothing
+    Left _ -> case wire of
+      BreakWire _ -> do
+        unclosed <- either (const Nothing) (Just . snd) (relocationHeader primary)
+        (line, _) <- boundedLine 256 unclosed
+        receipt <- either (const Nothing) id (relocationPayload wire nonce (line <> "\n"))
+        pure (RelocationPrinted receipt)
+      TransferWire -> Nothing
+
+primaryRelocation :: RelocationWire -> ByteString -> Either ReplyError ByteString
+primaryRelocation wire = advance count
+  where
+    count :: Int
+    count = case wire of BreakWire True -> 3; _ -> 2
+    advance n bytes
+      | n == 0 || Bytes.null bytes = Right bytes
+      | otherwise = do
+          (accepted, payload, remaining) <- relocationFrame bytes
+          if accepted && Bytes.null payload then advance (n - 1) remaining
+          else Left UnexpectedReply
+
+relocationHeader :: ByteString -> Either ReplyError (ByteString, ByteString)
+relocationHeader bytes = do
+  (header, body) <- maybe (Left UnexpectedReply) Right (boundedLine 64 bytes)
+  stamp <- guardStamp header
+  pure (stamp, body)
+
+relocationFrame :: ByteString -> Either ReplyError (Bool, ByteString, ByteString)
+relocationFrame bytes = do
+  (stamp, body) <- relocationHeader bytes
+  let ended = "%end " <> stamp
+      rejected = "%error " <> stamp
+      scan !consumed suffix =
+        let (line, ending) = Bytes.break (== 10) suffix
+        in case Bytes.uncons ending of
+          Nothing -> Left UnexpectedReply
+          Just (_, next)
+            | line == ended -> Right (True, Bytes.take consumed body, next)
+            | line == rejected -> Right (False, Bytes.take consumed body, next)
+            | otherwise -> scan (consumed + Bytes.length line + 1) next
+  scan 0 body
+
+relocationPayload :: RelocationWire -> Frame.Nonce -> ByteString -> Either ReplyError (Maybe SessionReceipt)
+relocationPayload _ _ body | Bytes.null body = Right Nothing
+relocationPayload TransferWire _ _ = Left UnexpectedReply
+relocationPayload (BreakWire _) nonce body = do
+  payload <- either (const (Left UnexpectedReply)) Right (Frame.decodeScalar nonce 64 body)
+  maybe (Left UnexpectedReply) (Right . Just) (sessionReceipt payload)
 
 -- | Interpret fully drained streams and normal exit status for one t'Mutation'.
 -- This is not a general control-mode decoder or evidence for waiting commands.
@@ -645,7 +813,8 @@ compileProgramMutation nonce command = do
       Just digits -> not (Bytes.null digits) && Bytes.length digits <= 10
         && Bytes.all (\byte -> byte >= 48 && byte <= 57) digits
       Nothing -> False
-    renderArguments = Bytes.intercalate " " . map (\value -> "'" <> Bytes.intercalate "'\\''" (Bytes.split 39 value) <> "'")
+renderArguments :: [ByteString] -> ByteString
+renderArguments = Bytes.intercalate " " . map (\value -> "'" <> Bytes.intercalate "'\\''" (Bytes.split 39 value) <> "'")
 
 -- | Interpret one fully drained composite Program command. A claimed failure
 -- proves that the old witness was consumed, not that its later action ran.

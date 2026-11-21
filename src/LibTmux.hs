@@ -6,6 +6,8 @@
 -- in IO; detached observations change only when acquired again with 'capture'.
 -- 'createSession', 'createWindow' and 'splitPane' return historical identities;
 -- "LibTmux.Creation" describes their options and explicit link context.
+-- 'lookupPaneOccurrence' resolves that context for 'movePane', 'joinPane'
+-- and 'breakPane'. Capture again to confirm the pane's placement.
 -- 'resizePane' and 'resizeWindow' request absolute cells through checked
 -- 'Resize' values. Capture again for actual geometry.
 --

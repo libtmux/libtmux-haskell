@@ -13,6 +13,7 @@ module LibTmux.Creation
   , WindowSlot (..), WindowPlacement (..), WindowCollision (..)
   , WindowOptions (..), defaultWindowOptions
   , SplitDirection (..), SplitSize (..), SplitOptions (..), defaultSplitOptions
+  , PaneMoveOptions (..), defaultPaneMoveOptions, PaneRelocationReceipt (..)
   , CreatedEntities (session, window, pane, windowIndex, serverPid)
   , CreatedSession, CreatedWindow, CreatedPane
   ) where
@@ -20,9 +21,10 @@ module LibTmux.Creation
 import Data.ByteString (ByteString)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
-import LibTmux.Internal.Graph (CreatedEntities (..), CreatedSession, SessionRef)
+import LibTmux.Internal.Graph
+  (CreatedEntities (..), CreatedSession, PaneRelocationReceipt (..), SessionRef, WindowSlot (..))
 import LibTmux.Snapshot (TmuxText)
-import LibTmux.Value (Dimension, WindowIndex)
+import LibTmux.Value (Dimension)
 import System.OsPath.Posix (PosixPath)
 import System.OsString.Posix (PosixString)
 
@@ -54,13 +56,6 @@ data SessionOptions = SessionOptions
 -- 'DefaultProcess'. Creation captures the calling client's OS context in IO.
 defaultSessionOptions :: SessionOptions
 defaultSessionOptions = SessionOptions Nothing Nothing Nothing [] Nothing Nothing True DefaultProcess
-
--- | An exact session/index position at execution time. The occupant can change
--- after a snapshot; this is context, not an expected-window identity check.
--- 'LibTmux.Server.splitPane' also checks its explicit pane belongs to the
--- window occupying this slot. Indices must fit tmux's signed 32-bit domain.
-data WindowSlot = WindowSlot !SessionRef !WindowIndex
-  deriving stock (Eq, Show)
 
 -- | A session's next free index, an exact slot, or insertion beside a slot.
 -- Relative insertion can shift existing indices before later creation fails;
@@ -128,6 +123,19 @@ data SplitOptions = SplitOptions
 -- requests. Use tmux's size and launch defaults.
 defaultSplitOptions :: SplitOptions
 defaultSplitOptions = SplitOptions TopBottom DefaultSplitSize False False False False Nothing [] DefaultProcess
+
+-- | Placement of a relocated pane relative to the exact destination pane.
+data PaneMoveOptions = PaneMoveOptions
+  { moveDirection :: !SplitDirection -- ^ Side by side or top and bottom.
+  , moveSize :: !SplitSize -- ^ Native default, cells, or a checked percentage.
+  , moveBefore :: !Bool -- ^ Place left of or above the destination pane.
+  , moveFullWindow :: !Bool -- ^ Span the full destination window.
+  , selectMovedPane :: !Bool -- ^ Request native selection after relocation.
+  } deriving stock (Eq, Show)
+
+-- | Place below the destination pane without requesting destination selection.
+defaultPaneMoveOptions :: PaneMoveOptions
+defaultPaneMoveOptions = PaneMoveOptions TopBottom DefaultSplitSize False False False
 
 -- | A 'CreatedEntities' receipt from new-window: the window and pane are new;
 -- the session and link index identify where tmux created them.

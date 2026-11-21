@@ -5,7 +5,7 @@ import Control.Concurrent.STM
 import Control.Exception
 import Control.Exception.Context qualified as Context
 import Data.List.NonEmpty (NonEmpty (..))
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM, forM_, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as Bytes
 import Data.ByteString.Char8 qualified as Ascii
@@ -22,6 +22,7 @@ import LibTmux.Internal.Graph qualified as G
 import LibTmux.Internal.Mutation qualified as M
 import LibTmux.Internal.Process qualified as P
 import LibTmux.Internal.Process.Native qualified as N
+import LibTmux.Internal.Relocation qualified as Relocate
 import LibTmux.Internal.Runtime qualified as R
 import LibTmux.Internal.Scheduler qualified as S
 import LibTmux.Internal.Scope qualified as Scope
@@ -226,6 +227,70 @@ tests = testGroup "owned Runtime creation"
                         Utf8.encodeUtf8 (Id.renderSessionId session) <> "\n" @?= nativeSession
                         atomically (Create.detachRecovery recovery) >>= (@?= True)
                       Right _ -> assertFailure "cancelled facade returned success"
+
+  , testCase "pane relocation cancellation retains partial and complete native receipts" $
+      forM_ [False, True] $ \closed -> withRuntime P.normalFork $ \runtime server fixture -> do
+        created <- start 1000000 runtime server fixture (optionsFor "relocate")
+        withCreated fixture server created $ \base -> do
+          let native = readOutput fixture server
+              executable = Ascii.pack fixture.executable
+              generation = Pin.pinGeneration (R.serverPin server)
+          rawPane <- native ["split-window", "-dP", "-F", "#{pane_id}", "-t", paneTarget base, "/bin/cat", "-"]
+          let target = Bytes.takeWhile (/= 10) rawPane
+          pid <- native ["display-message", "-p", "-t", target, "#{pane_pid}"]
+          Fixture.withTrackedPane (Lazy.fromStrict pid)
+            (void (invoke fixture server ["kill-pane", "-t", target])) $ do
+              paneId <- either (fail . show) pure (Id.parsePaneId (Utf8.decodeUtf8 target))
+              destIndex <- either (fail . show) pure (Value.mkWindowIndex 5)
+              version <- native ["display-message", "-p", "#{version}"]
+              let pane = G.PaneRef generation paneId
+                  dest = G.WindowSlot (G.SessionRef generation base.sessionId) destIndex
+                  destTarget = sessionTarget base <> ":=5"
+                  source = C.PaneTarget base.sessionId base.windowIndex base.windowId paneId
+                  workaround = version == "3.7\n"
+                  command = C.BreakPane source base.sessionId destIndex workaround
+                  guards = if workaround then 3 else 2
+              -- Keep the two or three guard frames and the real printed ID.
+              -- For a completed primary reply, keep its closing line as well.
+              let linesToKeep = 2 * guards + 2 + fromEnum closed
+              ready <- newEmptyTMVarIO
+              linesLeft <- newIORef linesToKeep
+              let holdReply stream = do
+                    remaining <- readIORef linesLeft
+                    if remaining == 0
+                      then atomically (putTMVar ready ()) >> atomically retry
+                      else do
+                        chunk <- N.readChunk stream
+                        forM chunk $ \bytes -> do
+                          let kept = case drop (remaining - 1) (Bytes.elemIndices 10 bytes) of
+                                end : _ -> Bytes.take (end + 1) bytes
+                                [] -> bytes
+                          writeIORef linesLeft (remaining - Bytes.count 10 kept)
+                          pure kept
+                  hooks = P.defaultHooks {P.readOutput = holdReply}
+              withAsync (tryWithContext @SomeException (Relocate.performRelocation hooks 10000000
+                runtime server executable command (Relocate.BreakTo pane dest))) $ \worker -> do
+                  bounded (atomically (takeTMVar ready))
+                  native ["display-message", "-p", "-t", destTarget, "#{pane_id}"] >>= (@?= rawPane)
+                  native ["display-message", "-p", "-t", destTarget, "#{pane_pid}"] >>= (@?= pid)
+                  rawWindow <- native ["display-message", "-p", "-t", destTarget, "#{window_id}"]
+                  windowId <- either (fail . show) pure
+                    (Id.parseWindowId (Utf8.decodeUtf8 (Bytes.takeWhile (/= 10) rawWindow)))
+                  let link = (dest, G.WindowRef generation windowId)
+                      receipt = if closed then G.BreakAccepted pane dest (Just link)
+                                else G.BreakReported pane dest link
+                  throwTo (asyncThreadId worker) ThreadKilled
+                  bounded (wait worker) >>= \case
+                    Left (ExceptionWithContext context problem) -> do
+                      fromException @AsyncException problem @?= Just ThreadKilled
+                      owner <- case Context.getExceptionAnnotations @Relocate.RelocationRecovery context of
+                        [value] -> pure value
+                        _ -> fail "cancellation lost relocation ownership"
+                      atomically (Relocate.observedReceipt owner) >>= (@?= Just receipt)
+                      retired <- bounded (Relocate.awaitRecovery owner)
+                      retired.logical.outcome @?= Just S.OutcomeUnknown
+                      atomically (Relocate.detachRecovery owner) >>= (@?= True)
+                    Right _ -> assertFailure "cancelled relocation returned success"
 
   , testCase "synchronous creation retains journals before Request handoff fails" $
       forM_ [False, True] $ \expires -> do

@@ -9,10 +9,11 @@
 module LibTmux.Internal.Graph
   ( EndpointIdentity (..), Generation (..)
   , SessionRef (..), WindowRef (..), PaneRef (..), CreatedEntities (..), CreatedSession
+  , WindowSlot (..), PaneRelocationReceipt (..)
   , Session (..), Window (..), Pane (..), WindowLink (..), PaneOccurrence (..)
   , EntityGraph, GraphError (..), LookupError (..), assembleEntityGraph
   , graphSessions, graphWindows, graphPanes, graphLinks, graphOccurrences
-  , lookupSession, lookupWindow, lookupPane, linksForSession, panesForWindow
+  , lookupSession, lookupWindow, lookupPane, lookupPaneOccurrence, linksForSession, panesForWindow
   , ServerInfo (..), Client (..), ClientAttachment (..), ClientInput (..)
   , Snapshot, serverInfo, entities, clients, assembleSnapshot
   , CaptureInterval (..), captureInterval, stampSnapshot
@@ -58,6 +59,23 @@ data SessionRef = SessionRef !Generation !SessionId
   deriving stock (Eq, Ord, Show)
 instance NFData SessionRef where
   rnf (SessionRef generation ident) = rnf generation `seq` rnf ident
+
+-- | An exact session/index position. The occupant can change after capture.
+-- Indices used by native commands must fit tmux's signed 32-bit domain.
+data WindowSlot = WindowSlot !SessionRef !WindowIndex
+  deriving stock (Eq, Show)
+
+-- | Historical evidence from the primary relocation command. Capture again
+-- to verify the requested slot and classify a break as window creation or
+-- transfer. A reported break link may be another link to the same window.
+data PaneRelocationReceipt
+  = MoveAccepted !PaneRef !WindowSlot !WindowRef
+    -- ^ Moved pane, requested destination, and the guarded destination window.
+  | BreakAccepted !PaneRef !WindowSlot !(Maybe (WindowSlot, WindowRef))
+    -- ^ Moved pane, requested destination, and tmux's optional printed link.
+  | BreakReported !PaneRef !WindowSlot !(WindowSlot, WindowRef)
+    -- ^ Recovery found a complete printed link before primary completion.
+  deriving stock (Eq, Show)
 
 -- | Physical window targeting identity within a t'Generation'. A window can
 -- have several t'WindowLink' appearances.
@@ -172,6 +190,16 @@ type CreatedSession = CreatedEntities
 -- deadline.
 --
 -- 'LibTmux.Server.renameSession', 'LibTmux.Server.renameSessionWith'
+--
+-- __Read or change session settings.__ Use the captured session reference
+-- to select an option or environment store. Read a local option for the
+-- override, or read an effective option to include inheritance.
+--
+-- * Use v'LibTmux.Options.SessionOptionsAt' with 'LibTmux.Server.readOption'
+--   or 'LibTmux.Server.setOption'.
+-- * Use v'LibTmux.Environment.SessionEnvironment' with
+--   'LibTmux.Server.getEnvironment' or 'LibTmux.Server.setEnvironment'.
+-- * <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/options.md#select-a-store Session settings example>
 --
 -- __Add a window to a session.__ A placement names the session and where the
 -- window goes: the next free index or a slot. The result holds the references
@@ -338,6 +366,13 @@ instance NFData Session where
 -- 'LibTmux.Server.selectLayout', 'LibTmux.Server.selectLayoutWith',
 -- t'LibTmux.Server.NamedLayout'
 --
+-- __Resize a window.__ Request an absolute width, height or both with
+-- t'LibTmux.Value.Resize' and dimensions from 'LibTmux.Value.mkDimension'.
+-- Capture again for the size tmux applied.
+--
+-- 'LibTmux.Server.resizeWindow', 'LibTmux.Server.resizeWindowWith',
+-- <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/resizing.md Resize example>
+--
 -- __Remove a window.__ One removal closes the physical window across all its
 -- links, and tmux closes a session left without windows.
 --
@@ -480,6 +515,18 @@ instance NFData Window where
 --
 -- 'LibTmux.Server.setPaneTitle', 'LibTmux.Server.setPaneTitleWith'
 --
+-- __Resize a pane.__ Request an absolute width, height or both for its
+-- reference. The native layout can resize neighboring panes.
+--
+-- 'LibTmux.Server.resizePane', 'LibTmux.Server.resizePaneWith',
+-- 'LibTmux.Value.mkDimension',
+-- <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/resizing.md Resize example>
+--
+-- __Move a running pane.__ Resolve its exact session link with
+-- 'LibTmux.Snapshot.lookupPaneOccurrence'. Capture the new slot after
+-- 'LibTmux.Server.movePane', 'LibTmux.Server.joinPane' or
+-- 'LibTmux.Server.breakPane'.
+--
 -- __Send input to a pane.__ Send literal text, or named tmux keys such as
 -- @Enter@ in order. Nothing appends Enter, and success confirms that tmux
 -- processed the request, not that the application responded. An invalid key
@@ -487,6 +534,12 @@ instance NFData Window where
 --
 -- 'LibTmux.Server.sendKeys', 'LibTmux.Server.sendKeysWith',
 -- t'LibTmux.Server.PaneInput'
+--
+-- __Paste a named buffer.__ Pass the buffer name, an exact pane reference
+-- and a t'LibTmux.Pane.PasteNewlines' policy.
+--
+-- 'LibTmux.Server.pasteBuffer', 'LibTmux.Server.loadBuffer',
+-- <https://github.com/libtmux/libtmux-haskell/blob/1257155c45f95f620a546f0f45671ef4558cd122/docs/buffers.md Paste example>
 --
 -- __Read a pane's text.__ Capture the visible rows or a range, as plain text or
 -- with ANSI styling, within a byte limit. The result is a detached observation,
@@ -507,6 +560,12 @@ instance NFData Window where
 -- 'LibTmux.Server.waitForText', t'LibTmux.Server.PaneWaitOptions',
 -- 'LibTmux.Server.defaultPaneWait', t'LibTmux.Server.PaneMatch',
 -- t'LibTmux.Server.PaneWaitResult'
+--
+-- __Wait for a pane state.__ Wait for retained death, disappearance or focus
+-- through a session link. A match carries the snapshot that confirmed it.
+--
+-- 'LibTmux.Server.waitForPaneState', t'LibTmux.Server.PaneState',
+-- t'LibTmux.Server.PaneStateWaitResult'
 --
 -- __Remove a pane.__ Removing the last pane also closes its window. Success
 -- confirms that tmux removed the pane, so observe its processes' exit
@@ -680,6 +739,8 @@ data LookupError
   | MissingSession !SessionRef -- ^ No session with this identity was captured.
   | MissingWindow !WindowRef -- ^ No physical window with this identity was captured.
   | MissingPane !PaneRef -- ^ No physical pane with this identity was captured.
+  | MissingWindowSlot !WindowSlot -- ^ The captured session has no link at this index.
+  | PaneOutsideWindowSlot !PaneRef !WindowSlot -- ^ The pane belongs to a different window.
   deriving stock (Eq, Show)
 
 -- | Invalid entity or server data observed while assembling a snapshot.
@@ -802,6 +863,14 @@ lookupPane :: EntityGraph -> PaneRef -> Either LookupError Pane
 lookupPane graph ref@(PaneRef generation _)
   | generation /= graph.generation = Left ForeignGeneration
   | otherwise = maybe (Left (MissingPane ref)) Right (Map.lookup ref graph.panes)
+
+lookupPaneOccurrence :: EntityGraph -> WindowSlot -> PaneRef -> Either LookupError PaneOccurrence
+lookupPaneOccurrence graph slot@(WindowSlot session index) ref = do
+  _ <- lookupSession graph session
+  pane <- lookupPane graph ref
+  link <- maybe (Left (MissingWindowSlot slot)) Right (Map.lookup (session, index) graph.links)
+  unless (pane.window == link.window) (Left (PaneOutsideWindowSlot ref slot))
+  pure (PaneOccurrence pane link)
 
 linksForSession :: EntityGraph -> SessionRef -> Either LookupError [WindowLink]
 linksForSession graph ref = do

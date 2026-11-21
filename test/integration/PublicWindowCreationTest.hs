@@ -2,8 +2,9 @@ module PublicWindowCreationTest (tests) where
 
 import Control.Concurrent.Async (asyncThreadId, wait, withAsync)
 import Control.Exception
-import Control.Monad (forM_, void)
+import Control.Monad (forM_, void, when)
 import Data.ByteString.Char8 qualified as Bytes
+import Data.ByteString.Lazy qualified as Lazy
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text qualified as Text
 import Fixture qualified
@@ -17,7 +18,7 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
 tests :: TestTree
-tests = testGroup "public window and pane creation"
+tests = testGroup "public creation and pane relocation"
   [ testCase "window placement returns fresh identities and actual link indices" $
       withBase $ \fixture server base -> do
         before <- Tmux.capture server
@@ -208,6 +209,170 @@ tests = testGroup "public window and pane creation"
                   case Tmux.lookupPane after created.pane of
                     Left (Tmux.MissingPane _) -> pure ()
                     _ -> assertFailure "after-hook did not remove the created pane"
+  , testCase "pane relocation moves a linked window's last pane and preserves the process" $
+      forM_ [Tmux.movePane, Tmux.joinPane] $ \relocate ->
+        withBase $ \fixture server base -> do
+          destination <- Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+          alias <- Tmux.createSession server Creation.defaultSessionOptions
+            {Creation.name = Just "linked-source", Creation.process = cat}
+          withPane fixture destination.pane $ withPane fixture alias.pane $ do
+            index <- require (Tmux.mkWindowIndex 5)
+            let link = Tmux.WindowSlot alias.session index
+            Tmux.linkWindow server (slot base) link
+            snapshot <- Tmux.capture server
+            source <- occurrence snapshot link base.pane
+            target <- occurrence snapshot (slot destination) destination.pane
+            pid <- paneProcess fixture base.pane
+            relocate server source target Tmux.defaultPaneMoveOptions >>=
+              (@?= Tmux.MoveAccepted base.pane (slot destination) destination.window)
+            fresh <- Tmux.capture server
+            moved <- occurrence fresh (slot destination) base.pane
+            moved.pane.window @?= destination.window
+            paneProcess fixture base.pane >>= (@?= pid)
+            Tmux.lookupWindow fresh base.window @?= Left (Tmux.MissingWindow base.window)
+            _ <- occurrence fresh (slot alias) alias.pane
+            _ <- occurrence fresh (slot destination) destination.pane
+            pure ()
+
+  , testCase "pane relocation joins a full-height pane before its target and selects it" $
+      withBase $ \fixture server base -> do
+        destination <- Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+        withPane fixture destination.pane $ do
+          bystander <- Tmux.splitPane server (slot destination) destination.pane splitOptions
+          withPane fixture bystander.pane $ do
+            snapshot <- Tmux.capture server
+            source <- occurrence snapshot (slot base) base.pane
+            target <- occurrence snapshot (slot destination) destination.pane
+            width <- require (Tmux.mkDimension 32)
+            let options = Tmux.defaultPaneMoveOptions
+                  { Tmux.moveDirection = Tmux.LeftRight
+                  , Tmux.moveSize = Tmux.SplitCells width
+                  , Tmux.moveBefore = True
+                  , Tmux.moveFullWindow = True
+                  , Tmux.selectMovedPane = True
+                  }
+            Tmux.joinPane server source target options >>=
+              (@?= Tmux.MoveAccepted base.pane (slot destination) destination.window)
+            fresh <- Tmux.capture server
+            moved <- occurrence fresh (slot destination) base.pane
+            window <- require (Tmux.lookupWindow fresh destination.window)
+            moved.pane.width @?= width
+            moved.pane.height @?= window.height
+            assertBool "moved pane and destination link should be selected" (moved.pane.active && moved.link.active)
+            Fixture.command fixture ["display-message", "-p", "-t", paneTarget base.pane, "#{pane_left}"] >>=
+              (@?= (ExitSuccess, "0\n", ""))
+            _ <- occurrence fresh (slot destination) bystander.pane
+            pure ()
+
+  , testCase "pane relocation rejects a stale slot even when tmux could find its numeric name" $
+      withBase $ \fixture server base -> do
+        index <- require (Tmux.mkWindowIndex 4)
+        movedIndex <- require (Tmux.mkWindowIndex 7)
+        destination <- Tmux.createWindow server (Creation.At (Tmux.WindowSlot base.session index))
+          windowOptions {Creation.windowLabel = Just "4"}
+        withPane fixture destination.pane $ do
+          snapshot <- Tmux.capture server
+          source <- occurrence snapshot (slot base) base.pane
+          stale <- occurrence snapshot (slot destination) destination.pane
+          let session = Text.unpack (Tmux.renderSessionId (Tmux.sessionId base.session))
+          configured fixture ["move-window", "-s", session <> ":4", "-t", session <> ":7"]
+          Tmux.tryTmux (Tmux.movePane server source stale Tmux.defaultPaneMoveOptions) >>= \case
+            Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+            _ -> assertFailure "relocation accepted a stale numeric slot"
+          Tmux.tryTmux (Tmux.joinPane server stale source Tmux.defaultPaneMoveOptions) >>= \case
+            Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+            _ -> assertFailure "relocation accepted a stale source slot"
+          fresh <- Tmux.capture server
+          _ <- occurrence fresh (slot base) base.pane
+          _ <- occurrence fresh (Tmux.WindowSlot base.session movedIndex) destination.pane
+          Tmux.lookupPaneOccurrence fresh (slot destination) destination.pane @?=
+            Left (Tmux.MissingWindowSlot (slot destination))
+          Tmux.lookupPaneOccurrence fresh (slot base) destination.pane @?=
+            Left (Tmux.PaneOutsideWindowSlot destination.pane (slot base))
+          pure ()
+
+  , testCase "pane relocation refuses the same pane without unzooming its window" $
+      withBase $ \fixture server base -> do
+        other <- Tmux.splitPane server (slot base) base.pane splitOptions
+        withPane fixture other.pane $ do
+          configured fixture ["resize-pane", "-Z", "-t", paneTarget base.pane]
+          snapshot <- Tmux.capture server
+          exact <- occurrence snapshot (slot base) base.pane
+          Tmux.tryTmux (Tmux.joinPane server exact exact Tmux.defaultPaneMoveOptions) >>= \case
+            Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument _)) -> pure ()
+            _ -> assertFailure "relocation accepted its own pane"
+          fresh <- Tmux.capture server
+          zoomed <- require (Tmux.lookupWindow fresh base.window)
+          assertBool "refusing the same pane changed zoom" zoomed.zoomed
+          Tmux.tryTmux (Tmux.breakPane server exact (slot base)) >>= \case
+            Left (ExceptionWithContext _ (Tmux.InvalidMutationArgument _)) -> pure ()
+            _ -> assertFailure "break-out accepted its own slot"
+          taken <- Tmux.createWindow server (Creation.NextFree base.session) windowOptions
+          withPane fixture taken.pane $ do
+            Tmux.tryTmux (Tmux.breakPane server exact (slot taken)) >>= \case
+              Left (ExceptionWithContext _ (Tmux.MutationRejected _)) -> pure ()
+              _ -> assertFailure "break-out accepted an occupied slot"
+            current <- Tmux.capture server
+            _ <- occurrence current (slot taken) taken.pane
+            _ <- occurrence current (slot base) base.pane
+            stillZoomed <- require (Tmux.lookupWindow current base.window)
+            assertBool "refusing the occupied slot changed zoom" stillZoomed.zoomed
+
+  , testCase "pane relocation refuses cross-daemon references before dispatch" $
+      withBase $ \first server base -> withBase $ \second other foreignBase -> do
+        source <- Tmux.capture server >>= \graph -> occurrence graph (slot base) base.pane
+        foreignPane <- Tmux.capture other >>= \graph -> occurrence graph (slot foreignBase) foreignBase.pane
+        let options = Tmux.defaultPaneMoveOptions
+        forM_ [Tmux.movePane server source foreignPane options, Tmux.joinPane server foreignPane source options,
+               Tmux.breakPane server source (slot foreignBase)] $ \request ->
+          Tmux.tryTmux request >>= \case
+            Left (ExceptionWithContext _ Tmux.InvalidTarget) -> pure ()
+            _ -> assertFailure "relocation admitted a foreign reference"
+        fresh <- Tmux.capture server
+        _ <- occurrence fresh (slot base) base.pane
+        foreignFresh <- Tmux.capture other
+        _ <- occurrence foreignFresh (slot foreignBase) foreignBase.pane
+        Tmux.paneId base.pane @?= Tmux.paneId foreignBase.pane
+        _ <- paneProcess first base.pane
+        _ <- paneProcess second foreignBase.pane
+        pure ()
+
+  , testCase "pane relocation breaks out a split and transfers a sole pane's exact link" $
+      forM_ [False, True] $ \sole -> withBase $ \fixture server base -> do
+        alias <- Tmux.createSession server Creation.defaultSessionOptions
+          {Creation.name = Just "break-destination", Creation.process = cat}
+        withPane fixture alias.pane $ do
+          sourceIndex <- require (Tmux.mkWindowIndex 2)
+          remainingIndex <- require (Tmux.mkWindowIndex 3)
+          destinationIndex <- require (Tmux.mkWindowIndex 5)
+          let sourceSlot = Tmux.WindowSlot alias.session sourceIndex
+              destinationSlot = Tmux.WindowSlot alias.session destinationIndex
+          Tmux.linkWindow server (slot base) sourceSlot
+          when sole (Tmux.linkWindow server (slot base) (Tmux.WindowSlot alias.session remainingIndex))
+          pane <- if sole then pure base.pane
+            else (.pane) <$> Tmux.splitPane server sourceSlot base.pane splitOptions
+          withPane fixture pane $ do
+            snapshot <- Tmux.capture server
+            exact <- occurrence snapshot sourceSlot pane
+            pid <- paneProcess fixture pane
+            receipt <- Tmux.breakPane server exact destinationSlot >>= \case
+              Tmux.BreakAccepted reported requested nativeLink -> do
+                reported @?= pane
+                requested @?= destinationSlot
+                pure nativeLink
+              other -> fail ("expected a break-pane receipt, got " <> show other)
+            fresh <- Tmux.capture server
+            relocated <- occurrence fresh destinationSlot pane
+            (relocated.pane.window == base.window) @?= sole
+            forM_ receipt $ \(reportedSlot, reportedWindow) -> do
+              reportedWindow @?= relocated.pane.window
+              when (reportedSlot /= destinationSlot) $
+                reportedSlot @?= Tmux.WindowSlot alias.session remainingIndex
+            paneProcess fixture pane >>= (@?= pid)
+            _ <- occurrence fresh (slot base) base.pane
+            links <- require (Tmux.linksForSession fresh alias.session)
+            any (\link -> link.index == sourceIndex && link.window == base.window) links @?= not sole
+
   ]
 
 windowOptions :: Creation.WindowOptions
@@ -233,9 +398,17 @@ withBase action = Fixture.withFixture $ \fixture -> Tmux.withServer (config fixt
 
 withPane :: Fixture.Fixture -> Tmux.PaneRef -> IO a -> IO a
 withPane fixture pane action = do
+  pid <- paneProcess fixture pane
+  Fixture.withTrackedPane pid (void (Fixture.command fixture ["kill-pane", "-t", paneTarget pane])) action
+
+paneProcess :: Fixture.Fixture -> Tmux.PaneRef -> IO Lazy.ByteString
+paneProcess fixture pane = do
   (code, pid, errors) <- Fixture.command fixture ["display-message", "-p", "-t", paneTarget pane, "-F", "#{pane_pid}"]
   (code, errors) @?= (ExitSuccess, "")
-  Fixture.withTrackedPane pid (void (Fixture.command fixture ["kill-pane", "-t", paneTarget pane])) action
+  pure pid
+
+occurrence :: Tmux.Snapshot -> Tmux.WindowSlot -> Tmux.PaneRef -> IO Tmux.PaneOccurrence
+occurrence snapshot target = require . Tmux.lookupPaneOccurrence snapshot target
 
 assertLink :: Tmux.Snapshot -> Creation.CreatedEntities -> Assertion
 assertLink snapshot created = do

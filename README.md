@@ -39,7 +39,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 02b983c4f75f5085e7e7f7ce6c2abb41d646afc8
+  tag: 27c81d7287531bbfa12aeca007d73a20b70e1b3d
 ```
 
 Update the package index:
@@ -240,6 +240,11 @@ $ cabal run --verbose=0 mutate-graph
 
 A new capture shows the changes; the old snapshot keeps its values. Each
 rename is its own command, and a later failure undoes nothing.
+
+### [`movePane` and `breakPane`](docs/mutations.md#move-a-running-pane) to relocate a running pane
+
+The same program moves a worker out of its editor window and back. It uses
+the same `PaneRef` and resolves each destination from a fresh capture.
 
 ## Create sessions, windows and panes
 
