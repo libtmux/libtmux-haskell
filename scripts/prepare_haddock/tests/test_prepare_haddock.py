@@ -478,6 +478,34 @@ def write_plan(path: Path, plan: Mapping[str, object]) -> None:
     path.write_text(json.dumps(plan))
 
 
+def test_companion_links_to_prepared_core(tmp_path: Path, manifest: Path) -> None:
+    core_raw = tmp_path / "core-raw"
+    core = tmp_path / "core"
+    companion = tmp_path / "companion"
+    browser_files(core_raw, record("Session"))
+    tool.prepare(core_raw, core, manifest)
+    raw = tmp_path / "companion-raw"
+    url = f"https://hackage.haskell.org/package/libtmux-haskell-0.0.1.0/docs/{PAGE}"
+    reference = f'<a href="{url}#t:Session">Session</a>'
+    browser_files(raw, record("Context") + f"<p>{reference}</p>")
+    entry = {
+        "name": "Context",
+        "module": "LibTmux.Snapshot",
+        "link": PAGE + "#t:Context",
+        "display_html": f'<a href="#t:Context">Context</a> {reference}',
+    }
+    (raw / "doc-index.json").write_text(json.dumps([entry]))
+    result = tool.prepare(raw, companion, manifest, core_reference=core)
+    assert result["counts"]["checkedCoreReferences"] == 2
+    assert f"../core/{PAGE}#t:Session" in Links((companion / PAGE).read_text()).hrefs
+    assert f"../core/{PAGE}#t:Session" in (companion / "doc-index.json").read_text()
+    browser_files(raw, f'<p><a href="{url}#t:Missing">Missing</a></p>')
+    rejected = tmp_path / "rejected"
+    with pytest.raises(ValueError, match="Missing core reference anchor"):
+        tool.prepare(raw, rejected, manifest, core_reference=core)
+    assert not rejected.exists()
+
+
 @pytest.mark.parametrize("package", ["libtmux-haskell", "libtmux-haskell-workspace"])
 def test_build_plan_selects_only_the_local_public_library(tmp_path: Path, package: str) -> None:
     """The plan must name exactly one configured local library for this checkout."""

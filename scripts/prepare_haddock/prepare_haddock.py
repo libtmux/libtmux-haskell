@@ -715,7 +715,76 @@ def _resources(files: Mapping[str, bytes]) -> int:
     return checked
 
 
-def prepare(raw: Path, output: Path, manifest: Path) -> dict[str, Any]:
+def _bind_core_links(pages: dict[str, str], output: Path, core: Path) -> int:
+    """Link the companion to its sibling core artifact and verify the cited anchors."""
+    core = core.resolve()
+    if core.parent != output.parent or core == output:
+        raise ValueError("Prepared core and companion artifacts must be siblings")
+    report = json.loads((core / "navigation.json").read_text())
+    if report.get("schema") != "libtmux.haddock-navigation/1":
+        raise ValueError("Unqualified prepared core artifact")
+    digests = {entry["path"]: entry["preparedSha256"] for entry in report["files"]}
+    anchors: dict[str, set[str]] = {}
+    count = 0
+
+    def bind(name: str, source: str) -> str:
+        nonlocal count
+        if "/package/libtmux-haskell-" not in source:
+            return source
+        document = Document(source)
+        edits: list[Edit] = []
+        for node in document.nodes:
+            if node.tag != "a":
+                continue
+            match = re.fullmatch(
+                r"https://hackage\.haskell\.org/package/libtmux-haskell-\d+(?:\.\d+)*/docs/(.+)",
+                node.attrs.get("href", ""),
+            )
+            if match is None:
+                continue
+            target = _destination("index.html", match[1])
+            if target is None:
+                raise ValueError("Invalid core reference")
+            path, anchor = target
+            if path not in anchors:
+                data = (core / path).read_bytes()
+                if hashlib.sha256(data).hexdigest() != digests.get(path):
+                    raise ValueError(f"Prepared core reference differs from its digest: {path}")
+                anchors[path] = {
+                    entry.attrs["id"]
+                    for entry in Document(data.decode()).nodes
+                    if "id" in entry.attrs
+                }
+            if anchor and not {anchor, unquote(anchor)} & anchors[path]:
+                raise ValueError(f"Missing core reference anchor: {path}#{anchor}")
+            relative = posixpath.relpath(
+                posixpath.join(core.name, path),
+                posixpath.join(output.name, posixpath.dirname(name)),
+            )
+            edits.append(
+                _attribute(document, node, "href", relative + ("#" + anchor if anchor else ""))
+            )
+        count += len(edits)
+        return _apply(document, edits)
+
+    for name, source in pages.items():
+        if name.endswith(".html"):
+            pages[name] = bind(name, source)
+    if "doc-index.json" in pages:
+        entries = json.loads(pages["doc-index.json"])
+        for entry in entries:
+            entry["display_html"] = bind("doc-index.json", entry["display_html"])
+        pages["doc-index.json"] = (
+            json.dumps(entries, ensure_ascii=False, separators=(",", ":")) + "\n"
+        )
+    if not count:
+        raise ValueError("Companion artifact contains no links to the core library")
+    return count
+
+
+def prepare(
+    raw: Path, output: Path, manifest: Path, *, core_reference: Path | None = None
+) -> dict[str, Any]:
     """Write a fresh artifact atomically after validating the complete copy."""
     raw, output = Path(raw).resolve(), Path(output)
     if output.exists() or output.is_symlink():
@@ -738,6 +807,8 @@ def prepare(raw: Path, output: Path, manifest: Path) -> dict[str, Any]:
         if name.endswith(".html") or name == "doc-index.json"
     }
     prepared, counts = prepare_pages(pages, *cabal_modules(Path(manifest)))
+    if core_reference is not None:
+        counts["checkedCoreReferences"] = _bind_core_links(prepared, output, core_reference)
     counts["checkedLocalResources"] = resources
     changed = {
         name: prepared[name].encode("utf-8") if name in prepared else data
@@ -817,6 +888,7 @@ def main() -> None:
     parser.add_argument(
         "--package", default="libtmux-haskell", help="Package name in the Cabal plan"
     )
+    parser.add_argument("--core-reference", type=Path, help="Prepared sibling core artifact")
     args = parser.parse_args()
     try:
         raw = (
@@ -824,7 +896,7 @@ def main() -> None:
             if args.raw is not None
             else from_plan(args.build_plan, args.manifest, args.package)
         )
-        evidence = prepare(raw, args.output, args.manifest)
+        evidence = prepare(raw, args.output, args.manifest, core_reference=args.core_reference)
     except (OSError, ValueError) as error:
         parser.exit(1, f"Haddock preparation failed: {error}\n")
     print(json.dumps(evidence["counts"], sort_keys=True))

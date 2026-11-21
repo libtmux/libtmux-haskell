@@ -52,11 +52,12 @@ data WorkspaceRecovery
 
 instance ExceptionAnnotation WorkspaceRecovery
 
+-- | Find workspace owners retained in an exception's context.
 workspaceRecoveries :: Context.ExceptionContext -> [WorkspaceRecovery]
 workspaceRecoveries = Context.getExceptionAnnotations
 
 -- | Read the exact identity of the new session when observed. Use that
--- reference with 'Tmux.killSession' to retire the session.
+-- reference with @killSession@ from "LibTmux.Server" to retire the session.
 workspaceRecoverySession :: WorkspaceRecovery -> IO (Maybe Tmux.SessionRef)
 workspaceRecoverySession (KnownSession session) = pure (Just session)
 workspaceRecoverySession (PendingSession creation) = fmap (.session) <$> Recovery.creationReceipt creation

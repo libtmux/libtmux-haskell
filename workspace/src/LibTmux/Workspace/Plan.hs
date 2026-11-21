@@ -96,7 +96,7 @@ data Defaults = Defaults
   }
 
 -- | Parse one tmuxp YAML document and resolve its plan without opening tmux.
-planTmuxp :: PlanInputs -> ByteString -> Decode WorkspacePlan
+planTmuxp :: PlanInputs -> ByteString -> Either WorkspaceError WorkspacePlan
 planTmuxp inputs bytes = do
   unless (isAbsolute inputs.configDirectory) $
     Left (InvalidField "configDirectory" "expected the absolute directory holding the workspace file")

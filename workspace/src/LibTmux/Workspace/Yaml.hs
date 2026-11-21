@@ -1,10 +1,9 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DeriveAnyClass #-}
 
 -- | Bound YAML decoding and keep marked parser errors.
 module LibTmux.Workspace.Yaml (YamlError (..), decodeWorkspaceYaml) where
 
-import Control.DeepSeq (NFData, force)
+import Control.DeepSeq (NFData (..), force)
 import Control.Exception (evaluate, try)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Resource (ResourceT)
@@ -16,7 +15,6 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Void (Void)
 import Data.Yaml qualified as Yaml
-import GHC.Generics (Generic)
 import System.IO.Unsafe (unsafePerformIO)
 import Text.Libyaml qualified as Lib
 
@@ -37,8 +35,10 @@ data YamlError = YamlError
   , line :: !(Maybe Int)
   , column :: !(Maybe Int)
   }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (NFData)
+  deriving stock (Eq, Show)
+
+instance NFData YamlError where
+  rnf problem = rnf (problem.code, problem.message, problem.line, problem.column)
 
 data Frame = Sequence | Mapping !(Set.Set Text) !Bool
 
