@@ -5,14 +5,17 @@ import Control.Exception
 import Control.Monad (forM_, void)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as Bytes
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import LibTmux qualified as Tmux
 import LibTmux.Creation qualified as Creation
 import LibTmux.Recovery qualified as Recovery
 import LibTmux.Workspace qualified as Workspace
+import System.Directory (getTemporaryDirectory, removeFile)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
+import System.IO (hClose, openBinaryTempFile)
 import System.OsString.Posix qualified as Os
 import System.Process (CreateProcess (env), proc, readCreateProcessWithExitCode)
 import System.Timeout (timeout)
@@ -47,7 +50,12 @@ tests = testGroup "workspace effects"
             assertBool "explicit pane focus was applied" first.active
             (path first.currentPath, path second.currentPath) @?= ("/tmp", "/")
             observed server first.ref "effect:session:window:/tmp"
-            observed server second.ref "effect:session:pane:/"
+            bracket createOutputFile removeFile $ \output -> do
+              let redirect = " >" <> shellArgument (Text.pack output) <> "; printf 'probe:%s\\n' complete"
+              Tmux.sendKeys server second.ref (Tmux.LiteralText redirect)
+              Tmux.sendKeys server second.ref (Tmux.NamedKeys ("Enter" :| []))
+              observed server second.ref "probe:complete"
+              Bytes.readFile output >>= (@?= "effect:session:pane:/\n")
           _ -> assertFailure "expected exactly two pane identities"
         Tmux.getEnvironment server (Tmux.SessionEnvironment session) "SESSION_FLAG" >>= \case
           Just (Tmux.EnvironmentValue Tmux.Visible value) -> value @?= "session"
@@ -79,6 +87,39 @@ tests = testGroup "workspace effects"
             fresh <- Tmux.capture server
             map (.ref) (Tmux.sessions fresh) @?= [survivor.session]
           Right _ -> assertFailure "apply accepted a pane that only echoes its input"
+  , testCase "cancel after the pane consumes the readiness probe" $
+      withServer $ \server native -> do
+        native ["set-option", "-g", "default-shell", "/bin/sh"]
+        executable <- tmuxExecutable
+        initial <- Tmux.capture server
+        let socket = path (Tmux.serverInfo initial).socketPath
+            notify = Text.unwords [shellArgument (Text.pack executable), "-N", "-S", shellArgument (Text.pack socket),
+              "wait-for -S workspace-probed"]
+            shell = "IFS= read -r probe; " <> notify <> "; exec /bin/cat -u"
+        native ["set-option", "-g", "default-command", Text.unpack shell]
+        survivor <- Tmux.createSession server Creation.defaultSessionOptions {Creation.name = Just "survivor"}
+        plan <- require (Workspace.planTmuxp inputs
+          "session_name: interrupted\nwindows: [{panes: [{shell_command: user-configured-input}]}]\n")
+        withAsync (native ["wait-for", "workspace-probed"]) $ \entered ->
+          withAsync (tryWithContext @SomeException (Workspace.applyWorkspace server plan)) $ \worker -> do
+            bounded (wait entered)
+            active <- Tmux.capture server
+            length (Tmux.clients active) @?= 1
+            partial <- one [session | session <- Tmux.sessions active, session.name == "interrupted"]
+            throwTo (asyncThreadId worker) ThreadKilled
+            bounded (wait worker) >>= \case
+              Left (ExceptionWithContext context problem) -> do
+                fromException @AsyncException problem @?= Just ThreadKilled
+                owner <- one (Workspace.workspaceRecoveries context)
+                Workspace.workspaceRecoverySession owner >>= (@?= Just partial.ref)
+                forM_ (Recovery.controlRecoveries context) $ \recovery ->
+                  Recovery.resumeControlCleanup recovery >>= assertBool "retire the retained control observer"
+                fresh <- Tmux.capture server
+                length (Tmux.clients fresh) @?= 0
+                Tmux.killSession server partial.ref
+                after <- Tmux.capture server
+                map (.ref) (Tmux.sessions after) @?= [survivor.session]
+              Right _ -> assertFailure "apply returned after the readiness wait was cancelled"
   , testCase "planning and path refusals preserve an existing session" $
       withServer $ \server _ -> do
         survivor <- Tmux.createSession server Creation.defaultSessionOptions {Creation.name = Just "survivor"}
@@ -150,6 +191,7 @@ sample = Bytes.unlines
   , "          printf 'effect:%s:%s:%s\\n' \"$SESSION_FLAG\" \"$PANE_FLAG\" \"$(pwd)\""
   , "      - start_directory: /"
   , "        environment: {PANE_FLAG: pane}"
+  , "        enter: false"
   , "        shell_command: >-"
   , "          printf 'effect:%s:%s:%s\\n' \"$SESSION_FLAG\" \"$PANE_FLAG\" \"$(pwd)\""
   , "  - window_name: spare"
@@ -170,9 +212,12 @@ observed server pane expected = Tmux.waitForText server pane Tmux.defaultPaneWai
 
 type Native = [String] -> IO ()
 
+tmuxExecutable :: IO FilePath
+tmuxExecutable = maybe "tmux" id <$> lookupEnv "LIBTMUX_TEST_TMUX"
+
 withServer :: (Tmux.Server -> Native -> IO value) -> IO value
 withServer run = do
-  executable <- maybe "tmux" id <$> lookupEnv "LIBTMUX_TEST_TMUX"
+  executable <- tmuxExecutable
   let config = Tmux.defaultOwnedServerConfig {Tmux.tmuxExecutable = Os.fromBytestring (Bytes.pack executable)}
   Tmux.withOwnedServer config $ \server -> do
     graph <- Tmux.capture server
@@ -182,6 +227,16 @@ withServer run = do
           let command = (proc executable ("-N" : "-S" : socket : arguments)) {env = Just inherited}
           readCreateProcessWithExitCode command "" >>= (@?= (ExitSuccess, "", ""))
     run server native
+
+createOutputFile :: IO FilePath
+createOutputFile = do
+  directory <- getTemporaryDirectory
+  (file, handle) <- openBinaryTempFile directory "libtmux-workspace-output-"
+  hClose handle
+  pure file
+
+shellArgument :: Text -> Text
+shellArgument argument = "'" <> Text.replace "'" "'\\''" argument <> "'"
 
 path :: Os.PosixString -> FilePath
 path = map Os.toChar . Os.unpack
