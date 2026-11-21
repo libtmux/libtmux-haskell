@@ -191,6 +191,16 @@ type CreatedSession = CreatedEntities
 --
 -- 'LibTmux.Server.renameSession', 'LibTmux.Server.renameSessionWith'
 --
+-- __Read or change session settings.__ Use the captured session reference
+-- to select an option or environment store. Read a local option for the
+-- override, or read an effective option to include inheritance.
+--
+-- * Use v'LibTmux.Options.SessionOptionsAt' with 'LibTmux.Server.readOption'
+--   or 'LibTmux.Server.setOption'.
+-- * Use v'LibTmux.Environment.SessionEnvironment' with
+--   'LibTmux.Server.getEnvironment' or 'LibTmux.Server.setEnvironment'.
+-- * <https://github.com/libtmux/libtmux-haskell/blob/master/docs/options.md#select-a-store Session settings example>
+--
 -- __Add a window to a session.__ A placement names the session and where the
 -- window goes: the next free index or a slot. The result holds the references
 -- tmux printed, so capture again to observe the window.
@@ -356,6 +366,13 @@ instance NFData Session where
 -- 'LibTmux.Server.selectLayout', 'LibTmux.Server.selectLayoutWith',
 -- t'LibTmux.Server.NamedLayout'
 --
+-- __Resize a window.__ Request an absolute width, height or both with
+-- t'LibTmux.Value.Resize' and dimensions from 'LibTmux.Value.mkDimension'.
+-- Capture again for the size tmux applied.
+--
+-- 'LibTmux.Server.resizeWindow', 'LibTmux.Server.resizeWindowWith',
+-- <https://github.com/libtmux/libtmux-haskell/blob/master/docs/resizing.md Resize example>
+--
 -- __Remove a window.__ One removal closes the physical window across all its
 -- links, and tmux closes a session left without windows.
 --
@@ -498,6 +515,18 @@ instance NFData Window where
 --
 -- 'LibTmux.Server.setPaneTitle', 'LibTmux.Server.setPaneTitleWith'
 --
+-- __Resize a pane.__ Request an absolute width, height or both for its
+-- reference. The native layout can resize neighboring panes.
+--
+-- 'LibTmux.Server.resizePane', 'LibTmux.Server.resizePaneWith',
+-- 'LibTmux.Value.mkDimension',
+-- <https://github.com/libtmux/libtmux-haskell/blob/master/docs/resizing.md Resize example>
+--
+-- __Move a running pane.__ Resolve its exact session link with
+-- 'LibTmux.Snapshot.lookupPaneOccurrence'. Capture the new slot after
+-- 'LibTmux.Server.movePane', 'LibTmux.Server.joinPane' or
+-- 'LibTmux.Server.breakPane'.
+--
 -- __Send input to a pane.__ Send literal text, or named tmux keys such as
 -- @Enter@ in order. Nothing appends Enter, and success confirms that tmux
 -- processed the request, not that the application responded. An invalid key
@@ -505,6 +534,12 @@ instance NFData Window where
 --
 -- 'LibTmux.Server.sendKeys', 'LibTmux.Server.sendKeysWith',
 -- t'LibTmux.Server.PaneInput'
+--
+-- __Paste a named buffer.__ Pass the buffer name, an exact pane reference
+-- and a t'LibTmux.Pane.PasteNewlines' policy.
+--
+-- 'LibTmux.Server.pasteBuffer', 'LibTmux.Server.loadBuffer',
+-- <https://github.com/libtmux/libtmux-haskell/blob/master/docs/buffers.md Paste example>
 --
 -- __Read a pane's text.__ Capture the visible rows or a range, as plain text or
 -- with ANSI styling, within a byte limit. The result is a detached observation,
@@ -525,6 +560,12 @@ instance NFData Window where
 -- 'LibTmux.Server.waitForText', t'LibTmux.Server.PaneWaitOptions',
 -- 'LibTmux.Server.defaultPaneWait', t'LibTmux.Server.PaneMatch',
 -- t'LibTmux.Server.PaneWaitResult'
+--
+-- __Wait for a pane state.__ Wait for retained death, disappearance or focus
+-- through a session link. A match carries the snapshot that confirmed it.
+--
+-- 'LibTmux.Server.waitForPaneState', t'LibTmux.Server.PaneState',
+-- t'LibTmux.Server.PaneStateResult'
 --
 -- __Remove a pane.__ Removing the last pane also closes its window. Success
 -- confirms that tmux removed the pane, so observe its processes' exit
