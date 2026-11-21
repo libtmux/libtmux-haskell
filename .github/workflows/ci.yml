@@ -115,17 +115,26 @@ jobs:
         working-directory: workspace
         run: cabal check
       - name: Build API documentation
-        run: cabal haddock lib:libtmux-haskell --offline
+        run: cabal haddock lib:libtmux-haskell lib:libtmux-haskell-workspace --offline
       - name: Prepare and link-check the native documentation
         run: >-
           uv run scripts/prepare_haddock/prepare_haddock.py
           dist-newstyle/haddock-prepared
           --build-plan dist-newstyle/cache/plan.json
+      - name: Prepare and link-check the workspace documentation
+        run: >-
+          uv run scripts/prepare_haddock/prepare_haddock.py
+          dist-newstyle/haddock-workspace-prepared
+          --build-plan dist-newstyle/cache/plan.json
+          --manifest workspace/libtmux-haskell-workspace.cabal
+          --package libtmux-haskell-workspace
       - name: Preserve checked native documentation
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-docs-${{ github.sha }}-${{ github.run_attempt }}
-          path: dist-newstyle/haddock-prepared
+          path: |
+            dist-newstyle/haddock-prepared
+            dist-newstyle/haddock-workspace-prepared
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

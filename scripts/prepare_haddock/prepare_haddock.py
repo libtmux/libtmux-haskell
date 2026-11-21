@@ -779,7 +779,7 @@ def prepare(raw: Path, output: Path, manifest: Path) -> dict[str, Any]:
     return evidence
 
 
-def from_plan(plan: Path, manifest: Path) -> Path:
+def from_plan(plan: Path, manifest: Path, package: str = "libtmux-haskell") -> Path:
     """Find the one local library artifact configured for this source tree."""
     document = json.loads(Path(plan).read_text())
     if document.get("compiler-id") != "ghc-9.14.1":
@@ -790,7 +790,7 @@ def from_plan(plan: Path, manifest: Path) -> Path:
             for entry in document.get("install-plan", [])
             if entry.get("type") == "configured"
             and entry.get("style") == "local"
-            and entry.get("pkg-name") == "libtmux-haskell"
+            and entry.get("pkg-name") == package
             and entry.get("component-name") == "lib"
         ],
         "configured local library",
@@ -804,7 +804,7 @@ def from_plan(plan: Path, manifest: Path) -> Path:
     directory = Path(library.get("dist-dir", ""))
     if not directory.is_absolute():
         raise ValueError("Configured library needs an absolute dist-dir")
-    return directory / "doc/html/libtmux-haskell"
+    return directory / "doc/html" / package
 
 
 def main() -> None:
@@ -814,9 +814,16 @@ def main() -> None:
     inputs.add_argument("--raw", type=Path, help="Fresh Cabal Haddock HTML directory")
     inputs.add_argument("--build-plan", type=Path, help="Cabal plan for the local library")
     parser.add_argument("--manifest", type=Path, default=ROOT / "libtmux-haskell.cabal")
+    parser.add_argument(
+        "--package", default="libtmux-haskell", help="Package name in the Cabal plan"
+    )
     args = parser.parse_args()
     try:
-        raw = args.raw if args.raw is not None else from_plan(args.build_plan, args.manifest)
+        raw = (
+            args.raw
+            if args.raw is not None
+            else from_plan(args.build_plan, args.manifest, args.package)
+        )
         evidence = prepare(raw, args.output, args.manifest)
     except (OSError, ValueError) as error:
         parser.exit(1, f"Haddock preparation failed: {error}\n")

@@ -13,3 +13,7 @@ package libtmux-haskell
 
 package libtmux-haskell-workspace
   ghc-options: -Werror
+  haddock-html: True
+  haddock-hyperlink-source: True
+  haddock-quickjump: True
+  haddock-html-location: https://hackage.haskell.org/package/$pkg-$version/docs

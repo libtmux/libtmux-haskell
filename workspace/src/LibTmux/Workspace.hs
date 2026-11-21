@@ -1,5 +1,5 @@
 -- | Parse a tmuxp document, inspect the plan, then apply it to a new session
--- through a Server you own or borrowed. Planning reads no files or environment.
+-- through an owned or borrowed Server. Planning reads no files or environment.
 module LibTmux.Workspace
   ( PlanInputs (..), defaultPlanInputs
   , WorkspacePlan, WorkspacePreview (..), WindowPlan (..), PanePlan (..), WorkspaceCommand (..)

@@ -478,18 +478,24 @@ def write_plan(path: Path, plan: Mapping[str, object]) -> None:
     path.write_text(json.dumps(plan))
 
 
-def test_build_plan_selects_only_the_local_public_library(tmp_path: Path) -> None:
+@pytest.mark.parametrize("package", ["libtmux-haskell", "libtmux-haskell-workspace"])
+def test_build_plan_selects_only_the_local_public_library(tmp_path: Path, package: str) -> None:
     """The plan must name exactly one configured local library for this checkout."""
     library = {
         **LIBRARY_PLAN,
+        "pkg-name": package,
         "dist-dir": str(tmp_path / "configured-lib"),
         "pkg-src": {"type": "local", "path": str(tmp_path)},
     }
     plan = tmp_path / "plan.json"
+    sibling_name = (
+        "libtmux-haskell-workspace" if package == "libtmux-haskell" else "libtmux-haskell"
+    )
+    sibling = {**library, "pkg-name": sibling_name, "dist-dir": str(tmp_path / "sibling")}
     unit_tests = {**library, "component-name": "test:unit", "dist-dir": str(tmp_path / "unit")}
-    write_plan(plan, {"compiler-id": "ghc-9.14.1", "install-plan": [unit_tests, library]})
-    assert tool.from_plan(plan, tmp_path / "library.cabal") == (
-        tmp_path / "configured-lib/doc/html/libtmux-haskell"
+    write_plan(plan, {"compiler-id": "ghc-9.14.1", "install-plan": [unit_tests, sibling, library]})
+    assert tool.from_plan(plan, tmp_path / "library.cabal", package) == (
+        tmp_path / "configured-lib/doc/html" / package
     )
     other = {**library, "pkg-src": {"type": "local", "path": str(tmp_path / "other")}}
     for invalid in [
@@ -499,7 +505,7 @@ def test_build_plan_selects_only_the_local_public_library(tmp_path: Path) -> Non
     ]:
         write_plan(plan, invalid)
         with pytest.raises(ValueError, match=r"compiler|library|source"):
-            tool.from_plan(plan, tmp_path / "library.cabal")
+            tool.from_plan(plan, tmp_path / "library.cabal", package)
 
 
 def test_command_prepares_the_plan_selected_artifact(tmp_path: Path, manifest: Path) -> None:
