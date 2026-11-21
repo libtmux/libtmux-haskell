@@ -1,4 +1,4 @@
-packages: . examples/typed-values examples/capture-graph examples/offline-graph examples/shared-runtime examples/query-graph examples/mutate-graph examples/create-session examples/managed-program examples/paste-buffer examples/resize-geometry examples/configure-session examples/watch-window
+packages: . workspace examples/typed-values examples/capture-graph examples/offline-graph examples/shared-runtime examples/query-graph examples/mutate-graph examples/create-session examples/managed-program examples/paste-buffer examples/resize-geometry examples/configure-session examples/watch-window examples/load-workspace
 
 index-state: 2026-11-06T00:00:00Z
 tests: True
@@ -9,4 +9,11 @@ package libtmux-haskell
   haddock-hyperlink-source: True
   haddock-quickjump: True
   haddock-hoogle: True
+  haddock-html-location: https://hackage.haskell.org/package/$pkg-$version/docs
+
+package libtmux-haskell-workspace
+  ghc-options: -Werror
+  haddock-html: True
+  haddock-hyperlink-source: True
+  haddock-quickjump: True
   haddock-html-location: https://hackage.haskell.org/package/$pkg-$version/docs

@@ -78,7 +78,7 @@ jobs:
           path: |
             ${{ steps.haskell.outputs.cabal-store }}
             ~/.cabal/packages
-          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
+          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'workspace/*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
           restore-keys: haskell-ubuntu26-x64-9.14.1-3.18.2.0-
       - name: Use HTTPS for the Cabal index
         run: >-
@@ -111,18 +111,31 @@ jobs:
         run: uv run scripts/check_types/check_types.py
       - name: Package metadata check
         run: cabal check
+      - name: Workspace package metadata check
+        working-directory: workspace
+        run: cabal check
       - name: Build API documentation
-        run: cabal haddock lib:libtmux-haskell --offline
+        run: cabal haddock lib:libtmux-haskell lib:libtmux-haskell-workspace --offline
       - name: Prepare and link-check the native documentation
         run: >-
           uv run scripts/prepare_haddock/prepare_haddock.py
           dist-newstyle/haddock-prepared
           --build-plan dist-newstyle/cache/plan.json
+      - name: Prepare and link-check the workspace documentation
+        run: >-
+          uv run scripts/prepare_haddock/prepare_haddock.py
+          dist-newstyle/haddock-workspace-prepared
+          --build-plan dist-newstyle/cache/plan.json
+          --manifest workspace/libtmux-haskell-workspace.cabal
+          --package libtmux-haskell-workspace
+          --core-reference dist-newstyle/haddock-prepared
       - name: Preserve checked native documentation
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-docs-${{ github.sha }}-${{ github.run_attempt }}
-          path: dist-newstyle/haddock-prepared
+          path: |
+            dist-newstyle/haddock-prepared
+            dist-newstyle/haddock-workspace-prepared
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
@@ -185,7 +198,7 @@ jobs:
           path: |
             ${{ steps.haskell.outputs.cabal-store }}
             ~/.cabal/packages
-          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
+          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'workspace/*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
           restore-keys: haskell-ubuntu26-x64-9.14.1-3.18.2.0-
       - name: Build tmux ${{ matrix.tmux }}
         id: tmux
@@ -200,17 +213,17 @@ jobs:
       - name: Update the Cabal package index
         run: cabal update
       - name: Build integration dependencies
-        run: cabal build test:integration --only-dependencies
+        run: cabal build test:integration libtmux-haskell-workspace:test:workspace --only-dependencies
       - name: Integration tests on one capability
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
           LC_ALL: C.UTF-8
-        run: cabal test integration --offline --test-show-details=direct --test-options='+RTS -N1 -RTS'
+        run: cabal test integration libtmux-haskell-workspace:test:workspace --offline --test-show-details=direct --test-options='+RTS -N1 -RTS'
       - name: Integration tests on two capabilities
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
           LC_ALL: C.UTF-8
-        run: cabal test integration --offline --test-show-details=direct --test-options='+RTS -N2 -RTS'
+        run: cabal test integration libtmux-haskell-workspace:test:workspace --offline --test-show-details=direct --test-options='+RTS -N2 -RTS'
       - name: Scalar and observation bytes under the C locale
         env:
           LIBTMUX_TEST_TMUX: ${{ steps.tmux.outputs.binary }}
@@ -253,7 +266,7 @@ jobs:
           path: |
             ${{ steps.haskell.outputs.cabal-store }}
             ~/.cabal/packages
-          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
+          key: haskell-ubuntu26-x64-9.14.1-3.18.2.0-${{ hashFiles('*.cabal', 'workspace/*.cabal', 'examples/**/*.cabal', 'cabal.project') }}
           restore-keys: haskell-ubuntu26-x64-9.14.1-3.18.2.0-
       - name: Build released daemon
         id: daemon

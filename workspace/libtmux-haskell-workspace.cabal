@@ -1,0 +1,82 @@
+cabal-version: 3.18
+name: libtmux-haskell-workspace
+version: 0.0.1.0
+synopsis: Preview and apply tmuxp workspaces through libtmux
+description: Decode a tmuxp workspace into a typed plan and apply it to a new session.
+category: System
+homepage: https://github.com/libtmux/libtmux-haskell
+bug-reports: https://github.com/libtmux/libtmux-haskell/issues
+license: MIT
+license-file: LICENSE
+author: libtmux contributors
+maintainer: https://github.com/libtmux/libtmux-haskell/issues
+stability: experimental
+tested-with: GHC ==9.14.1
+build-type: Simple
+extra-source-files:
+  test/fixtures/tmuxp/LICENSE
+  test/fixtures/tmuxp/README.md
+  test/fixtures/tmuxp/compatibility.json
+  test/fixtures/tmuxp/*.yaml
+  test/fixtures/tmuxp/expected/*.json
+
+source-repository head
+  type: git
+  location: https://github.com/libtmux/libtmux-haskell.git
+  subdir: workspace
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedRecordDot OverloadedStrings
+  ghc-options: -Wall -Wcompat
+  hs-source-dirs: src
+  exposed-modules: LibTmux.Workspace
+  other-modules:
+    LibTmux.Workspace.Apply
+    LibTmux.Workspace.Plan
+    LibTmux.Workspace.Yaml
+  if !os(linux)
+    buildable: False
+  build-depends:
+    aeson >=2.2.5 && <2.4,
+    base >=4.22 && <4.23,
+    bytestring >=0.12.2 && <0.13,
+    conduit >=1.3.6 && <1.4,
+    containers >=0.8 && <0.9,
+    deepseq >=1.5.1 && <1.6,
+    directory >=1.3.10 && <1.4,
+    filepath >=1.5.4 && <1.6,
+    libtmux-haskell ^>=0.0.1.0,
+    libyaml >=0.1.4 && <0.2,
+    os-string >=2.0.8 && <2.1,
+    resourcet >=1.3 && <1.4,
+    stm >=2.5.3 && <2.6,
+    text >=2.1.3 && <2.2,
+    transformers >=0.6 && <0.7,
+    yaml >=0.11.11.2 && <0.12
+
+test-suite workspace
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules: ApplyTest CatalogueTest
+  hs-source-dirs: test
+  default-language: GHC2024
+  default-extensions: OverloadedRecordDot OverloadedStrings
+  ghc-options: -Wall -Wcompat -threaded -rtsopts
+  if !os(linux)
+    buildable: False
+  build-depends:
+    aeson >=2.2.5 && <2.4,
+    async >=2.2.6 && <2.3,
+    base >=4.22 && <4.23,
+    bytestring >=0.12.2 && <0.13,
+    containers >=0.8 && <0.9,
+    directory >=1.3.10 && <1.4,
+    filepath >=1.5.4 && <1.6,
+    libtmux-haskell ^>=0.0.1.0,
+    libtmux-haskell-workspace,
+    os-string >=2.0.8 && <2.1,
+    process >=1.6.25 && <1.7,
+    tasty >=1.5 && <1.6,
+    tasty-hunit >=0.10.2 && <0.11,
+    text >=2.1.3 && <2.2

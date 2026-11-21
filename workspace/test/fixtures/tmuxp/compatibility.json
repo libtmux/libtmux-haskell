@@ -1,0 +1,493 @@
+{
+  "examples": {
+    "2-pane-synchronized.yaml": {
+      "reason": "UnsupportedField \"windows[0].options_after\"",
+      "status": "refused"
+    },
+    "2-pane-vertical.yaml": {
+      "status": "matches"
+    },
+    "3-pane.yaml": {
+      "status": "matches"
+    },
+    "4-pane.yaml": {
+      "status": "matches"
+    },
+    "blank-panes.yaml": {
+      "status": "matches"
+    },
+    "env-variables.yaml": {
+      "reason": "UnsupportedField \"before_script\"",
+      "status": "refused"
+    },
+    "focus-window-and-panes.yaml": {
+      "status": "matches"
+    },
+    "main-pane-height-percentage.yaml": {
+      "reason": "UnsupportedField \"windows[0].options\"",
+      "status": "refused"
+    },
+    "main-pane-height.yaml": {
+      "reason": "UnsupportedField \"windows[0].options\"",
+      "status": "refused"
+    },
+    "minimal.yaml": {
+      "status": "matches"
+    },
+    "options.yaml": {
+      "reason": "UnsupportedField \"global_options\"",
+      "status": "refused"
+    },
+    "pane-shell.yaml": {
+      "reason": "UnsupportedField \"windows[0].options\"",
+      "status": "refused"
+    },
+    "plugin-system.yaml": {
+      "reason": "UnsupportedField \"plugins\"",
+      "status": "refused"
+    },
+    "session-environment.yaml": {
+      "status": "matches"
+    },
+    "shorthands.yaml": {
+      "status": "matches"
+    },
+    "skip-send-pane-level.yaml": {
+      "status": "matches"
+    },
+    "skip-send.yaml": {
+      "status": "matches"
+    },
+    "sleep-pane-level.yaml": {
+      "reason": "UnsupportedField \"windows[0].panes[0].sleep_before\"",
+      "status": "refused"
+    },
+    "sleep-virtualenv.yaml": {
+      "reason": "UnsupportedField \"shell_command_before[0].sleep_after\"",
+      "status": "refused"
+    },
+    "sleep.yaml": {
+      "reason": "UnsupportedField \"windows[0].panes[0].shell_command[1].sleep_before\"",
+      "status": "refused"
+    },
+    "start-directory.yaml": {
+      "status": "matches"
+    },
+    "suppress-history.yaml": {
+      "status": "matches"
+    },
+    "window-index.yaml": {
+      "status": "matches"
+    }
+  },
+  "forms": [
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "env-variables.yaml",
+        "sleep-virtualenv.yaml"
+      ],
+      "id": "session.shell_command_before",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "3-pane.yaml",
+        "4-pane.yaml",
+        "focus-window-and-panes.yaml",
+        "plugin-system.yaml"
+      ],
+      "id": "window.shell_command_before",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [],
+      "id": "pane.shell_command_before",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "env-variables.yaml"
+      ],
+      "id": "session.before_script",
+      "refusals": [
+        "UnsupportedField \"before_script\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "sleep-pane-level.yaml",
+        "sleep-virtualenv.yaml",
+        "sleep.yaml"
+      ],
+      "id": "sleep_before",
+      "refusals": [
+        "UnsupportedField \"windows[0].panes[0].sleep_before\"",
+        "UnsupportedField \"windows[0].panes[0].shell_command[0].sleep_before\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "sleep-virtualenv.yaml",
+        "sleep.yaml"
+      ],
+      "id": "sleep_after",
+      "refusals": [
+        "UnsupportedField \"windows[0].panes[0].sleep_after\"",
+        "UnsupportedField \"windows[0].panes[0].shell_command[0].sleep_after\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "plugin-system.yaml"
+      ],
+      "id": "session.plugins",
+      "refusals": [
+        "UnsupportedField \"plugins\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "pane-shell.yaml"
+      ],
+      "id": "window.window_shell",
+      "refusals": [
+        "UnsupportedField \"windows[0].window_shell\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "pane-shell.yaml"
+      ],
+      "id": "pane.shell",
+      "refusals": [
+        "UnsupportedField \"windows[0].panes[0].shell\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "pane-shell.yaml",
+        "suppress-history.yaml"
+      ],
+      "id": "suppress_history",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "focus-window-and-panes.yaml",
+        "suppress-history.yaml"
+      ],
+      "id": "window.focus",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "blank-panes.yaml",
+        "focus-window-and-panes.yaml"
+      ],
+      "id": "pane.focus",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "options.yaml"
+      ],
+      "id": "session.options",
+      "refusals": [
+        "UnsupportedField \"options\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "options.yaml"
+      ],
+      "id": "session.global_options",
+      "refusals": [
+        "UnsupportedField \"global_options\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "env-variables.yaml",
+        "main-pane-height-percentage.yaml",
+        "main-pane-height.yaml",
+        "options.yaml",
+        "pane-shell.yaml"
+      ],
+      "id": "window.options",
+      "refusals": [
+        "UnsupportedField \"windows[0].options\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "2-pane-synchronized.yaml"
+      ],
+      "id": "window.options_after",
+      "refusals": [
+        "UnsupportedField \"windows[0].options_after\""
+      ],
+      "status": "refused"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "2-pane-synchronized.yaml",
+        "2-pane-vertical.yaml",
+        "3-pane.yaml",
+        "4-pane.yaml",
+        "blank-panes.yaml",
+        "plugin-system.yaml",
+        "session-environment.yaml",
+        "shorthands.yaml",
+        "start-directory.yaml",
+        "suppress-history.yaml",
+        "window-index.yaml"
+      ],
+      "id": "pane.string",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [],
+      "id": "pane.list",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "blank-panes.yaml",
+        "session-environment.yaml",
+        "shorthands.yaml",
+        "skip-send-pane-level.yaml"
+      ],
+      "id": "pane.shell_command_string",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "skip-send.yaml",
+        "sleep-pane-level.yaml",
+        "sleep.yaml"
+      ],
+      "id": "pane.command_mapping",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "blank-panes.yaml",
+        "focus-window-and-panes.yaml",
+        "minimal.yaml"
+      ],
+      "id": "pane.blank",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "blank-panes.yaml"
+      ],
+      "id": "pane.empty_command",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "skip-send-pane-level.yaml",
+        "skip-send.yaml"
+      ],
+      "id": "command.enter",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "env-variables.yaml",
+        "options.yaml",
+        "session-environment.yaml"
+      ],
+      "id": "expand.environment_variable",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "main-pane-height-percentage.yaml",
+        "main-pane-height.yaml",
+        "options.yaml",
+        "start-directory.yaml"
+      ],
+      "id": "expand.tilde",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "env-variables.yaml",
+        "main-pane-height-percentage.yaml",
+        "main-pane-height.yaml",
+        "options.yaml",
+        "start-directory.yaml"
+      ],
+      "id": "session.start_directory",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "env-variables.yaml",
+        "start-directory.yaml"
+      ],
+      "id": "window.start_directory",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "blank-panes.yaml",
+        "main-pane-height-percentage.yaml",
+        "main-pane-height.yaml",
+        "options.yaml"
+      ],
+      "id": "pane.start_directory",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "start-directory.yaml"
+      ],
+      "id": "start_directory.relative_to_session",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "start-directory.yaml"
+      ],
+      "id": "start_directory.dot_relative",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "session-environment.yaml"
+      ],
+      "id": "session.environment",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "session-environment.yaml"
+      ],
+      "id": "window.environment",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "session-environment.yaml"
+      ],
+      "id": "pane.environment",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "window-index.yaml"
+      ],
+      "id": "window.window_index",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "pane-shell.yaml"
+      ],
+      "id": "window.layout.even-vertical",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "isolated probe",
+      "files": [
+        "main-pane-height-percentage.yaml",
+        "main-pane-height.yaml",
+        "options.yaml"
+      ],
+      "id": "window.layout.main-horizontal",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "3-pane.yaml"
+      ],
+      "id": "window.layout.main-vertical",
+      "refusals": [],
+      "status": "supported"
+    },
+    {
+      "evidence": "matching preview",
+      "files": [
+        "4-pane.yaml",
+        "plugin-system.yaml"
+      ],
+      "id": "window.layout.tiled",
+      "refusals": [],
+      "status": "supported"
+    }
+  ]
+}

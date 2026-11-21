@@ -52,6 +52,9 @@
   geometry to observe tmux's layout constraints. ([#27])
 - Capture session groups, unzoomed layouts, zoom state, contextual link
   flags, base-screen cursors, pane modes and client tty sizes. ([#12])
+- Preview tmuxp YAML with `LibTmux.Workspace` and apply it explicitly to a
+  new session. The companion package keeps the session or its creation
+  owner when apply is interrupted. ([#3])
 
 ### Changed
 
@@ -99,6 +102,7 @@
   with generation checks, deadlines and correlated recovery. ([#10])
 - Follow Cabal examples for capture, queries and a shared Runtime. ([#9])
 
+[#3]: https://github.com/libtmux/libtmux-haskell/issues/3
 [#4]: https://github.com/libtmux/libtmux-haskell/pull/4
 [#6]: https://github.com/libtmux/libtmux-haskell/pull/6
 [#9]: https://github.com/libtmux/libtmux-haskell/pull/9

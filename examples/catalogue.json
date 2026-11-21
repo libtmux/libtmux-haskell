@@ -396,6 +396,39 @@
           "archive-consumer"
         ]
       }
+    },
+    {
+      "id": "load-workspace",
+      "source": "examples/load-workspace/Main.hs",
+      "package": "examples/load-workspace/libtmux-load-workspace.cabal",
+      "project": "examples/load-workspace/cabal.project",
+      "vcs_project": "examples/load-workspace/cabal.project.vcs",
+      "stdout": "examples/load-workspace/expected.stdout",
+      "executable": "load-workspace",
+      "capability": "Preview and apply a tmuxp workspace with tmux 3.3a or newer",
+      "minimum_tmux": "3.3a",
+      "command": [
+        "cabal",
+        "run",
+        "--verbose=0",
+        "load-workspace"
+      ],
+      "verification": {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "checks",
+        "step": "Isolated source-archive consumer",
+        "command": [
+          "uv",
+          "run",
+          "scripts/check_sdist/check_sdist.py"
+        ],
+        "checks": [
+          "exit-status",
+          "stdout",
+          "stderr-empty",
+          "archive-consumer"
+        ]
+      }
     }
   ]
 }

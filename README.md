@@ -39,7 +39,7 @@ Point Cabal at the Git source in `cabal.project`:
 source-repository-package
   type: git
   location: https://github.com/libtmux/libtmux-haskell
-  tag: 27c81d7287531bbfa12aeca007d73a20b70e1b3d
+  tag: 4f60b832f5303f9221251b199e86b5d928757943
 ```
 
 Update the package index:
@@ -423,6 +423,7 @@ waits for the daemon generation admitted by this handle to exit.
 | Inspect a Haskell application’s tmux daemon from an agent | [MCP setup and discovery](docs/agents.md) |
 | Reproduce capture measurements | [Performance](https://libtmux.org/en/haskell/latest/guides/performance/) |
 | Browse connection and mutation operations | [`LibTmux.Server`](https://libtmux.org/en/haskell/latest/reference/libtmux-server/) |
+| Preview tmuxp YAML and apply it to a new session | [Workspace loader](docs/workspaces.md) |
 | Browse declarations and module documentation | [API reference](https://libtmux.org/en/haskell/latest/reference/) |
 | See what works today and what is planned | [Status](https://libtmux.org/en/haskell/latest/guides/status/) |
 

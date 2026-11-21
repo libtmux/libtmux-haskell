@@ -23,6 +23,7 @@ and the [API guide](api.md).
 | Reproduce capture measurements | [Performance](performance.md) |
 | Parse IDs, validate geometry and admit a release | [Typed values](values.md) |
 | Browse modules, declarations and source | [API documentation](api.md) |
+| Preview tmuxp YAML and apply it to a new session | [Workspace loader](workspaces.md) |
 | Decide whether the current package meets your needs | [Implementation status](status.md) |
 
 For maintainers:

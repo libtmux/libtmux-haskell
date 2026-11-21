@@ -34,6 +34,7 @@ configuration below.
 | Wait for death, removal or contextual pane focus | `waitForPaneState` confirms each condition in a [fresh snapshot](control.md#wait-for-pane-state) |
 | Bounded control notifications and optional pane output records | `withControl`; see [control scope](control.md) |
 | Agent discovery and pane inspection | `libtmux-mcp` adapter; see [MCP setup](agents.md) |
+| Preview and apply tmuxp YAML | Separate `libtmux-haskell-workspace` package; see [workspace planning](workspaces.md) |
 
 The [capture program](../examples/capture-graph/Main.hs) exercises the public
 interface. Additional commands, interchange and event contracts remain separate
