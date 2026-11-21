@@ -23,6 +23,9 @@
 - Use `waitForText` for text already present or newly observed since a
   baseline. Timeout and pane exit retain the last complete capture when
   available. ([#47])
+- Use `waitForPaneState` to wait for pane removal, retained death or focus through
+  a selected session/window slot. A match includes the snapshot that confirms
+  it. Timeout, control overflow and daemon loss have distinct outcomes.
 - Observe native changes through `withControl` and a bounded STM queue. The
   stream reports overflow, daemon exit and malformed framing, and keeps a
   cleanup owner if retirement cannot finish. ([#48])
