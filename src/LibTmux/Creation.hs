@@ -13,6 +13,7 @@ module LibTmux.Creation
   , WindowSlot (..), WindowPlacement (..), WindowCollision (..)
   , WindowOptions (..), defaultWindowOptions
   , SplitDirection (..), SplitSize (..), SplitOptions (..), defaultSplitOptions
+  , PaneMoveOptions (..), defaultPaneMoveOptions, PaneRelocationReceipt (..)
   , CreatedEntities (session, window, pane, windowIndex, serverPid)
   , CreatedSession, CreatedWindow, CreatedPane
   ) where
@@ -21,7 +22,7 @@ import Data.ByteString (ByteString)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import LibTmux.Internal.Graph (CreatedEntities (..), CreatedSession, SessionRef)
-import LibTmux.Snapshot (TmuxText)
+import LibTmux.Snapshot (PaneRef, TmuxText, WindowRef)
 import LibTmux.Value (Dimension, WindowIndex)
 import System.OsPath.Posix (PosixPath)
 import System.OsString.Posix (PosixString)
@@ -128,6 +129,31 @@ data SplitOptions = SplitOptions
 -- requests. Use tmux's size and launch defaults.
 defaultSplitOptions :: SplitOptions
 defaultSplitOptions = SplitOptions TopBottom DefaultSplitSize False False False False Nothing [] DefaultProcess
+
+-- | Placement of a relocated pane relative to the exact destination pane.
+data PaneMoveOptions = PaneMoveOptions
+  { moveDirection :: !SplitDirection -- ^ Side by side or top and bottom.
+  , moveSize :: !SplitSize -- ^ Native default, cells, or a checked percentage.
+  , moveBefore :: !Bool -- ^ Place left of or above the destination pane.
+  , moveFullWindow :: !Bool -- ^ Span the full destination window.
+  , selectMovedPane :: !Bool -- ^ Request native selection after relocation.
+  } deriving stock (Eq, Show)
+
+-- | Place below the destination pane while retaining the existing selection.
+defaultPaneMoveOptions :: PaneMoveOptions
+defaultPaneMoveOptions = PaneMoveOptions TopBottom DefaultSplitSize False False False
+
+-- | Historical evidence from the primary relocation command. Capture again
+-- to verify the requested slot and classify a break as window creation or
+-- transfer. A reported break link may be another link to the same window.
+data PaneRelocationReceipt
+  = MoveAccepted !PaneRef !WindowSlot !WindowRef
+    -- ^ Moved pane, requested destination, and the guarded destination window.
+  | BreakAccepted !PaneRef !WindowSlot !(Maybe (WindowSlot, WindowRef))
+    -- ^ Moved pane, requested destination, and tmux's optional printed link.
+  | BreakReported !PaneRef !WindowSlot !(WindowSlot, WindowRef)
+    -- ^ Recovery found a complete printed link before primary completion.
+  deriving stock (Eq, Show)
 
 -- | A 'CreatedEntities' receipt from new-window: the window and pane are new;
 -- the session and link index identify where tmux created them.

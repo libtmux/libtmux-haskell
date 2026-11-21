@@ -22,6 +22,7 @@ module LibTmux.Internal.Runtime
   , cancelReceipt, detachReceipt
   , cancelRead, detachOperation
   , mutateWith, programMutationWith, validateKeyWith
+  , RelocationJournal, newRelocationJournal, journalRelocation, relocateWith
   , readPaneCaptureWith, readPaneAliveWith, readEnvironmentWith, readSettingWith
   , SessionCreation, CreationJournal, createSessionWith, createWith
   , creationRequest, creationJournal, journalReceipt
@@ -100,7 +101,8 @@ data Request value = Request !ReadReceipt !(TMVar (ReadResult value))
 -- | A creation result and its independent historical evidence. The journal
 -- survives decoder retirement and native cleanup without retaining either owner.
 data SessionCreation = SessionCreation !(Request Command.SessionCreationReply) !CreationJournal
-data CreationJournal = CreationJournal !(TVar (Maybe (F.Nonce, Maybe (TVar ByteString))))
+type JournalPrefix = TVar (Maybe (F.Nonce, Maybe (TVar ByteString)))
+data CreationJournal = CreationJournal !JournalPrefix
 instance Show CreationJournal where
   showsPrec _ _ = showString "CreationJournal"
 instance ExceptionAnnotation CreationJournal
@@ -121,6 +123,16 @@ journalReceipt (CreationJournal journal) = readTVar journal >>= \case
     pure $ case Command.decodeSessionCreation nonce Nothing prefix "" of
       Command.SessionCreationUnknown receipt _ -> receipt
       _ -> Nothing
+  _ -> pure Nothing
+
+data RelocationJournal = RelocationJournal !Command.RelocationWire !JournalPrefix
+
+newRelocationJournal :: Command.RelocationWire -> IO RelocationJournal
+newRelocationJournal wire = RelocationJournal wire <$> newTVarIO Nothing
+
+journalRelocation :: RelocationJournal -> STM (Maybe Command.RelocationEvidence)
+journalRelocation (RelocationJournal wire journal) = readTVar journal >>= \case
+  Just (nonce, Just prefix) -> Command.relocationEvidence wire nonce <$> readTVar prefix
   _ -> pure Nothing
 
 -- | Correlation metadata only: no Runtime, pool, ticket or result payload.
@@ -162,6 +174,7 @@ data ReadCommand value where
 data NativeCommand value where
   Observe :: !(ReadCommand value) -> NativeCommand value
   Mutate :: !Command.Mutation -> NativeCommand Command.MutationReply
+  Relocate :: !Command.PaneRelocation -> !RelocationJournal -> NativeCommand Command.RelocationReply
   ProgramMutate :: !Command.ProgramCommand -> NativeCommand Command.MutationReply
   ValidateKey :: !Text -> NativeCommand Bool
   CapturePane :: !Id.PaneId -> !PaneCaptureOptions -> NativeCommand Command.ControlDataReply
@@ -176,6 +189,7 @@ data NativeCommand value where
 data ResultDecoder value where
   ObservationResult :: !(ReadCommand value) -> ResultDecoder value
   MutationResult :: ResultDecoder Command.MutationReply
+  RelocationResult :: !RelocationJournal -> ResultDecoder Command.RelocationReply
   ProgramResult :: !Bool -> ResultDecoder Command.MutationReply
   KeyProbeResult :: ResultDecoder Bool
   ControlDataResult :: !Int -> ResultDecoder Command.ControlDataReply
@@ -631,6 +645,11 @@ mutateWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> Command
 mutateWith hooks duration runtime client executable mutation =
   startNative (Mutate mutation) hooks duration runtime client executable ScalarRead
 
+relocateWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString
+  -> Command.PaneRelocation -> RelocationJournal -> IO (Request Command.RelocationReply)
+relocateWith hooks duration runtime client executable command journal =
+  startNative (Relocate command journal) hooks duration runtime client executable ScalarRead
+
 programMutationWith :: P.Hooks -> Int -> Runtime -> ServerHandle -> ByteString -> Command.ProgramCommand -> IO (Request Command.MutationReply)
 programMutationWith hooks duration runtime client executable command =
   startNative (ProgramMutate command) hooks duration runtime client executable ScalarRead
@@ -813,6 +832,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
           _ -> False}
       (lane, resourceClass) = case decoder of
         MutationResult -> (S.Mutation, B.Ordinary)
+        RelocationResult _ -> (S.Mutation, B.Ordinary)
         ProgramResult _ -> (S.Mutation, B.Ordinary)
         CreationResult _ -> (S.Mutation, B.Ordinary)
         KeyProbeResult -> (S.ScalarRead, B.Ordinary)
@@ -832,6 +852,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
           ObservationResult (ReadGraph _) -> P.retainedBytes + 64 * 1024 * 1024
           ObservationResult (ReadSnapshot _) -> P.retainedBytes + 64 * 1024 * 1024
           MutationResult -> P.retainedBytes + fromIntegral N.vectorLimitBytes
+          RelocationResult _ -> P.retainedBytes + fromIntegral N.vectorLimitBytes
           ProgramResult _ -> P.retainedBytes + fromIntegral N.vectorLimitBytes
           CreationResult _ -> P.retainedBytes + fromIntegral N.vectorLimitBytes
           _ -> P.retainedBytes
@@ -847,6 +868,7 @@ startNative selected hooks duration runtime@Runtime {forker} client@(ServerHandl
           submission, cancelled, busy, failure}
     case decoder of
       CreationResult (CreationJournal journal) -> writeTVar journal (Just (nonce, Nothing))
+      RelocationResult (RelocationJournal _ journal) -> writeTVar journal (Just (nonce, Nothing))
       _ -> pure ()
     modifyTVar' runtime.owners (<> [owner])
     pure (owner, Request receipt result)
@@ -866,6 +888,9 @@ compileNative nonce (Observe command) = Right (ObservationResult command, comman
 compileNative _ (Mutate mutation) = do
   arguments <- Command.compileMutation mutation
   pure (MutationResult, "-C" : arguments, P.KeepInputOpen)
+compileNative nonce (Relocate command journal) = do
+  arguments <- Command.compileRelocation nonce command
+  pure (RelocationResult journal, "-C" : arguments, P.KeepInputOpen)
 compileNative nonce (ProgramMutate command) = do
   arguments <- Command.compileProgramMutation nonce command
   let guarded = case command of Command.ProgramGuarded {} -> True; _ -> False
@@ -919,12 +944,14 @@ readAction unmask runtime owner pool resourceClass hooks spec input = do
                   -- A lazy projection here would keep the entire ticket alive.
                   !nativeKey = ticket.key
               writeTVar key (Just nativeKey)
+              let remember journal = do
+                    -- Keep just the bounded bytes, without retaining the Ticket.
+                    let !prefix = ticket.prefix
+                        !nonce = owner.nonce
+                    writeTVar journal (Just (nonce, Just prefix))
               case owner of
-                NativeOwner {decoder = CreationResult (CreationJournal journal)} -> do
-                  -- Force the projection; the journal must not close over Ticket.
-                  let !prefix = ticket.prefix
-                      !nonce = owner.nonce
-                  writeTVar journal (Just (nonce, Just prefix))
+                NativeOwner {decoder = CreationResult (CreationJournal journal)} -> remember journal
+                NativeOwner {decoder = RelocationResult (RelocationJournal _ journal)} -> remember journal
                 _ -> pure ()
               readTVar owner.cancelled >>= \flag ->
                 when flag (writeTVar ticket.cancelled True)
@@ -1036,6 +1063,7 @@ finishRead runtime owner@NativeOwner {decoder, result} ticket completed = do
 
 forceResult :: ResultDecoder value -> value -> IO ()
 forceResult MutationResult value = void (evaluate (force value))
+forceResult (RelocationResult _) value = void (evaluate (force value))
 forceResult (ProgramResult _) value = void (evaluate (force value))
 forceResult KeyProbeResult value = void (evaluate value)
 forceResult (ControlDataResult _) value = void (evaluate (force value))
@@ -1059,6 +1087,8 @@ completionEvidence (ControlDataResult _) (Command.ControlDataHookFailed _) = S.C
 completionEvidence (ControlDataResult _) (Command.ControlDataRejected _) = S.CommandFailure
 completionEvidence MutationResult Command.Applied = S.Success
 completionEvidence MutationResult _ = S.CommandFailure
+completionEvidence (RelocationResult _) (Command.RelocationCompleted _) = S.Success
+completionEvidence (RelocationResult _) _ = S.CommandFailure
 completionEvidence (ProgramResult _) Command.Applied = S.Success
 completionEvidence (ProgramResult _) _ = S.CommandFailure
 completionEvidence (CreationResult _) (Command.SessionCreated _) = S.Success
@@ -1090,6 +1120,14 @@ decodeResult MutationResult = \_ completed -> case completed.launchFailure of
           _ -> Nothing
     in either (Left . toException . InvalidCommandReply) Right
       (Command.decodeControlReply exit completed.output completed.errors)
+decodeResult (RelocationResult (RelocationJournal wire _)) = \nonce completed -> case completed.launchFailure of
+  Just problem -> Left (toException problem)
+  Nothing ->
+    let exit = case completed.exit of
+          Just (N.Exited status) -> Just (fromIntegral status)
+          _ -> Nothing
+    in either (Left . toException . InvalidCommandReply) Right
+      (Command.decodeRelocationReply wire nonce exit completed.output completed.errors)
 decodeResult (ProgramResult guarded) = \nonce completed -> case completed.launchFailure of
   Just problem -> Left (toException problem)
   Nothing -> let exit = case completed.exit of

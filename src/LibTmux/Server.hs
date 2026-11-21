@@ -44,6 +44,8 @@ module LibTmux.Server
   , linkWindow, linkWindowWith, unlinkWindow, unlinkWindowWith
   , selectWindowLink, selectWindowLinkWith, selectExactPane, selectExactPaneWith
   , NamedLayout (..), selectLayout, selectLayoutWith
+    -- * Pane relocation
+  , movePane, movePaneWith, joinPane, joinPaneWith, breakPane, breakPaneWith
     -- * Absolute geometry
   , resizePane, resizePaneWith, resizeWindow, resizeWindowWith
     -- * Remove a target
@@ -110,6 +112,7 @@ import LibTmux.Internal.Process.Native qualified as N
 import LibTmux.Internal.Program qualified as Program
 import LibTmux.Program (Program, ProgramOptions, ProgramResult)
 import LibTmux.Internal.Runtime qualified as R
+import LibTmux.Internal.Relocation qualified as Relocation
 import LibTmux.Internal.Scope
   ( TmuxException (..), ConfigurationProblem (..), TimeoutKind (..), ObservationProblem (..), operational )
 import LibTmux.Internal.Scope qualified as Scope
@@ -782,6 +785,71 @@ selectLayout = selectLayoutWith defaultMutationOptions
 selectLayoutWith :: MutationOptions -> Server -> Creation.WindowSlot -> NamedLayout -> IO ()
 selectLayoutWith options server (Creation.WindowSlot (G.SessionRef generation session) index) layout =
   mutate options server generation (Command.SelectLayout session index layout)
+
+-- | Move a running pane relative to a destination pane in another window.
+-- Both occurrences must still name their exact session/index links. Native
+-- movement of the last pane removes the source window and all its links.
+movePane :: Server -> Snapshot.PaneOccurrence -> Snapshot.PaneOccurrence -> Creation.PaneMoveOptions
+  -> IO Creation.PaneRelocationReceipt
+movePane = movePaneWith defaultMutationOptions
+
+-- | Move with an explicit mutation deadline. The receipt describes primary
+-- acceptance. Capture again to verify placement and the effects of hooks.
+-- An ambiguous result retains recovery and is never retried automatically.
+movePaneWith :: MutationOptions -> Server -> Snapshot.PaneOccurrence -> Snapshot.PaneOccurrence
+  -> Creation.PaneMoveOptions -> IO Creation.PaneRelocationReceipt
+movePaneWith = transferPane Command.Move
+
+-- | Run native @join-pane@ with the same contextual guards as 'movePane'.
+joinPane :: Server -> Snapshot.PaneOccurrence -> Snapshot.PaneOccurrence -> Creation.PaneMoveOptions
+  -> IO Creation.PaneRelocationReceipt
+joinPane = joinPaneWith defaultMutationOptions
+
+-- | Join with an explicit mutation deadline.
+joinPaneWith :: MutationOptions -> Server -> Snapshot.PaneOccurrence -> Snapshot.PaneOccurrence
+  -> Creation.PaneMoveOptions -> IO Creation.PaneRelocationReceipt
+joinPaneWith = transferPane Command.Join
+
+transferPane :: Command.PaneTransfer -> MutationOptions -> Server -> Snapshot.PaneOccurrence
+  -> Snapshot.PaneOccurrence -> Creation.PaneMoveOptions -> IO Creation.PaneRelocationReceipt
+transferPane operation options server@(Server runtime handle executable _ _ _) source target placement = operational $ do
+  from <- exactRelocationTarget server source
+  to <- exactRelocationTarget server target
+  duration <- mutationDuration options
+  let destination = Creation.WindowSlot target.link.session target.link.index
+  Relocation.performRelocation duration runtime handle executable (Command.TransferPane operation from to placement)
+    (Relocation.MoveTo source.pane.ref destination target.link.window)
+
+-- | Break out a running pane into a vacant slot without requesting selection.
+-- A multi-pane source produces a new window. A sole pane transfers the
+-- specified source link, leaving its other links attached to the same window.
+-- Capture the requested slot to distinguish those outcomes.
+breakPane :: Server -> Snapshot.PaneOccurrence -> Creation.WindowSlot -> IO Creation.PaneRelocationReceipt
+breakPane = breakPaneWith defaultMutationOptions
+
+-- | Break out with an explicit mutation deadline. Some releases omit the
+-- printed link or print another link to the same destination window.
+-- An interrupted command can retain relocation evidence in "LibTmux.Recovery".
+breakPaneWith :: MutationOptions -> Server -> Snapshot.PaneOccurrence -> Creation.WindowSlot
+  -> IO Creation.PaneRelocationReceipt
+breakPaneWith options server@(Server runtime handle executable _ available _) source
+    destination@(Creation.WindowSlot (G.SessionRef generation session) index) = operational $ do
+  from <- exactRelocationTarget server source
+  checkTarget server generation
+  duration <- mutationDuration options
+  let brokenDefaultName = Version.renderVersion (Capabilities.daemonVersion available) == "3.7"
+  Relocation.performRelocation duration runtime handle executable
+    (Command.BreakPane from session index brokenDefaultName)
+    (Relocation.BreakTo source.pane.ref destination)
+
+exactRelocationTarget :: Server -> Snapshot.PaneOccurrence -> IO Command.PaneTarget
+exactRelocationTarget server occurrence = do
+  let G.SessionRef sessionGeneration session = occurrence.link.session
+      G.WindowRef windowGeneration window = occurrence.link.window
+      G.PaneRef paneGeneration pane = occurrence.pane.ref
+  mapM_ (checkTarget server) [sessionGeneration, windowGeneration, paneGeneration]
+  unless (occurrence.pane.window == occurrence.link.window) (throwIO InvalidTarget)
+  pure (Command.PaneTarget session occurrence.link.index window pane)
 
 -- | Request an absolute width, height, or both for this exact physical pane.
 -- Build a 'Resize' from checked dimensions. The native layout can clamp sizes
