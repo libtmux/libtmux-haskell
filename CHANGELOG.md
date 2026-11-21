@@ -17,6 +17,10 @@
   `killSession`. Removing a physical window removes all its links. ([#28])
 - Link, unlink and select exact session/index slots. Select a pane through
   its slot and apply a named layout to the physical window. ([#12])
+- Use `lookupPaneOccurrence`, `movePane`, `joinPane` and `breakPane` to
+  relocate a running pane through exact session links. Capture its placement
+  again after the move. Relocation recovery retains the native receipt when
+  available. ([#57])
 - Use `sendKeys` for literal text or validated named keys on an explicit
   `PaneRef`. Read visible or historical rows with `capturePane`, including
   blank rows and optional ANSI styling. ([#24], [#25])
@@ -68,7 +72,8 @@
   also recognizes `next-X.Y`, `X.Y-rc` and numbered release candidates.
   Use `renderVersion` for user-facing text. ([#15])
 - Find session, window and pane operations by task in their API reference
-  directories. ([#52])
+  directories, including resizing, named paste and session settings.
+  ([#52], [#55])
 
 ### Fixed
 
@@ -116,3 +121,5 @@
 [#47]: https://github.com/libtmux/libtmux-haskell/issues/47
 [#48]: https://github.com/libtmux/libtmux-haskell/issues/48
 [#52]: https://github.com/libtmux/libtmux-haskell/issues/52
+[#55]: https://github.com/libtmux/libtmux-haskell/issues/55
+[#57]: https://github.com/libtmux/libtmux-haskell/pull/57
