@@ -61,6 +61,32 @@ tests = testGroup "workspace effects"
           Just (Tmux.EnvironmentValue Tmux.Visible value) -> value @?= "session"
           _ -> assertFailure "the new session lacked its explicit environment"
         Tmux.killSession server session
+  , testGroup "keeps native splits and free window indices"
+      [ testCase "the shorthands fixture leaves the layout unspecified" $
+          withServer $ \server native -> do
+            native ["set-option", "-g", "default-shell", "/bin/sh"]
+            document <- Bytes.readFile "test/fixtures/tmuxp/shorthands.yaml"
+            plan <- require (Workspace.planTmuxp inputs document)
+            session <- Workspace.applyWorkspace server plan
+            graph <- Tmux.capture server
+            link <- require (Tmux.linksForSession graph session) >>= one
+            window <- require (Tmux.lookupWindow graph link.window)
+            panes <- require (Tmux.panesForWindow graph link.window)
+            length panes @?= 3
+            map (.width) panes @?= replicate 3 window.width
+            sum (map (Tmux.dimensionValue . (.height)) panes) + 2 @?= Tmux.dimensionValue window.height
+            Tmux.killSession server session
+      , testCase "the second automatic window can use the bootstrap index" $
+          withServer $ \server native -> do
+            native ["set-option", "-g", "base-index", "98"]
+            plan <- require (Workspace.planTmuxp inputs
+              "session_name: no-gap\nwindows: [{window_name: first}, {window_name: second}]\n")
+            session <- Workspace.applyWorkspace server plan
+            graph <- Tmux.capture server
+            links <- require (Tmux.linksForSession graph session)
+            map (Tmux.windowIndexValue . (.index)) links @?= [98, 99]
+            Tmux.killSession server session
+      ]
   , testCase "echo alone cannot authorize pane commands" $
       withServer $ \server native -> do
         native ["set-option", "-g", "default-shell", "/bin/sh"]

@@ -93,8 +93,10 @@ applyWorkspace server (WorkspacePlan preview) = mask $ \restore -> do
       let temporary = Tmux.WindowSlot created.session reserved
       Tmux.linkWindow server initial temporary
       Tmux.unlinkWindow server initial
-      built <- traverse (buildWindow server created.session) preview.windows
+      let first :| remaining = preview.windows
+      firstBuilt <- buildWindow server created.session first
       Tmux.killWindow server created.window
+      built <- (firstBuilt :|) <$> traverse (buildWindow server created.session) remaining
       let choices = NonEmpty.zipWith (\desired actual -> (desired.focusWindow, actual)) preview.windows built
           BuiltWindow selected _ = chooseFocus (NonEmpty.head built) choices
       Tmux.selectWindowLink server selected
@@ -119,15 +121,16 @@ buildWindow server session plan = do
         }
   created <- Tmux.createWindow server placement options
   let target = slot created
+      arrange = traverse_ (Tmux.selectLayout server target) plan.layout
       add previous pane = do
         next <- Tmux.splitPane server target previous Creation.defaultSplitOptions
           { Creation.splitDirectory = pathBytes <$> pane.paneDirectory
           , Creation.splitEnvironment = maybe [] environmentBytes pane.paneEnvironment
           }
-        Tmux.selectLayout server target Tmux.Tiled
+        arrange
         pure next.pane
+  arrange
   following <- appendPanes add created.pane rest
-  traverse_ (Tmux.selectLayout server target) plan.layout
   let allPanes = (created.pane, initial) :| following
       candidates = NonEmpty.zipWith (\position actual -> (position.focusPane, actual)) plan.panes allPanes
       (selected, _) = chooseFocus (NonEmpty.last allPanes) candidates

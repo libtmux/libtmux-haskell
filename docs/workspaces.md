@@ -72,6 +72,10 @@ relative pane path against its window path. Missing paths stop apply before
 session creation. Quote environment values that YAML could read as numbers
 or booleans.
 
+With a named `layout`, apply arranges the window as each pane is added.
+An unspecified layout leaves each native split in place. Automatic window
+indices start from the server's base index.
+
 Session environment applies to the new session. A pane's environment
 overrides the window's pane environment. The plan supports shell text and
 the inherited `enter` policy. Apply starts tmux's configured shells. For
