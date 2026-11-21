@@ -231,8 +231,8 @@ withServer run = do
 createOutputFile :: IO FilePath
 createOutputFile = do
   directory <- getTemporaryDirectory
-  (file, handle) <- openBinaryTempFile directory "libtmux-workspace-output-"
-  hClose handle
+  (file, outputHandle) <- openBinaryTempFile directory "libtmux-workspace-output-"
+  hClose outputHandle
   pure file
 
 shellArgument :: Text -> Text
