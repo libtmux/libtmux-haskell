@@ -90,34 +90,34 @@ for specification authoring, generation/shrinking, and suite assembly.
 
 Support scripts live in `scripts/<name>/` with a README and `tests/`, as
 [SCRIPTS.md](SCRIPTS.md) requires. They are typed Python 3.12 or newer with
-PEP 723 inline metadata, run with `uv run`. The root `pyproject.toml` and
-`uv.lock` pin pytest, ruff and ty for these checks only; the Haskell package
-has no Python dependency. They need uv 0.9.17 or newer, which reads the
-relative `exclude-newer` cutoff in `pyproject.toml`. Provision them before
-timed checks:
+PEP 723 inline metadata, run with `uv run`. `scripts/pyproject.toml` and
+`scripts/uv.lock` pin pytest, ruff and ty for these checks only; the Haskell
+package has no Python dependency. They need uv 0.9.17 or newer, which reads
+the relative `exclude-newer` cutoff in `scripts/pyproject.toml`. Provision
+them before timed checks:
 
 ```console
-$ uv sync --locked
+$ uv sync --project scripts --locked
 ```
 
 Run the format, lint and type checks with uv.
 
 ```console
-$ uv run --locked ruff format --check scripts
+$ uv run --project scripts --locked ruff format --check scripts
 ```
 
 ```console
-$ uv run --locked ruff check scripts
+$ uv run --project scripts --locked ruff check scripts
 ```
 
 ```console
-$ uv run --locked ty check scripts
+$ uv run --project scripts --locked ty check --project scripts scripts
 ```
 
 Run every script's fixture-based tests and doctests without network access:
 
 ```console
-$ uv run --locked --offline pytest
+$ uv run --project scripts --locked --offline pytest scripts
 ```
 
 Check the example catalogue, displayed source/output and local guide links in
@@ -185,7 +185,7 @@ The [API guide](../docs/api.md) explains the navigation corrections and
 qualification limits. Run the fast artifact regression suite:
 
 ```console
-$ uv run --locked --offline pytest scripts/prepare_haddock
+$ uv run --project scripts --locked --offline pytest scripts/prepare_haddock
 ```
 
 Create the source archive for isolated consumer verification:

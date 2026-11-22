@@ -30,5 +30,5 @@ $ jq -r '.cases[] | [.version, .size, .setupSeconds, .caseSeconds] | @tsv' \
 The tests need neither tmux nor a Haskell build:
 
 ```console
-$ uv run --locked --offline pytest scripts/capture_benchmark
+$ uv run --project scripts --locked --offline pytest scripts/capture_benchmark
 ```

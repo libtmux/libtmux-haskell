@@ -28,5 +28,5 @@ The tests plant each defect in a disposable copy of the checkout and expect
 the check to fail:
 
 ```console
-$ uv run --locked --offline pytest scripts/check_docs
+$ uv run --project scripts --locked --offline pytest scripts/check_docs
 ```

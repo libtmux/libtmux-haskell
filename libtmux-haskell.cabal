@@ -99,8 +99,8 @@ extra-source-files:
   test-support/guardian-witness.c
   test-support/process-child.c
   test-support/process-policy.c
-  pyproject.toml
-  uv.lock
+  scripts/pyproject.toml
+  scripts/uv.lock
   scripts/bounded/README.md
   scripts/bounded/bounded.py
   scripts/bounded/tests/test_bounded.py

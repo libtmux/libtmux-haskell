@@ -31,5 +31,5 @@ version with different bytes. Every failure message prints the token as
 The tests replace Cabal and the network with stand-ins:
 
 ```console
-$ uv run --locked --offline pytest scripts/release
+$ uv run --project scripts --locked --offline pytest scripts/release
 ```
