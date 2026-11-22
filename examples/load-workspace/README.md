@@ -1,3 +1,12 @@
+<!-- libtmux-logo -->
+<div align="center">
+  <picture>
+    <source srcset="../../assets/logo.svg" type="image/svg+xml">
+    <img src="../../assets/logo.png" width="128" height="128" alt="libtmux for Haskell">
+  </picture>
+</div>
+<!-- /libtmux-logo -->
+
 # Preview a workspace and apply it
 
 [Main.hs](Main.hs) parses two windows and prints their count. It creates a

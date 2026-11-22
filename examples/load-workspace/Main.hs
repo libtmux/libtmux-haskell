@@ -14,7 +14,8 @@ import System.Directory (getCurrentDirectory)
 main :: IO ()
 main = do
   directory <- getCurrentDirectory
-  plan <- require (Workspace.planTmuxp (Workspace.defaultPlanInputs directory) document)
+  plan <- require
+    (Workspace.planTmuxp (Workspace.defaultPlanInputs directory) document)
   let preview = Workspace.previewWorkspace plan
   putStrLn ("session: " <> Text.unpack preview.sessionName)
   putStrLn ("planned windows: " <> show (NonEmpty.length preview.windows))

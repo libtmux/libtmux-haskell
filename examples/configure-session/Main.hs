@@ -11,21 +11,31 @@ import System.Exit (die)
 
 main :: IO ()
 main = do
-  let options = Creation.defaultSessionOptions {Creation.process = Creation.ShellCommand "exec /bin/cat"}
+  let options = Creation.defaultSessionOptions
+        { Creation.process = Creation.ShellCommand "exec /bin/cat"
+        }
   Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server ->
-    bracket (Tmux.createSession server options) (Tmux.killSession server . (.session)) $ \created -> do
-      let local = Tmux.SessionOptionsAt created.session
-          event = "after-rename-window"
-      Tmux.setOption server local "history-limit" (Tmux.NumberValue 500)
-      stored <- Tmux.readOption server local Tmux.LocalOption "history-limit"
-      case stored of
-        Just (Tmux.NumberValue rows) -> putStrLn ("local history-limit = " <> show rows)
-        _ -> die "Expected a local numeric history limit"
-      Tmux.setHook server local event 0 "set-option @last-rename seen"
-      hook <- Tmux.readHook server local event
-      unless (hook == Just "after-rename-window[0] set-option @last-rename seen\n")
-        (die "Expected one entry in the local rename hook")
-      Tmux.renameWindow server created.window "review"
-      observed <- Tmux.readOption server local Tmux.LocalOption "@last-rename"
-      unless (observed == Just (Tmux.StringValue "seen")) (die "The rename hook did not run")
-      putStrLn "rename hook recorded the change"
+    bracket
+      (Tmux.createSession server options)
+      (Tmux.killSession server . (.session))
+      $ \created -> do
+        let local = Tmux.SessionOptionsAt created.session
+            event = "after-rename-window"
+        Tmux.setOption server local "history-limit" (Tmux.NumberValue 500)
+        stored <- Tmux.readOption server local Tmux.LocalOption "history-limit"
+        case stored of
+          Just (Tmux.NumberValue rows) ->
+            putStrLn ("local history-limit = " <> show rows)
+          _ -> die "Expected a local numeric history limit"
+        Tmux.setHook server local event 0 "set-option @last-rename seen"
+        hook <- Tmux.readHook server local event
+        unless
+          (hook == Just "after-rename-window[0] set-option @last-rename seen\n")
+          (die "Expected one entry in the local rename hook")
+        Tmux.renameWindow server created.window "review"
+        observed <-
+          Tmux.readOption server local Tmux.LocalOption "@last-rename"
+        unless
+          (observed == Just (Tmux.StringValue "seen"))
+          (die "The rename hook did not run")
+        putStrLn "rename hook recorded the change"

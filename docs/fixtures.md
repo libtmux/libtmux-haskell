@@ -59,8 +59,15 @@ buildSnapshot = do
   firstIndex <- checked (Tmux.mkWindowIndex 0)
   secondIndex <- checked (Tmux.mkWindowIndex 4)
   let origin = Fixture.fixtureOrigin "reports"
-      session = Tmux.Session (Fixture.sessionRef origin sid) "work" 1 (Just "team")
-      window = Tmux.Window (Fixture.windowRef origin wid) "editor" width height "offline-layout" False
+      session =
+        Tmux.Session (Fixture.sessionRef origin sid) "work" 1 (Just "team")
+      window = Tmux.Window
+        (Fixture.windowRef origin wid)
+        "editor"
+        width
+        height
+        "offline-layout"
+        False
       pane = Tmux.Pane
         { Tmux.ref = Fixture.paneRef origin pid
         , Tmux.window = window.ref
@@ -78,11 +85,25 @@ buildSnapshot = do
         , Tmux.mode = Nothing
         }
       input = (Fixture.emptyFixture origin version)
-        { Fixture.sessions = [session], Fixture.windows = [window], Fixture.panes = [pane]
-        , Fixture.windowLinks = [Tmux.WindowLink session.ref firstIndex window.ref True "*",
-                          Tmux.WindowLink session.ref secondIndex window.ref False ""]
-        , Fixture.clients = [Fixture.AttachedClient (Os.fromBytestring "terminal") 7
-            (Just (Os.fromBytestring "/dev/fixture")) sid wid firstIndex pid 120 (Just 40)]
+        { Fixture.sessions = [session]
+        , Fixture.windows = [window]
+        , Fixture.panes = [pane]
+        , Fixture.windowLinks =
+            [ Tmux.WindowLink session.ref firstIndex window.ref True "*"
+            , Tmux.WindowLink session.ref secondIndex window.ref False ""
+            ]
+        , Fixture.clients =
+            [ Fixture.AttachedClient
+                (Os.fromBytestring "terminal")
+                7
+                (Just (Os.fromBytestring "/dev/fixture"))
+                sid
+                wid
+                firstIndex
+                pid
+                120
+                (Just 40)
+            ]
         }
   checked (Fixture.validateFixture origin input)
 
@@ -90,11 +111,18 @@ buildSnapshot = do
 metadataMatches :: Tmux.Snapshot -> Either String [Int]
 metadataMatches snapshot = sequence
   [ count (Q.matching (Q.eq F.sessionGroup (Just "team")) Q.sessions)
-  , count (Q.matching (Q.allOf [Q.eq F.windowLayout "offline-layout", Q.eq F.windowZoomed False]) Q.windows)
+  , count
+      (Q.matching
+        (Q.allOf
+          [Q.eq F.windowLayout "offline-layout", Q.eq F.windowZoomed False])
+        Q.windows)
   , count (Q.matching (Q.eq F.linkFlags "*") Q.windowLinks)
   , count (Q.matching (Q.allOf [Q.eq F.paneCursorX 0, Q.eq F.paneCursorY 0,
       Q.eq F.paneModeCount 0, Q.eq F.paneMode Nothing]) Q.panes)
-  , count (Q.matching (Q.allOf [Q.eq F.clientWidth 120, Q.eq F.clientHeight (Just 40)]) Q.clients)
+  , count
+      (Q.matching
+        (Q.allOf [Q.eq F.clientWidth 120, Q.eq F.clientHeight (Just 40)])
+        Q.clients)
   ]
   where
     count :: Q.Query row -> Either String Int

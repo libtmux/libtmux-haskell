@@ -39,7 +39,18 @@ $ gh run list \
   | xargs -I{} gh run view {} \
     --repo libtmux/libtmux-haskell \
     --json databaseId,jobs \
-    --jq '.databaseId as $run | .jobs[] | select(.name == "checks") | .steps[] | select(.name | test("consumer|Hackage archives|type contracts|example command")) | [((.completedAt | fromdate) - (.startedAt | fromdate)), $run, .name] | @tsv' \
+    --jq '
+      .databaseId as $run
+      | .jobs[]
+      | select(.name == "checks")
+      | .steps[]
+      | select(.name | test(
+          "consumer|Hackage archives|type contracts|example command"
+        ))
+      | [((.completedAt | fromdate) - (.startedAt | fromdate)),
+         $run, .name]
+      | @tsv
+    ' \
   | sort -rn \
   | awk -F'\t' '!seen[$3]++'
 ```

@@ -46,14 +46,9 @@ extra-doc-files:
   docs/performance.md
   README.md
   CHANGELOG.md
-  docs/assets/*.svg
-  docs/assets/*.png
-  docs/assets/*.jpg
-  docs/assets/*.ico
-  docs/assets/*.json
-  docs/assets/*.webmanifest
-  docs/assets/*.xml
-  docs/branding.md
+  assets/README.md
+  assets/logo.png
+  assets/logo.svg
   AGENTS.md
   .github/CONTRIBUTING.md
   .github/WRITING.md
@@ -189,9 +184,11 @@ extra-source-files:
   examples/load-workspace/libtmux-load-workspace.cabal
   examples/load-workspace/cabal.project
   examples/load-workspace/cabal.project.vcs
+  .github/example-width.toml
   .github/workflows/ci.yml
   .github/workflows/release.yml
   .github/workflows/docs.yml
+  .github/workflows/example-width.yml
   .github/dependabot.yml
   test/compile-pass/*.hs
   test/compile-fail/*.hs

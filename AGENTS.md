@@ -23,7 +23,7 @@ requested work.
 
 - Setup, validation, and tmux isolation:
   [CONTRIBUTING.md](.github/CONTRIBUTING.md).
-- Prose, examples, comments, and commits:
+- Prose, [examples](.github/WRITING.md#examples), comments, and commits:
   [WRITING.md](.github/WRITING.md).
 - Support scripts: what may stay, their language, layout and checks:
   [SCRIPTS.md](.github/SCRIPTS.md). They are typed Python in

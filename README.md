@@ -1,8 +1,8 @@
 <!-- libtmux-logo -->
 <div align="center">
   <picture>
-    <source srcset="docs/assets/logo.svg" type="image/svg+xml">
-    <img src="docs/assets/logo-128.png" width="128" height="128" alt="libtmux for Haskell">
+    <source srcset="assets/logo.svg" type="image/svg+xml">
+    <img src="assets/logo.png" width="128" height="128" alt="libtmux for Haskell">
   </picture>
 </div>
 <!-- /libtmux-logo -->
@@ -84,14 +84,17 @@ main = do
       { Creation.name = Just "demo"
       , Creation.process = Creation.ShellCommand "exec /bin/cat -"
       }
-    Tmux.linkWindow server (Creation.WindowSlot created.session created.windowIndex)
+    Tmux.linkWindow
+      server
+      (Creation.WindowSlot created.session created.windowIndex)
       (Creation.WindowSlot created.session alias)
     Tmux.capture server
 
   putStrLn $ "Physical windows: " <> show (length (Tmux.windows snapshot))
   forM_ (Tmux.windowLinks snapshot) $ \link ->
     putStrLn $ "Window index " <> show (Tmux.windowIndexValue link.index)
-      <> " refers to " <> Text.unpack (Tmux.renderWindowId (Tmux.windowId link.window))
+      <> " refers to "
+      <> Text.unpack (Tmux.renderWindowId (Tmux.windowId link.window))
 ```
 
 It prints:
@@ -109,8 +112,10 @@ More: [capture and recovery](https://libtmux.org/en/haskell/latest/guides/captur
 [`withRuntime`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withruntime/) for
 [shared lifetimes](https://libtmux.org/en/haskell/latest/guides/shared-runtime/).
 
-Use [`windowZoomed`](src/LibTmux/Query/Fields.hs) to select zoomed windows,
-or [`paneMode`](src/LibTmux/Query/Fields.hs) to find panes in copy mode.
+Use [`windowZoomed`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-fields-v-windowzoomed/)
+to select zoomed windows, or
+[`paneMode`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-fields-v-panemode/)
+to find panes in copy mode.
 [Captured metadata](docs/capture.md#read-captured-metadata) explains coordinates,
 link flags and optional client sizes; [offline selections](docs/fixtures.md)
 show the typed predicates.
@@ -119,10 +124,12 @@ show the typed predicates.
 
 ### [`runQuery`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-runquery/): typed predicates over a capture
 
-[`matching`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-matching/) filters a source,
-[`exactlyOne`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-exactlyone/) insists on a single
-match and [`fetch`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-fetch/) captures fresh. Run it
-on its own private daemon.
+[`matching`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-matching/)
+filters a source,
+[`exactlyOne`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-exactlyone/)
+insists on a single match and
+[`fetch`](https://libtmux.org/en/haskell/latest/reference/libtmux-query-v-fetch/)
+captures fresh. Run it on its own private daemon.
 
 ```console
 $ cabal run --verbose=0 query-graph
@@ -155,7 +162,8 @@ data ApplicationError
   | UnexpectedResult String
 
 activeWide :: Q.Expr Tmux.Pane
-activeWide = Q.allOf [Q.eq F.paneActive True, Q.dimensionAtLeast F.paneWidth 120]
+activeWide =
+  Q.allOf [Q.eq F.paneActive True, Q.dimensionAtLeast F.paneWidth 120]
 
 selectedPanes :: Q.Query Tmux.Pane
 selectedPanes = Q.panes & Q.matching activeWide
@@ -164,46 +172,67 @@ main :: IO ()
 main = do
   width <- either (fail . show) pure (Tmux.mkDimension 120)
   alias <- either (fail . show) pure (Tmux.mkWindowIndex 4)
-  acquired <- Tmux.tryTmux $ Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server -> do
-    created <- Tmux.createSession server Creation.defaultSessionOptions
-      { Creation.width = Just width
-      , Creation.process = Creation.ShellCommand "exec /bin/cat -"
-      }
-    Tmux.linkWindow server (Creation.WindowSlot created.session created.windowIndex)
-      (Creation.WindowSlot created.session alias)
-    snapshot <- Tmux.capture server
-    fresh <- Q.fetch server selectedPanes
-    pure (snapshot, fresh)
+  acquired <- Tmux.tryTmux $
+    Tmux.withOwnedServer Tmux.defaultOwnedServerConfig $ \server -> do
+      created <- Tmux.createSession server Creation.defaultSessionOptions
+        { Creation.width = Just width
+        , Creation.process = Creation.ShellCommand "exec /bin/cat -"
+        }
+      Tmux.linkWindow
+        server
+        (Creation.WindowSlot created.session created.windowIndex)
+        (Creation.WindowSlot created.session alias)
+      snapshot <- Tmux.capture server
+      fresh <- Q.fetch server selectedPanes
+      pure (snapshot, fresh)
   case first OperationalFailure acquired >>= uncurry report of
     Left (OperationalFailure problem) -> rethrowIO problem
-    Left (InvalidQuery problem) -> die ("Query validation failed: " <> show problem)
-    Left (InvalidSelection problem) -> die ("Selection failed: " <> show problem)
+    Left (InvalidQuery problem) ->
+      die ("Query validation failed: " <> show problem)
+    Left (InvalidSelection problem) ->
+      die ("Selection failed: " <> show problem)
     Left (UnexpectedResult problem) -> die problem
     Right linesToPrint -> mapM_ putStrLn linesToPrint
 
-report :: Tmux.Snapshot -> Either Q.QueryError [Tmux.Pane] -> Either ApplicationError [String]
+report
+  :: Tmux.Snapshot
+  -> Either Q.QueryError [Tmux.Pane]
+  -> Either ApplicationError [String]
 report snapshot acquired = do
   selected <- first InvalidQuery (Q.runQuery snapshot selectedPanes)
-  let native = [pane | pane <- Tmux.panes snapshot, pane.active, Tmux.dimensionValue pane.width >= 120]
-  if selected == native then Right () else Left (UnexpectedResult "query and native selection disagree")
+  let native =
+        [ pane
+        | pane <- Tmux.panes snapshot
+        , pane.active
+        , Tmux.dimensionValue pane.width >= 120
+        ]
+  if selected == native
+    then Right ()
+    else Left (UnexpectedResult "query and native selection disagree")
   unique <- first InvalidSelection (Q.exactlyOne selected)
   occurrences <- first InvalidQuery $ Q.runQuery snapshot $
     Q.paneOccurrences & Q.matching (Q.related F.occurrencePane activeWide)
   highest <- first InvalidQuery $ Q.runQuery snapshot $
     Q.windowLinks & Q.orderBy [Q.descending F.linkIndex] & Q.limit 1
   link <- first InvalidSelection (Q.exactlyOne highest)
-  let containingEditors = Q.sessions & Q.matching (Q.some F.sessionWindowLinks (Q.some F.linkPanes activeWide))
+  let containingEditors =
+        Q.sessions
+          & Q.matching
+            (Q.some F.sessionWindowLinks (Q.some F.linkPanes activeWide))
   sessions <- first InvalidQuery (Q.runQuery snapshot containingEditors)
   fresh <- first InvalidQuery acquired
   Right
     [ "query agrees with native predicate: True"
-    , "unique physical pane: " <> Text.unpack (Tmux.renderPaneId (Tmux.paneId unique.ref))
+    , "unique physical pane: "
+        <> Text.unpack (Tmux.renderPaneId (Tmux.paneId unique.ref))
     , "contextual matches: " <> show (length occurrences)
-    , "contextual uniqueness: " <> either show (const "unique") (Q.exactlyOne occurrences)
+    , "contextual uniqueness: "
+        <> either show (const "unique") (Q.exactlyOne occurrences)
     , "highest link index: " <> show (Tmux.windowIndexValue link.index)
     , "sessions containing a match: " <> show (length sessions)
     , "required fields: " <> show (Q.requirements selectedPanes).fieldNames
-    , "required relationships: " <> show (Q.requirements containingEditors).relationshipNames
+    , "required relationships: "
+        <> show (Q.requirements containingEditors).relationshipNames
     , "fresh capture matches: " <> show (length fresh)
     ]
 ```
@@ -224,7 +253,8 @@ fresh capture matches: 1
 ```
 
 One physical pane appears twice through its window links, so it matches twice
-in the contextual source. More: [typed queries](https://libtmux.org/en/haskell/latest/guides/query/).
+in the contextual source.
+More: [typed queries](https://libtmux.org/en/haskell/latest/guides/query/).
 
 ## Change tmux
 
@@ -241,10 +271,11 @@ $ cabal run --verbose=0 mutate-graph
 A new capture shows the changes; the old snapshot keeps its values. Each
 rename is its own command, and a later failure undoes nothing.
 
-### [`movePane` and `breakPane`](docs/mutations.md#move-a-running-pane) to relocate a running pane
+### [`movePane`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-movepane/) and [`breakPane`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-breakpane/): relocate a running pane
 
 The same program moves a worker out of its editor window and back. It uses
-the same `PaneRef` and resolves each destination from a fresh capture.
+the same `PaneRef` and resolves each destination from a fresh capture. More:
+[pane relocation](docs/mutations.md#move-a-running-pane).
 
 ## Create sessions, windows and panes
 
@@ -261,60 +292,61 @@ After checking duplicate-name rejection, the example removes the targets it
 created and checks that the original sessions survive. See the
 [creation and removal guide](docs/creation.md#remove-a-target).
 
-Use [`sendKeys`](docs/mutations.md#send-input-to-a-pane) to type text or send
-named keys to the new pane.
+Use [`sendKeys`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-sendkeys/)
+to type text or send named keys to the new pane; see
+[pane input](docs/mutations.md#send-input-to-a-pane).
 
-### [`createWindow`](src/LibTmux/Server.hs): add a window at an explicit placement
+### [`createWindow`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-createwindow/): add a window at an explicit placement
 
 The same program adds a window to the created session. Choose its next free
 index, an exact slot, or insertion before or after a slot. Occupied slots
 require an explicit replacement policy.
 
-### [`splitPane`](src/LibTmux/Server.hs): split one pane through an exact link
+### [`splitPane`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-splitpane/): split one pane through an exact link
 
 The program splits that window's initial pane, sends input to the new pane and
 cleans up its session. A `WindowSlot` retains the session and index; a `PaneRef`
 chooses the pane even when another pane is active. Capture again for actual
 dimensions and pane count.
 
-### [`capturePane`](src/LibTmux/Server.hs) to read the new pane's screen
+### [`capturePane`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capturepane/): read the new pane's screen
 
 Read the captured rows with `paneText`. The creation example checks that the
 visible row count matches the pane height. The
 [pane capture guide](docs/mutations.md#read-pane-text) shows how to read
 retained history and keep ANSI styling.
 
-### [`waitForText`](src/LibTmux/Server.hs) to wait for new output
+### [`waitForText`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-waitfortext/): wait for new output
 
 The creation example waits for a readiness marker, captures a baseline,
 sends input and waits for a new occurrence with `FreshSince baseline`.
 See [text waits](docs/mutations.md#wait-for-pane-text) for timeout and exit
 results.
 
-### [`linkWindow`](src/LibTmux/Server.hs) to share a window across slots
+### [`linkWindow`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-linkwindow/): share a window across slots
 
 The creation example links the worker window at two indices. It selects the
 new link, chooses a pane, applies `Tiled` and removes the extra link. See
 [window links and focus](docs/creation.md#link-select-and-arrange-windows).
 
-### [`getEnvironment`](src/LibTmux/Server.hs) to inspect a session entry
+### [`getEnvironment`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-getenvironment/): inspect a session entry
 
 The example sets an empty value, marks it removed and unsets it in the new
 session. [Environment operations](docs/mutations.md#read-and-change-the-environment)
 explain scope, visibility and literal bytes.
 
-### [`pasteBuffer`](src/LibTmux/Server.hs) to paste to a specific pane
+### [`pasteBuffer`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-pastebuffer/): paste to a specific pane
 
 The [paste buffer example](docs/buffers.md) verifies a binary round trip and
 observes the output of a pane after pasting text with preserved line feeds.
 
-### [`lookupOption`](src/LibTmux/Options.hs) to find a setting's type and scope
+### [`lookupOption`](https://libtmux.org/en/haskell/latest/reference/libtmux-options-v-lookupoption/): find a setting's type and scope
 
 Pass `serverCapabilities server` to look up native settings or hooks for
 the connected daemon. See [options and hooks](docs/options.md) for the
 pinned releases and list operations.
 
-### [`setOption`](src/LibTmux/Server.hs) and [`setHook`](src/LibTmux/Server.hs) to configure a session
+### [`setOption`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-setoption/) and [`setHook`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-sethook/): configure a session
 
 The [session settings program](docs/options.md) reads a local history limit
 and observes a rename hook's effect.
@@ -329,11 +361,12 @@ local history-limit = 500
 rename hook recorded the change
 ```
 
-### [`withControl`](src/LibTmux/Server.hs) to watch a window
+### [`withControl`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withcontrol/): watch a window
 
 The [control example](docs/control.md) observes a rename through a bounded
-stream. [`waitForPaneState`](src/LibTmux/Server.hs) then confirms
-that a split pane is gone.
+stream.
+[`waitForPaneState`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-waitforpanestate/)
+then confirms that a split pane is gone.
 
 ```console
 $ cabal run --verbose=0 watch-window
@@ -347,7 +380,7 @@ split pane removed
 
 ## Resize panes and windows
 
-### [`resizePane`](src/LibTmux/Server.hs) and [`resizeWindow`](src/LibTmux/Server.hs): request absolute cells
+### [`resizePane`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-resizepane/) and [`resizeWindow`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-resizewindow/): request absolute cells
 
 The [geometry program](docs/resizing.md) chooses a width, height or both,
 prints fresh dimensions and removes its disposable session:
@@ -370,15 +403,16 @@ original sessions after cleanup: True
 ```
 
 Native layouts can clamp requested sizes. Every supplied axis must fit
-1 through 10000 cells before dispatch. More: [resizing and recovery](docs/resizing.md).
+1 through 10000 cells before dispatch.
+More: [resizing and recovery](docs/resizing.md).
 
 ## Run a terminal application
 
-### [`runProgram`](src/LibTmux/Server.hs): run, observe and clean up owned work
+### [`runProgram`](https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-runprogram/): run, observe and clean up owned work
 
 The [program example](examples/managed-program/Main.hs) runs literal argv,
-cancels and retries an interactive wait, and bounds an owning scope. It requires
-tmux 3.8, Linux 6.9 process-group pidfds and Bash timed reads:
+cancels and retries an interactive wait, and bounds an owning scope. It
+requires tmux 3.8, Linux 6.9 process-group pidfds and Bash timed reads:
 
 ```console
 $ cabal run --verbose=0 managed-program
@@ -427,11 +461,41 @@ waits for the daemon generation admitted by this handle to exit.
 | Browse declarations and module documentation | [API reference](https://libtmux.org/en/haskell/latest/reference/) |
 | See what works today and what is planned | [Status](https://libtmux.org/en/haskell/latest/guides/status/) |
 
+## What it leaves out
+
+- **Live objects.** A [`Session`][ref-session], [`Window`][ref-window] or
+  [`Pane`][ref-pane] is a detached [`Snapshot`][ref-snapshot] record of what
+  tmux reported when captured. Call [`capture`][ref-capture] again, or
+  subscribe with [`withControl`][ref-with-control], to see a change.
+- **A terminal emulator.** [`capturePane`][ref-capture-pane] and
+  [`runProgram`][ref-run-program] return the screen tmux drew rather than
+  running an in-process terminal emulator or TUI.
+- **Your tmux configuration file.** This library drives a running server;
+  nothing here generates or edits `~/.tmux.conf`.
+
 ## Support and status
 
 - **Experimental.** The API may change.
-- **Works today.** Private daemon scopes, typed graph queries, pane input, bounded capture and control notifications.
+- **Works today.** Private daemon scopes, typed graph queries, pane input,
+  bounded capture and control notifications.
 - **Platform.** Linux x86_64. [Host requirements](docs/installation.md).
-- **More.** [Status](https://libtmux.org/en/haskell/latest/guides/status/) · [source guides](docs/README.md).
+- **More.** [Status](https://libtmux.org/en/haskell/latest/guides/status/) ·
+  [source guides](docs/README.md).
 
-[Contributing](.github/CONTRIBUTING.md) · [License](LICENSE) · [Branding assets](docs/branding.md)
+[Contributing](.github/CONTRIBUTING.md) ·
+[AI policy](https://libtmux.org/en/meta/ai-policy/) · [License](LICENSE) ·
+[Logo assets](assets/README.md)
+
+Part of the [libtmux.org](https://libtmux.org/) family alongside Python
+[`libtmux`](https://github.com/tmux-python/libtmux), sibling
+[language ports](https://github.com/libtmux) and
+[`tmux`](https://github.com/tmux/tmux).
+
+[ref-session]: https://libtmux.org/en/haskell/latest/reference/libtmux-snapshot-t-session/
+[ref-window]: https://libtmux.org/en/haskell/latest/reference/libtmux-snapshot-t-window/
+[ref-pane]: https://libtmux.org/en/haskell/latest/reference/libtmux-snapshot-t-pane/
+[ref-snapshot]: https://libtmux.org/en/haskell/latest/reference/libtmux-snapshot-t-snapshot/
+[ref-capture]: https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capture/
+[ref-with-control]: https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-withcontrol/
+[ref-capture-pane]: https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-capturepane/
+[ref-run-program]: https://libtmux.org/en/haskell/latest/reference/libtmux-server-v-runprogram/
