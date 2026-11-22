@@ -16,11 +16,14 @@ main = do
       { Creation.name = Just "demo"
       , Creation.process = Creation.ShellCommand "exec /bin/cat -"
       }
-    Tmux.linkWindow server (Creation.WindowSlot created.session created.windowIndex)
+    Tmux.linkWindow
+      server
+      (Creation.WindowSlot created.session created.windowIndex)
       (Creation.WindowSlot created.session alias)
     Tmux.capture server
 
   putStrLn $ "Physical windows: " <> show (length (Tmux.windows snapshot))
   forM_ (Tmux.windowLinks snapshot) $ \link ->
     putStrLn $ "Window index " <> show (Tmux.windowIndexValue link.index)
-      <> " refers to " <> Text.unpack (Tmux.renderWindowId (Tmux.windowId link.window))
+      <> " refers to "
+      <> Text.unpack (Tmux.renderWindowId (Tmux.windowId link.window))
