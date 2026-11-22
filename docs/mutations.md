@@ -48,12 +48,19 @@ main = do
       worker <- Tmux.splitPane server editor created.pane
         Creation.defaultSplitOptions {Creation.splitProcess = cat}
       split <- Tmux.capture server
-      workerInEditor <- require (Tmux.lookupPaneOccurrence split editor worker.pane)
+      workerInEditor <- require
+        (Tmux.lookupPaneOccurrence split editor worker.pane)
       _ <- Tmux.breakPane server workerInEditor temporary
       separated <- Tmux.capture server
-      workerOutside <- require (Tmux.lookupPaneOccurrence separated temporary worker.pane)
-      editorPane <- require (Tmux.lookupPaneOccurrence separated editor created.pane)
-      _ <- Tmux.movePane server workerOutside editorPane Tmux.defaultPaneMoveOptions
+      workerOutside <- require
+        (Tmux.lookupPaneOccurrence separated temporary worker.pane)
+      editorPane <- require
+        (Tmux.lookupPaneOccurrence separated editor created.pane)
+      _ <- Tmux.movePane
+        server
+        workerOutside
+        editorPane
+        Tmux.defaultPaneMoveOptions
       after <- Tmux.capture server
       _ <- require (Tmux.lookupPaneOccurrence after editor worker.pane)
       pure (created, before, after)
@@ -70,7 +77,9 @@ main = do
   putStrLn "Worker moved back to its original window"
 
 cat :: Creation.InitialProcess
-cat = Creation.DirectCommand (Os.fromBytestring "/bin/cat") (Os.fromBytestring "-" :| [])
+cat = Creation.DirectCommand
+  (Os.fromBytestring "/bin/cat")
+  (Os.fromBytestring "-" :| [])
 
 require :: Show problem => Either problem a -> IO a
 require = either (fail . show) pure

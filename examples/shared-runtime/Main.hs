@@ -25,13 +25,17 @@ main = do
             fail "independent handles shared a connection generation"
           captured <- Tmux.capture inner
           case Tmux.panes captured of
-            pane : _ -> unless (Tmux.lookupPane first pane.ref == Left Tmux.ForeignGeneration) $
-              fail "a reference crossed independent handle generations"
+            pane : _ ->
+              unless
+                (Tmux.lookupPane first pane.ref == Left Tmux.ForeignGeneration)
+                $ fail "a reference crossed independent handle generations"
             [] -> fail "the owned example fixture has no pane"
           pure inner
         Tmux.tryTmux (Tmux.capture closed) >>= \case
           Left (ExceptionWithContext _ Tmux.ServerClosed) -> pure ()
-          Left problem -> fail ("closed handle returned an unexpected error: " <> show problem)
+          Left problem ->
+            fail
+              ("closed handle returned an unexpected error: " <> show problem)
           Right _ -> fail "the inner handle remained open after its scope"
         Tmux.capture outer
   putStrLn "independent handles: verified"
@@ -39,5 +43,7 @@ main = do
   putStrLn $ "outer capture panes: " <> show (length (Tmux.panes snapshot))
   forM_ (Tmux.panes snapshot) $ \pane -> do
     window <- either (fail . show) pure (Tmux.lookupWindow snapshot pane.window)
-    putStrLn $ "detached pane " <> Text.unpack (Tmux.renderPaneId (Tmux.paneId pane.ref))
-      <> " belongs to " <> Text.unpack (Tmux.renderWindowId (Tmux.windowId window.ref))
+    putStrLn $ "detached pane "
+      <> Text.unpack (Tmux.renderPaneId (Tmux.paneId pane.ref))
+      <> " belongs to "
+      <> Text.unpack (Tmux.renderWindowId (Tmux.windowId window.ref))

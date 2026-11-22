@@ -1,0 +1,23 @@
+width = 80
+markdown = ["**/*.md"]
+sources = [
+  "examples/**/*.hs",
+  "examples/**/*.cabal",
+  "examples/**/cabal.project",
+  "examples/**/cabal.project.vcs",
+]
+shared_digest = "872d3f4cb1eb2b5cd9c5b7adc9cd140a153e4bbed3cb5bd0b7400a905e6dae4d"
+allow_ceiling = 1
+
+[[exclude]]
+glob = "examples/catalogue.json"
+reason = "machine-readable example verification manifest, not reader source"
+
+[[exclude]]
+glob = "examples/*/expected.stdout"
+reason = "compared program output, not source code"
+
+[[allow]]
+path = ".github/WRITING.md"
+line = "  selected <- Q.runQuery snapshot (Q.panes & Q.matching (Q.allOf [Q.eq F.paneActive True, Q.dimensionAtLeast F.paneWidth 120]))"
+reason = "the Bad example in the port block shows the width problem the Good example fixes"

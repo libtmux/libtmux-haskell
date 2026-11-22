@@ -1,28 +1,24 @@
 # Writing
 
-This guide covers documentation, user-facing text, comments, and commits.
+This guide adds Haskell, Cabal, Haddock and example-catalogue rules to
+[`libtmux/.github/WRITING.md`][org-writing], which governs voice, plain
+CommonMark, 80-column repository wrapping, unwrapped issue and pull-request
+bodies, slop removal, and commit and pull-request format.
 [CONTRIBUTING.md](CONTRIBUTING.md) owns the development workflow.
 
-## Voice and evidence
-
-Lead with the conclusion or observable behavior, then explain the evidence
-and limits. Use active voice, concrete nouns, and short sentences. Assume
-no shared history: explain what a referenced issue or decision concerns.
-
-Remove filler, marketing claims, emojis, and tool signatures. Describe the
-handled failure instead of calling code robust. Give measurements instead
-of calling it fast. Distinguish planned, implemented, tested, and published
-behavior. A README must not offer installation or API examples before they
-work.
+Distinguish planned, implemented, tested, and published behavior. Describe the
+handled failure instead of calling code robust, and give measurements instead
+of calling it fast. A README must not offer installation or API examples before
+they work.
 
 ## Version claims
 
 State a minimum version only when a used feature or package constraint requires
-it. CI pins describe tested configurations, not exact installation requirements.
-Keep pins in the toolchain file and link to it instead of repeating patch versions
-across guides. Do not invent an upper compiler bound or imply that an untested
-version passed. Preserve meaningful tmux ranges, protocol versions and versioned
-source citations.
+it. CI pins describe tested configurations, not exact installation
+requirements. Keep pins in the toolchain file and link to it instead of
+repeating patch versions across guides. Do not invent an upper compiler bound
+or imply that an untested version passed. Preserve meaningful tmux ranges,
+protocol versions and versioned source citations.
 
 Keep Cabal's package API compatibility bounds separate from these prose claims.
 An exact `tested-with` entry records a tested build; it is not a compiler pin
@@ -70,12 +66,7 @@ A README is scanned, not read. Each line has to survive a glance.
   example: queries and filters today; a query planner, command chaining and
   control mode when they exist.
 
-## Markdown and examples
-
-Use CommonMark with blank lines around headings and lists. Wrap repository
-prose near 80 columns, except long links, identifiers, and tables. Do not
-hard-wrap GitHub issue or pull request paragraphs. Avoid personal information
-and local absolute paths.
+## Code blocks
 
 Code blocks are paste-and-run units:
 
@@ -105,6 +96,94 @@ tmux floor. Offer only implemented and executed capabilities; a pure scalar
 example does not demonstrate graph navigation or commands. Contract design
 notes must identify proposed APIs rather than presenting runnable examples.
 
+## Examples
+
+<!-- shared:examples -->
+
+An example is code written for a reader: a program under `examples/`, code in
+a doc comment or docstring, and every fenced block in a README or docs page.
+Shell blocks also follow [Code blocks](#code-blocks).
+
+The text between the shared markers is the same in every libtmux port.
+Change it in all of them together.
+
+### Width
+
+- **Examples stay within 80 columns.** They render in fixed-width boxes that
+  scroll sideways, and 80 columns fits a libtmux.org code block in a
+  laptop-width window. Comments inside examples wrap at 80 too.
+- **The width check enforces it.** It reads the tracked files that
+  `.github/example-width.toml` names and fails on a wider line. It measures
+  the whole source line, so code in a doc comment counts its indent and
+  comment marker. It skips output (a fence tagged `text`, and what a
+  `console` block prints), hidden setup lines, and a line that is only a URL;
+  an untagged fence counts as code.
+- **A line that must stay wider is listed there with its reason.** An entry
+  that no longer matches a line fails the check, so no stale entry stays.
+- **The formatter's width is the hard limit for all other source.** Example
+  directories set their formatter to 80 where the formatter takes a width.
+
+### Reaching 80
+
+- **Change the code, not the line breaks.** A formatter rejoins any line that
+  fits its width. Name a sub-expression, use a short example name, hide setup
+  the reader does not need, or print less.
+- **Break at the outermost level when a break is still needed:** after an
+  opening parenthesis with one argument per line, one call per line in a
+  chain, one field per line in a literal.
+- **Put a comment on its own line above the code it explains.** Never trail
+  one after code in an example, unless the repository's example runner reads
+  it there, as with an assertion marker.
+- **Break a long string at a word boundary,** never inside a tmux format
+  (`#{...}`) or an escape sequence; the joined text stays the same.
+- **Continue a long command in a `console` block the way its shell does:**
+  `\` after a `$ ` prompt, a backtick after `PS> `, one flag per continuation
+  line.
+
+### What never breaks
+
+- **Output a test compares.** Wrapping it changes what the test expects.
+- **A block copied from a source file.** Fix the width in the source and run
+  the sync command; never edit the copy.
+- **Marker lines and URLs,** which tools and readers take whole.
+
+<!-- /shared:examples -->
+
+### In this repository
+
+- **Hard limit:** examples stay within 80 columns, enforced by the
+  `check-example-width` action of `libtmux/.github` and
+  `.github/example-width.toml`.
+- **Not formatted:** no Haskell formatter runs in CI, so example programs,
+  Cabal project snippets and Markdown fences are maintained within 80 columns
+  by hand.
+- **Runs, compiles, exempt:** `scripts/check_docs/check_docs.py --run` executes
+  every complete program in `examples/catalogue.json`, and
+  `scripts/check_sdist/check_sdist.py` builds and runs them plus Haddock `>>>`
+  examples from the source archives. `examples/catalogue.json` and
+  `examples/*/expected.stdout` are non-code fixtures excluded in
+  `.github/example-width.toml`.
+- **Compared output and copied blocks:** `expected.stdout` files and
+  `example-output` blocks are compared output and stay intact. Edit
+  `examples/<id>/Main.hs` first and copy the exact source into each `example`
+  fence; `scripts/check_docs/check_docs.py` rejects drift and unregistered
+  `haskell` fences. The untagged policy snippets below illustrate width and are
+  not registered catalogue programs.
+
+Bad, over 80:
+
+```
+  selected <- Q.runQuery snapshot (Q.panes & Q.matching (Q.allOf [Q.eq F.paneActive True, Q.dimensionAtLeast F.paneWidth 120]))
+```
+
+Good, name the reusable predicate:
+
+```
+  let activeWide =
+        Q.allOf [Q.eq F.paneActive True, Q.dimensionAtLeast F.paneWidth 120]
+  selected <- Q.runQuery snapshot (Q.panes & Q.matching activeWide)
+```
+
 ## Haskell documentation and comments
 
 Use Haddock beside public definitions. Start with the caller-visible result.
@@ -112,17 +191,17 @@ Explain inputs, defaults, errors, effects, ownership, ordering, cancellation,
 and cleanup when relevant. Distinguish pure values from operations in `IO`.
 Verify generated API links when documentation tooling is added.
 
-Use [Haddock's native links](https://haskell-haddock.readthedocs.io/latest/markup.html#hyperlinked-identifiers),
-module overviews, export groups and declaration examples. Quote identifiers
-and module names in Haddock syntax rather than hard-coding generated HTML
-paths. Link opaque types to their constructors/parsers and accessors; link
-related modules where callers move between concepts. Use a namespace-qualified
-identifier when a type and constructor share a name. Check the generated
-target and anchor: module-name markup alone does not validate its destination.
-Keep large APIs discoverable through task-oriented groups instead of a flat
-member list. Execute every `>>>` example through
-the archive consumer check. Inspect generated search, declaration anchors,
-source navigation and dependency links before publishing API artifacts.
+Use [Haddock's native links][haddock-links], module overviews, export groups
+and declaration examples. Quote identifiers and module names in Haddock syntax
+rather than hard-coding generated HTML paths. Link opaque types to their
+constructors/parsers and accessors; link related modules where callers move
+between concepts. Use a namespace-qualified identifier when a type and
+constructor share a name. Check the generated target and anchor: module-name
+markup alone does not validate its destination. Keep large APIs discoverable
+through task-oriented groups instead of a flat member list. Execute every
+`>>>` example through the archive consumer check. Inspect generated search,
+declaration anchors, source navigation and dependency links before publishing
+API artifacts.
 
 Comments explain non-obvious invariants, protocol constraints, or platform
 workarounds. Prefer one or two lines. Remove narration of the next expression
@@ -130,12 +209,12 @@ and repetition of names, types, or control flow. Preserve tool directives.
 
 ## Commits and pull requests
 
-Use `scope(type[detail]) Concise description`; the detail is optional.
-Use lowercase scopes unless they name a proper product or class. Follow the
-subject with a `why:` paragraph and focused `what:` bullets. Explain the
-durable reason and concrete changes, with one topic per commit.
+Follow `scope(type[detail]): concise description` (50-character subject,
+72-character body lines, `why:` and `what:` separated by a blank line) and the
+pull-request rules in [`libtmux/.github/WRITING.md`][org-commits]. Use
+lowercase scopes unless they name a proper product or class, and keep temporary
+validation results in the review discussion.
 
-Keep temporary validation results in the review discussion. Pull request
-descriptions lead with the problem and resulting behavior, explain the final
-change, and report relevant checks and limits. A ticket number or commit
-hash alone does not explain the change.
+[org-writing]: https://github.com/libtmux/.github/blob/main/WRITING.md
+[org-commits]: https://github.com/libtmux/.github/blob/main/WRITING.md#commits-and-pull-requests
+[haddock-links]: https://haskell-haddock.readthedocs.io/latest/markup.html#hyperlinked-identifiers
