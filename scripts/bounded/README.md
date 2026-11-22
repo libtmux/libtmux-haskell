@@ -47,5 +47,5 @@ $ gh run list \
 The tests start a command that starts a child and check that both die:
 
 ```console
-$ uv run --locked --offline pytest scripts/bounded
+$ uv run --project scripts --locked --offline pytest scripts/bounded
 ```

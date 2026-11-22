@@ -43,5 +43,5 @@ The tests cover the archive-member and Haddock-example checks, which need no
 build:
 
 ```console
-$ uv run --locked --offline pytest scripts/check_sdist
+$ uv run --project scripts --locked --offline pytest scripts/check_sdist
 ```

@@ -26,5 +26,5 @@ an unlisted file.
 The tests replace Cabal with a stand-in, so they need no GHC:
 
 ```console
-$ uv run --locked --offline pytest scripts/check_types
+$ uv run --project scripts --locked --offline pytest scripts/check_types
 ```

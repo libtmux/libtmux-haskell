@@ -31,5 +31,5 @@ guide](../../docs/api.md) explains the corrections and their limits.
 The tests build small pages in a temporary directory:
 
 ```console
-$ uv run --locked --offline pytest scripts/prepare_haddock
+$ uv run --project scripts --locked --offline pytest scripts/prepare_haddock
 ```
