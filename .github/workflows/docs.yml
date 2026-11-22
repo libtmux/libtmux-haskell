@@ -43,7 +43,7 @@ concurrency:
 
 jobs:
   build:
-    uses: libtmux/docs/.github/workflows/port-docs.yml@a95513c6f0c741357996a846d0d5510efab1039d
+    uses: libtmux/docs/.github/workflows/port-docs.yml@55129cce3cb0df43b0cc54fce271370a848cf51f
     with:
       port: haskell
       source-ref: ${{ inputs.source-ref }}
@@ -62,7 +62,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: libtmux/docs/.github/workflows/reusable-deploy.yml@a95513c6f0c741357996a846d0d5510efab1039d
+    uses: libtmux/docs/.github/workflows/reusable-deploy.yml@55129cce3cb0df43b0cc54fce271370a848cf51f
     with:
       path-prefix: haskell/${{ matrix.version }}
       artifact: docs-haskell-${{ matrix.version }}
