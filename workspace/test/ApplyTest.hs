@@ -25,8 +25,7 @@ import Test.Tasty.HUnit
 tests :: TestTree
 tests = testGroup "workspace effects"
   [ testCase "apply window indexes, layout, paths and environment" $
-      withServer $ \server native -> do
-        native ["set-option", "-g", "default-shell", "/bin/sh"]
+      withServer $ \server _ -> do
         plan <- require (Workspace.planTmuxp inputs sample)
         before <- Tmux.capture server
         length (Tmux.sessions before) @?= 0
@@ -63,8 +62,7 @@ tests = testGroup "workspace effects"
         Tmux.killSession server session
   , testGroup "keeps native splits and free window indices"
       [ testCase "the shorthands fixture leaves the layout unspecified" $
-          withServer $ \server native -> do
-            native ["set-option", "-g", "default-shell", "/bin/sh"]
+          withServer $ \server _ -> do
             document <- Bytes.readFile "test/fixtures/tmuxp/shorthands.yaml"
             plan <- require (Workspace.planTmuxp inputs document)
             session <- Workspace.applyWorkspace server plan
@@ -89,7 +87,6 @@ tests = testGroup "workspace effects"
       ]
   , testCase "echo alone cannot authorize pane commands" $
       withServer $ \server native -> do
-        native ["set-option", "-g", "default-shell", "/bin/sh"]
         native ["set-option", "-g", "default-command", "exec /bin/cat -u"]
         survivor <- Tmux.createSession server Creation.defaultSessionOptions {Creation.name = Just "survivor"}
         plan <- require (Workspace.planTmuxp inputs
@@ -115,7 +112,6 @@ tests = testGroup "workspace effects"
           Right _ -> assertFailure "apply accepted a pane that only echoes its input"
   , testCase "cancel after the pane consumes the readiness probe" $
       withServer $ \server native -> do
-        native ["set-option", "-g", "default-shell", "/bin/sh"]
         executable <- tmuxExecutable
         initial <- Tmux.capture server
         let socket = path (Tmux.serverInfo initial).socketPath
@@ -252,6 +248,9 @@ withServer run = do
         native arguments = do
           let command = (proc executable ("-N" : "-S" : socket : arguments)) {env = Just inherited}
           readCreateProcessWithExitCode command "" >>= (@?= (ExitSuccess, "", ""))
+    -- Keep fixture startup independent of system and user shell profiles.
+    native ["set-option", "-g", "default-shell", "/bin/sh"]
+    native ["set-option", "-g", "default-command", "ENV=/dev/null exec /bin/sh -i"]
     run server native
 
 createOutputFile :: IO FilePath
