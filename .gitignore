@@ -48,5 +48,6 @@ CLAUDE.local.md
 
 # Python tooling caches
 /.venv/
+/scripts/.venv/
 .ruff_cache/
 .pytest_cache/

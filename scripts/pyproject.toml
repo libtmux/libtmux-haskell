@@ -16,25 +16,26 @@ dev = [
 [tool.uv]
 package = false
 # Lock only releases at least three days old. Project settings override a
-# contributor's own uv configuration, so `uv lock --check` gives the same
-# answer on every machine. A relative value needs uv 0.9.17 or newer.
+# contributor's own uv configuration, so `uv lock --project scripts --check`
+# gives the same answer on every machine. A relative value needs uv 0.9.17 or
+# newer.
 exclude-newer = "3 days"
 
 [tool.pytest.ini_options]
 # Each script is a plain module in its own directory, so tests import it, and
 # the scripts that call a sibling import it, by directory.
 pythonpath = [
-  "scripts/bounded",
-  "scripts/capture_benchmark",
-  "scripts/check_docs",
-  "scripts/check_floor",
-  "scripts/check_sdist",
-  "scripts/check_types",
-  "scripts/generate_options",
-  "scripts/prepare_haddock",
-  "scripts/release",
+  "bounded",
+  "capture_benchmark",
+  "check_docs",
+  "check_floor",
+  "check_sdist",
+  "check_types",
+  "generate_options",
+  "prepare_haddock",
+  "release",
 ]
-testpaths = ["scripts"]
+testpaths = ["."]
 addopts = [
   "--doctest-modules",
   "--strict-config",
@@ -47,15 +48,15 @@ addopts = [
 target-version = "py312"
 line-length = 100
 src = [
-  "scripts/bounded",
-  "scripts/capture_benchmark",
-  "scripts/check_docs",
-  "scripts/check_floor",
-  "scripts/check_sdist",
-  "scripts/check_types",
-  "scripts/generate_options",
-  "scripts/prepare_haddock",
-  "scripts/release",
+  "bounded",
+  "capture_benchmark",
+  "check_docs",
+  "check_floor",
+  "check_sdist",
+  "check_types",
+  "generate_options",
+  "prepare_haddock",
+  "release",
 ]
 
 [tool.ruff.lint]
@@ -64,16 +65,13 @@ extend-select = ["ANN", "B", "C4", "I", "PT", "PTH", "RUF", "SIM", "UP"]
 [tool.ty.environment]
 python-version = "3.12"
 extra-paths = [
-  "scripts/bounded",
-  "scripts/capture_benchmark",
-  "scripts/check_docs",
-  "scripts/check_floor",
-  "scripts/check_sdist",
-  "scripts/check_types",
-  "scripts/generate_options",
-  "scripts/prepare_haddock",
-  "scripts/release",
+  "bounded",
+  "capture_benchmark",
+  "check_docs",
+  "check_floor",
+  "check_sdist",
+  "check_types",
+  "generate_options",
+  "prepare_haddock",
+  "release",
 ]
-
-[tool.ty.src]
-include = ["scripts"]

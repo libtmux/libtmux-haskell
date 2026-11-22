@@ -50,7 +50,9 @@ def root(tmp_path: Path) -> Path:
         shutil.copytree(
             check_docs.ROOT / directory,
             tmp_path / directory,
-            ignore=shutil.ignore_patterns("__pycache__", "dist-newstyle"),
+            ignore=shutil.ignore_patterns(
+                "__pycache__", "dist-newstyle", ".venv", ".ruff_cache", ".pytest_cache"
+            ),
         )
     for filename in [
         "README.md",
