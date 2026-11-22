@@ -37,6 +37,7 @@ class Catalogue:
 def root(tmp_path: Path) -> Path:
     """Copy the documents, and the files they link to, into a disposable checkout."""
     for directory in [
+        "assets",
         "docs",
         ".github",
         "examples",
@@ -126,8 +127,8 @@ def test_stale_snippet_is_rejected(root: Path) -> None:
 @pytest.mark.parametrize(
     "markup",
     [
-        '<img src="docs/assets/missing.png" alt="Missing logo">',
-        '<source srcset="docs/assets/missing.svg" type="image/svg+xml">',
+        '<img src="assets/missing.png" alt="Missing logo">',
+        '<source srcset="assets/missing.svg" type="image/svg+xml">',
     ],
 )
 def test_missing_html_logo_is_rejected(root: Path, markup: str) -> None:

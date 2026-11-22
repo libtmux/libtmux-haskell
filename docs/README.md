@@ -34,3 +34,4 @@ For maintainers:
   graph, naming, lifecycle and public API decisions.
 - [Contributing](../.github/CONTRIBUTING.md) and
   [testing](../.github/TESTING.md): setup and test authoring.
+- [Logo assets](../assets/README.md): SVG and PNG marks and kit provenance.

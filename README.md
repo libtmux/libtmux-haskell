@@ -1,8 +1,8 @@
 <!-- libtmux-logo -->
 <div align="center">
   <picture>
-    <source srcset="docs/assets/logo.svg" type="image/svg+xml">
-    <img src="docs/assets/logo-128.png" width="128" height="128" alt="libtmux for Haskell">
+    <source srcset="assets/logo.svg" type="image/svg+xml">
+    <img src="assets/logo.png" width="128" height="128" alt="libtmux for Haskell">
   </picture>
 </div>
 <!-- /libtmux-logo -->
@@ -434,4 +434,4 @@ waits for the daemon generation admitted by this handle to exit.
 - **Platform.** Linux x86_64. [Host requirements](docs/installation.md).
 - **More.** [Status](https://libtmux.org/en/haskell/latest/guides/status/) · [source guides](docs/README.md).
 
-[Contributing](.github/CONTRIBUTING.md) · [License](LICENSE) · [Branding assets](docs/branding.md)
+[Contributing](.github/CONTRIBUTING.md) · [License](LICENSE) · [Logo assets](assets/README.md)

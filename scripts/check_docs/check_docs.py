@@ -123,6 +123,7 @@ def check_documents(root: Path, examples: dict[str, Entry]) -> None:
     """Check displayed assets, unregistered Haskell fences and local links."""
     documents = [
         root / "README.md",
+        *sorted((root / "assets").rglob("*.md")),
         *sorted((root / "docs").rglob("*.md")),
         *sorted((root / ".github").rglob("*.md")),
         *sorted((root / "examples").rglob("*.md")),

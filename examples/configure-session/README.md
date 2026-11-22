@@ -1,3 +1,12 @@
+<!-- libtmux-logo -->
+<div align="center">
+  <picture>
+    <source srcset="../../assets/logo.svg" type="image/svg+xml">
+    <img src="../../assets/logo.png" width="128" height="128" alt="libtmux for Haskell">
+  </picture>
+</div>
+<!-- /libtmux-logo -->
+
 # Configure a session
 
 [Main.hs](Main.hs) checks a local numeric option and registers a rename hook.

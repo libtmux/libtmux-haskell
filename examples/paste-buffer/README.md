@@ -1,3 +1,12 @@
+<!-- libtmux-logo -->
+<div align="center">
+  <picture>
+    <source srcset="../../assets/logo.svg" type="image/svg+xml">
+    <img src="../../assets/logo.png" width="128" height="128" alt="libtmux for Haskell">
+  </picture>
+</div>
+<!-- /libtmux-logo -->
+
 # Transfer and paste a named buffer
 
 The [program](Main.hs) round-trips binary bytes through a named tmux buffer,
